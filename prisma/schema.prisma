@@ -1,0 +1,373 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  COMPLIANCE_OFFICER
+  VIEWER
+}
+
+enum RiskLevel {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  MINIMAL
+}
+
+enum AISystemStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  DEPLOYED
+  DEPRECATED
+  RETIRED
+}
+
+enum ComplianceStatus {
+  COMPLIANT
+  PARTIALLY_COMPLIANT
+  NON_COMPLIANT
+  NOT_ASSESSED
+}
+
+enum AlertSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum DataSensitivity {
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+  RESTRICTED
+}
+
+enum PolicyStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum DiscoveryStatus {
+  DISCOVERED
+  UNDER_REVIEW
+  REGISTERED
+  BLOCKED
+  APPROVED
+}
+
+enum AutonomyLevel {
+  FULL_AUTONOMY
+  SUPERVISED
+  HUMAN_IN_THE_LOOP
+  HUMAN_ON_THE_LOOP
+  MANUAL
+}
+
+enum ComplianceFramework {
+  EU_AI_ACT
+  NIST_AI_RMF
+  ISO_42001
+  SOC2
+  CUSTOM
+}
+
+// ─── Auth (NextAuth) ────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── User ───────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(VIEWER)
+  department    String?
+
+  accounts     Account[]
+  sessions     Session[]
+  ownedSystems AISystem[]    @relation("SystemOwner")
+  ownedAgents  AIAgent[]     @relation("AgentOwner")
+  apiUsageLogs APIUsageLog[]
+  auditLogs    AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── AI System Registry ─────────────────────────────────
+
+model AISystem {
+  id              String          @id @default(cuid())
+  name            String
+  description     String?         @db.Text
+  version         String?
+  owner           User            @relation("SystemOwner", fields: [ownerId], references: [id])
+  ownerId         String
+  department      String
+  riskLevel       RiskLevel       @default(MEDIUM)
+  status          AISystemStatus  @default(DRAFT)
+  useCase         String?         @db.Text
+  dataSensitivity DataSensitivity @default(INTERNAL)
+  vendor          String?
+  modelType       String?
+  dataInputs      String?         @db.Text
+  dataOutputs     String?         @db.Text
+
+  complianceMappings ComplianceMapping[]
+  riskAssessments    RiskAssessment[]
+  policyAssignments  PolicyAssignment[]
+  agents             AIAgent[]
+  auditLogs          AuditLog[]       @relation("SystemAuditLogs")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── AI Agent Registry ──────────────────────────────────
+
+model AIAgent {
+  id                  String         @id @default(cuid())
+  name                String
+  description         String?        @db.Text
+  aiSystem            AISystem?      @relation(fields: [aiSystemId], references: [id])
+  aiSystemId          String?
+  owner               User           @relation("AgentOwner", fields: [ownerId], references: [id])
+  ownerId             String
+  capabilities        Json           @default("[]")
+  accessLevel         String         @default("read-only")
+  autonomyLevel       AutonomyLevel  @default(HUMAN_IN_THE_LOOP)
+  connectedSystems    Json           @default("[]")
+  humanReviewRequired Boolean        @default(true)
+  humanReviewTriggers Json?
+  riskLevel           RiskLevel      @default(MEDIUM)
+  status              AISystemStatus @default(DRAFT)
+  department          String?
+
+  auditLogs AuditLog[] @relation("AgentAuditLogs")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Shadow AI Discovery ────────────────────────────────
+
+model DiscoveredAITool {
+  id              String          @id @default(cuid())
+  toolName        String
+  vendor          String?
+  detectedDomain  String?
+  detectionSource String          @default("manual")
+  detectedAt      DateTime        @default(now())
+  status          DiscoveryStatus @default(DISCOVERED)
+  department      String?
+  userCount       Int             @default(0)
+  linkedSystemId  String?
+  notes           String?         @db.Text
+
+  alerts Alert[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Scan History ───────────────────────────────────────
+
+model ScanHistory {
+  id            String    @id @default(cuid())
+  scanType      String    @default("google_workspace")
+  status        String    @default("running")
+  toolsFound    Int       @default(0)
+  newToolsAdded Int       @default(0)
+  updatedTools  Int       @default(0)
+  errorMessage  String?   @db.Text
+  triggeredBy   String
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+// ─── App Settings (key-value store) ─────────────────────
+
+model AppSetting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// ─── Risk Assessment ────────────────────────────────────
+
+model RiskAssessment {
+  id                String   @id @default(cuid())
+  aiSystem          AISystem @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId        String
+  biasScore         Float    @default(0)
+  securityScore     Float    @default(0)
+  privacyScore      Float    @default(0)
+  fairnessScore     Float    @default(0)
+  performanceScore  Float    @default(0)
+  transparencyScore Float    @default(0)
+  overallScore      Float    @default(0)
+  justifications    Json?    // { biasScore: "reason", securityScore: "reason", ... }
+  assessedBy        String
+  notes             String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── API Usage Monitoring ───────────────────────────────
+
+model APIUsageLog {
+  id               String  @id @default(cuid())
+  user             User?   @relation(fields: [userId], references: [id])
+  userId           String?
+  provider         String
+  model            String?
+  department       String?
+  promptTokens     Int     @default(0)
+  completionTokens Int     @default(0)
+  totalTokens      Int     @default(0)
+  cost             Float   @default(0)
+  promptMetadata   Json?
+  flagged          Boolean @default(false)
+  flagReason       String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Compliance & Policy ────────────────────────────────
+
+model Policy {
+  id          String              @id @default(cuid())
+  name        String
+  description String?             @db.Text
+  framework   ComplianceFramework
+  version     String              @default("1.0")
+  content     String              @db.Text
+  status      PolicyStatus        @default(DRAFT)
+
+  assignments PolicyAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PolicyAssignment {
+  id               String           @id @default(cuid())
+  policy           Policy           @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policyId         String
+  aiSystem         AISystem         @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId       String
+  complianceStatus ComplianceStatus @default(NOT_ASSESSED)
+  evidence         String?          @db.Text
+  assessedAt       DateTime?
+  nextReviewDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([policyId, aiSystemId])
+}
+
+model ComplianceMapping {
+  id          String              @id @default(cuid())
+  aiSystem    AISystem            @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId  String
+  framework   ComplianceFramework
+  requirement String
+  status      ComplianceStatus    @default(NOT_ASSESSED)
+  evidence    String?             @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Alerts ─────────────────────────────────────────────
+
+model Alert {
+  id             String            @id @default(cuid())
+  title          String
+  description    String?           @db.Text
+  severity       AlertSeverity
+  status         AlertStatus       @default(OPEN)
+  source         String
+  relatedToolId  String?
+  discoveredTool DiscoveredAITool? @relation(fields: [relatedToolId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Audit Log ──────────────────────────────────────────
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  user       User      @relation(fields: [userId], references: [id])
+  userId     String
+  action     String
+  entityType String
+  entityId   String
+  aiSystem   AISystem? @relation("SystemAuditLogs", fields: [aiSystemId], references: [id])
+  aiSystemId String?
+  agent      AIAgent?  @relation("AgentAuditLogs", fields: [agentId], references: [id])
+  agentId    String?
+  changes    Json?
+
+  createdAt DateTime @default(now())
+}

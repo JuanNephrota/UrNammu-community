@@ -1,0 +1,75 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { withAuth, withRole } from "@/lib/auth-guard";
+import { createRiskAssessmentSchema } from "@/lib/validations/risk-assessment";
+import { createAuditLog } from "@/lib/audit";
+
+export async function GET() {
+  return withAuth(async () => {
+    const assessments = await prisma.riskAssessment.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        aiSystem: { select: { id: true, name: true, riskLevel: true } },
+      },
+    });
+    return NextResponse.json(assessments);
+  });
+}
+
+export async function POST(req: NextRequest) {
+  return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async (session) => {
+    const body = await req.json();
+    const parsed = createRiskAssessmentSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    const { biasScore, securityScore, privacyScore, fairnessScore, performanceScore, transparencyScore } = parsed.data;
+    const overallScore = (biasScore + securityScore + privacyScore + fairnessScore + performanceScore + transparencyScore) / 6;
+
+    const assessment = await prisma.riskAssessment.create({
+      data: {
+        ...parsed.data,
+        overallScore: Math.round(overallScore * 10) / 10,
+        assessedBy: session.user.name ?? session.user.email ?? "Unknown",
+      },
+    });
+
+    // Auto-update system risk level based on overall score
+    let riskLevel: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "MINIMAL" = "MINIMAL";
+    if (overallScore >= 80) riskLevel = "CRITICAL";
+    else if (overallScore >= 60) riskLevel = "HIGH";
+    else if (overallScore >= 40) riskLevel = "MEDIUM";
+    else if (overallScore >= 20) riskLevel = "LOW";
+
+    await prisma.aISystem.update({
+      where: { id: parsed.data.aiSystemId },
+      data: { riskLevel },
+    });
+
+    // Create alert if high risk
+    if (overallScore >= 60) {
+      await prisma.alert.create({
+        data: {
+          title: `High risk score detected`,
+          description: `AI system scored ${overallScore.toFixed(1)} in risk assessment`,
+          severity: overallScore >= 80 ? "CRITICAL" : "HIGH",
+          source: "risk_center",
+        },
+      });
+    }
+
+    await createAuditLog({
+      userId: session.user.userId,
+      action: "CREATE",
+      entityType: "RiskAssessment",
+      entityId: assessment.id,
+      aiSystemId: parsed.data.aiSystemId,
+    });
+
+    return NextResponse.json(assessment, { status: 201 });
+  });
+}
