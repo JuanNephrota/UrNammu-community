@@ -246,28 +246,24 @@ npm run db:reset
 
 ### 1. Must-have Governance
 
-- Policy enforcement so governance rules can be checked automatically, not just documented
-- Approval workflows with staged signoff across owners, security, legal, and compliance
-- Exception management with expiry, approver, rationale, and renewal controls
-- Review cadences and renewals for approved systems and agents
+- Expand policy rules beyond the current MVP to cover richer conditions, actions, and exception-aware enforcement
+- Add renewal automation for governance reviews, approvals, and exception expirations
+- Add ownership escalation when systems become overdue, unowned, or blocked in approval stages
+- Add workflow notifications for approvals, renewals, drift, incidents, and overdue reviews
 
 ### 2. Must-have Oversight
 
-- Continuous drift monitoring when an approved system changes model, data use, or deployment pattern
-- Better audit-ready reporting for internal reviews, leadership, and regulators
-- Evidence and document collection for artifacts such as model cards, DPIAs, and vendor reviews
-- Incident and alert linkage between AI systems, governance findings, and remediation actions
+- Migrate remaining oversight views from legacy `APIUsageLog` reads to normalized `UsageBucket` and `CostBucket` data
+- Expand audit-ready reporting into board, auditor, and regulator-focused export formats
+- Add evidence quality scoring for stale, weak, or missing governance artifacts
+- Add workflow notifications and dashboards for open incidents, drift alerts, and remediation progress
 
 ### 3. Strategic Differentiators
 
-- Shadow AI to approved-system conversion workflow
-- Vendor governance with profile pages, risk posture, and contract/security metadata
-- Cross-system risk heatmaps by department, vendor, and data sensitivity
-- Executive dashboards showing approved versus ungoverned AI usage over time
 - Automated governance recommendations with next-best actions per system
 - Renewal automation with batched review campaigns and reminder workflows
 - Exception lifecycle management with renewal requests and expiration handling
-- Ownership escalation when systems become overdue or unowned
-- Evidence quality scoring for stale or weak supporting artifacts
-- Workflow notifications for approvals, drift, incidents, and overdue reviews
 - Bulk governance operations across many systems at once
+- Deeper vendor governance with contracts, subprocessors, data residency, and approved use-case tracking
+- Expand executive dashboards with posture deltas, trend storytelling, and board-ready summaries
+- Improve Microsoft 365 Shadow AI discovery with richer Graph signals, usage heuristics, and vendor matching coverage
