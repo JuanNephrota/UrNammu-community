@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { VendorProfileEditor } from "@/components/oversight/vendor-profile-editor";
+import { getVendorRiskSummary } from "@/lib/vendor-risk";
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
@@ -24,6 +25,13 @@ function reviewBadgeVariant(status: string) {
   if (status === "CONDITIONAL" || status === "IN_PROGRESS") return "warning";
   if (status === "REJECTED") return "critical";
   return "outline";
+}
+
+function vendorRiskBadgeVariant(tier: string) {
+  if (tier === "CRITICAL") return "critical";
+  if (tier === "HIGH") return "warning";
+  if (tier === "MEDIUM") return "info";
+  return "success";
 }
 
 export default async function VendorGovernancePage() {
@@ -157,7 +165,27 @@ export default async function VendorGovernancePage() {
     vendorMap.set(profile.vendor, current);
   }
 
-  const vendors = [...vendorMap.entries()].sort((a, b) => b[1].systems - a[1].systems);
+  const vendors = [...vendorMap.entries()]
+    .map(([vendor, stats]) => ({
+      vendor,
+      stats,
+      risk: getVendorRiskSummary({
+        vendor,
+        systems: stats.systems,
+        openAlerts: stats.openAlerts,
+        incidents: stats.incidents,
+        exceptions: stats.exceptions,
+        highRisk: stats.highRisk,
+        discovered: stats.discovered,
+        unapprovedUseCases: stats.unapprovedUseCases.length,
+        contractStatus: stats.contractStatus,
+        securityReviewStatus: stats.securityReviewStatus,
+        contractRenewalDate: stats.contractRenewalDate,
+      }),
+    }))
+    .sort((a, b) => b.risk.score - a.risk.score || b.stats.systems - a.stats.systems);
+
+  const topVendorRisks = vendors.slice(0, 3);
 
   return (
     <div className="space-y-6">
@@ -169,6 +197,31 @@ export default async function VendorGovernancePage() {
           <Badge variant="info">Back to Oversight</Badge>
         </Link>
       </PageHeader>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {topVendorRisks.map(({ vendor, risk, stats }) => (
+          <Card key={vendor}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center justify-between gap-3 text-base">
+                <span className="truncate">{vendor}</span>
+                <Badge variant={vendorRiskBadgeVariant(risk.tier)}>
+                  {risk.tier} · {risk.score}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p className="text-[var(--text-secondary)]">
+                {stats.systems} governed systems · {stats.highRisk} high risk · {stats.incidents} incidents
+              </p>
+              {risk.factors.slice(0, 2).map((factor) => (
+                <p key={factor.label} className="text-[var(--text-secondary)]">
+                  {factor.label}: {factor.detail}
+                </p>
+              ))}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
       <Card>
         <CardHeader>
@@ -182,7 +235,7 @@ export default async function VendorGovernancePage() {
             <p className="text-sm text-[var(--text-muted)]">No vendor-governed systems yet.</p>
           ) : (
             <div className="space-y-3">
-              {vendors.map(([vendor, stats]) => (
+              {vendors.map(({ vendor, stats, risk }) => (
                 <div key={vendor} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -193,6 +246,9 @@ export default async function VendorGovernancePage() {
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        <Badge variant={vendorRiskBadgeVariant(risk.tier)}>
+                          Vendor risk {risk.score} · {risk.tier}
+                        </Badge>
                         <Badge variant={stats.highRisk > 0 ? "warning" : "success"}>{stats.highRisk} high risk</Badge>
                         <Badge variant={stats.openAlerts > 0 ? "critical" : "outline"}>{stats.openAlerts} open alerts</Badge>
                         <Badge variant={stats.incidents > 0 ? "critical" : "outline"}>{stats.incidents} incidents</Badge>
@@ -200,7 +256,38 @@ export default async function VendorGovernancePage() {
                       </div>
                     </div>
 
-                    <div className="grid gap-4 xl:grid-cols-3">
+                    <div className="grid gap-4 xl:grid-cols-4">
+                      <div className="rounded-lg border border-[var(--border-subtle)] p-3">
+                        <div className="text-sm font-medium text-[var(--text-primary)]">
+                          Composite Risk Score
+                        </div>
+                        <div className="mt-3 flex items-end justify-between gap-3">
+                          <div>
+                            <p className="text-3xl font-bold text-[var(--text-primary)]">
+                              {risk.score}
+                            </p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              {risk.tier} risk
+                            </p>
+                          </div>
+                          <Badge variant={vendorRiskBadgeVariant(risk.tier)}>
+                            {risk.tier}
+                          </Badge>
+                        </div>
+                        <div className="mt-3 space-y-2 text-xs text-[var(--text-muted)]">
+                          {risk.factors.length > 0 ? (
+                            risk.factors.slice(0, 3).map((factor) => (
+                              <p key={factor.label}>
+                                <span className="font-medium text-[var(--text-primary)]">{factor.label}:</span>{" "}
+                                +{factor.points}
+                              </p>
+                            ))
+                          ) : (
+                            <p>No elevated vendor risk signals detected.</p>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="rounded-lg border border-[var(--border-subtle)] p-3">
                         <div className="flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
                           <FileCheck className="h-4 w-4 text-[var(--accent)]" />
@@ -264,6 +351,25 @@ export default async function VendorGovernancePage() {
                         </div>
                       </div>
                     </div>
+
+                    {risk.factors.length > 0 && (
+                      <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                          Risk Drivers
+                        </p>
+                        <div className="mt-2 space-y-2">
+                          {risk.factors.map((factor) => (
+                            <div key={factor.label} className="flex items-start justify-between gap-4 text-sm">
+                              <div>
+                                <p className="font-medium text-[var(--text-primary)]">{factor.label}</p>
+                                <p className="text-[var(--text-secondary)]">{factor.detail}</p>
+                              </div>
+                              <Badge variant="outline">+{factor.points}</Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {stats.unapprovedUseCases.length > 0 && (
                       <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">

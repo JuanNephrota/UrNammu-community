@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
+import { AgentAIRiskCard } from "@/components/agents/agent-ai-risk-card";
 
 export default async function AgentDetailPage({
   params,
@@ -18,7 +19,17 @@ export default async function AgentDetailPage({
     where: { id },
     include: {
       owner: { select: { name: true, email: true } },
-      aiSystem: { select: { id: true, name: true } },
+      aiSystem: {
+        select: {
+          id: true,
+          name: true,
+          riskLevel: true,
+          useCase: true,
+          dataSensitivity: true,
+          vendor: true,
+          modelType: true,
+        },
+      },
     },
   });
   if (!agent) notFound();
@@ -104,6 +115,34 @@ export default async function AgentDetailPage({
             </div>
           </CardContent>
         </Card>
+        <AgentAIRiskCard
+          agent={{
+            id: agent.id,
+            name: agent.name,
+            description: agent.description,
+            autonomyLevel: agent.autonomyLevel,
+            humanReviewRequired: agent.humanReviewRequired,
+            humanReviewTriggers: agent.humanReviewTriggers,
+            connectedSystems: agent.connectedSystems,
+            capabilities: agent.capabilities,
+            accessLevel: agent.accessLevel,
+            department: agent.department,
+            riskLevel: agent.riskLevel,
+            aiSystemId: agent.aiSystemId,
+          }}
+          parentSystem={
+            agent.aiSystem
+              ? {
+                  name: agent.aiSystem.name,
+                  riskLevel: agent.aiSystem.riskLevel,
+                  useCase: agent.aiSystem.useCase,
+                  dataSensitivity: agent.aiSystem.dataSensitivity,
+                  vendor: agent.aiSystem.vendor,
+                  modelType: agent.aiSystem.modelType,
+                }
+              : null
+          }
+        />
       </div>
     </div>
   );
