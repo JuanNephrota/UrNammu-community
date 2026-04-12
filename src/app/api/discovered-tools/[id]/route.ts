@@ -12,7 +12,7 @@ export async function PUT(
     const body = await req.json();
 
     // Handle promote to registered system
-    if (body.action === "register") {
+    if (body.action === "register" || body.action === "register_and_assess") {
       const tool = await prisma.discoveredAITool.findUnique({ where: { id } });
       if (!tool) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -41,7 +41,14 @@ export async function PUT(
         aiSystemId: system.id,
       });
 
-      return NextResponse.json({ system, tool: { id, status: "REGISTERED" } });
+      return NextResponse.json({
+        system,
+        tool: { id, status: "REGISTERED", linkedSystemId: system.id },
+        nextHref:
+          body.action === "register_and_assess"
+            ? `/risk-center/assessments/new?systemId=${system.id}`
+            : `/registry/${system.id}`,
+      });
     }
 
     // Regular status update

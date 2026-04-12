@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
   Shield,
   Check,
+  CircleAlert,
   X,
   Loader2,
   ExternalLink,
@@ -14,6 +17,7 @@ import {
   Mail,
   Calendar,
   Clock,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +30,7 @@ interface Props {
   adminEmail: string;
   scanEnabled: boolean;
   lookbackDays: number;
+  scanIntervalHours: number;
 }
 
 export function GoogleWorkspaceSettings({
@@ -33,12 +38,14 @@ export function GoogleWorkspaceSettings({
   adminEmail: initialAdminEmail,
   scanEnabled: initialScanEnabled,
   lookbackDays: initialLookbackDays,
+  scanIntervalHours: initialScanIntervalHours,
 }: Props) {
   const router = useRouter();
   const [serviceKey, setServiceKey] = useState("");
   const [adminEmail, setAdminEmail] = useState(initialAdminEmail);
   const [scanEnabled, setScanEnabled] = useState(initialScanEnabled);
   const [lookbackDays, setLookbackDays] = useState(initialLookbackDays);
+  const [scanIntervalHours, setScanIntervalHours] = useState(initialScanIntervalHours);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -46,6 +53,33 @@ export function GoogleWorkspaceSettings({
     message: string;
   } | null>(null);
   const [saveResult, setSaveResult] = useState<string | null>(null);
+  const trimmedServiceKey = serviceKey.trim();
+  const normalizedAdminEmail = adminEmail.trim();
+  const serviceKeyValidationError = (() => {
+    if (!trimmedServiceKey) return null;
+    try {
+      if (!trimmedServiceKey.startsWith("{")) {
+        return "Paste the raw service account JSON key exported from Google Cloud.";
+      }
+      const parsed = JSON.parse(trimmedServiceKey);
+      if (parsed.type && parsed.type !== "service_account") {
+        return "The uploaded key must be a Google service account JSON credential.";
+      }
+      if (!parsed.client_email || !parsed.private_key) {
+        return "The service account key must include client_email and private_key.";
+      }
+      return null;
+    } catch {
+      return "The service account key must be valid JSON.";
+    }
+  })();
+  const adminEmailLooksValid =
+    !normalizedAdminEmail || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedAdminEmail);
+  const workspaceChecks = [
+    { label: "Service account key", ok: hasServiceKey || (!!trimmedServiceKey && !serviceKeyValidationError) },
+    { label: "Admin email", ok: !!normalizedAdminEmail && adminEmailLooksValid },
+    { label: "Auto-scan", ok: scanEnabled },
+  ];
 
   async function handleSave() {
     setSaving(true);
@@ -55,6 +89,7 @@ export function GoogleWorkspaceSettings({
         google_admin_email: adminEmail || null,
         google_scan_enabled: scanEnabled ? "true" : "false",
         google_scan_lookback_days: String(lookbackDays),
+        google_scan_interval_hours: String(scanIntervalHours),
       };
       // Only update the key if a new one was provided
       if (serviceKey.trim()) {
@@ -72,11 +107,13 @@ export function GoogleWorkspaceSettings({
         setServiceKey(""); // Clear the key field after save
         router.refresh();
       } else {
-        const data = await res.json();
-        setSaveResult(`Failed: ${data.error}`);
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error ?? msg; } catch { msg = text || msg; }
+        setSaveResult(`Failed: ${msg}`);
       }
-    } catch {
-      setSaveResult("Failed to save settings.");
+    } catch (err) {
+      setSaveResult(`Failed to save settings: ${err instanceof Error ? err.message : "Network error"}`);
     } finally {
       setSaving(false);
     }
@@ -87,13 +124,20 @@ export function GoogleWorkspaceSettings({
     setTestResult(null);
     try {
       const res = await fetch("/api/settings/test-google", { method: "POST" });
-      const data = await res.json();
-      setTestResult({
-        success: data.success,
-        message: data.success ? data.message : data.error,
-      });
-    } catch {
-      setTestResult({ success: false, message: "Connection test failed." });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error ?? msg; } catch { msg = text || msg; }
+        setTestResult({ success: false, message: msg });
+      } else {
+        const data = await res.json();
+        setTestResult({
+          success: data.success,
+          message: data.success ? data.message : data.error,
+        });
+      }
+    } catch (err) {
+      setTestResult({ success: false, message: `Connection test failed: ${err instanceof Error ? err.message : "Network error"}` });
     } finally {
       setTesting(false);
     }
@@ -164,6 +208,39 @@ export function GoogleWorkspaceSettings({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">Shadow AI discovery lives here</p>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--text-muted)]">
+              This integration scans Google Workspace audit activity to discover shadow AI usage.
+              Employee login methods such as Google sign-in are configured separately under{" "}
+              <Link href="/settings/users" className="text-[var(--accent)] hover:underline">
+                Users &amp; Identity
+              </Link>
+              .
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+              Shadow AI Health Checklist
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              {workspaceChecks.map((check) => (
+                <div
+                  key={check.label}
+                  className="flex items-center gap-2 rounded-md border border-[var(--border-subtle)] px-3 py-2 text-xs text-[var(--text-muted)]"
+                >
+                  {check.ok ? (
+                    <ShieldCheck className="h-3.5 w-3.5 text-[var(--success)]" />
+                  ) : (
+                    <CircleAlert className="h-3.5 w-3.5 text-[var(--warning)]" />
+                  )}
+                  <span>{check.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Setup steps */}
           <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-3">
@@ -247,6 +324,9 @@ export function GoogleWorkspaceSettings({
               <p className="text-[10px] text-[var(--text-faint)] mt-1">
                 The key is stored encrypted in the database. It is never exposed in the UI after saving.
               </p>
+              {serviceKeyValidationError && (
+                <p className="mt-2 text-xs text-[var(--critical)]">{serviceKeyValidationError}</p>
+              )}
             </div>
           </div>
 
@@ -265,6 +345,9 @@ export function GoogleWorkspaceSettings({
             <p className="text-[10px] text-[var(--text-faint)]">
               A Google Workspace admin email for the service account to impersonate via domain-wide delegation.
             </p>
+            {!adminEmailLooksValid && (
+              <p className="text-xs text-[var(--critical)]">Enter a valid Workspace admin email address.</p>
+            )}
           </div>
 
           {/* Scan Settings */}
@@ -280,7 +363,7 @@ export function GoogleWorkspaceSettings({
                 className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
               >
                 <option value="false">Disabled</option>
-                <option value="true">Enabled (daily at 2 AM)</option>
+                <option value="true">Enabled</option>
               </select>
             </div>
             <div className="space-y-2">
@@ -303,9 +386,29 @@ export function GoogleWorkspaceSettings({
             </div>
           </div>
 
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2">
+              <Clock className="h-3.5 w-3.5" />
+              Scan Interval
+            </Label>
+            <select
+              value={String(scanIntervalHours)}
+              onChange={(e) => setScanIntervalHours(parseInt(e.target.value, 10))}
+              className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
+            >
+              <option value="6">Every 6 hours</option>
+              <option value="12">Every 12 hours</option>
+              <option value="24">Every 24 hours</option>
+              <option value="48">Every 48 hours</option>
+            </select>
+            <p className="text-[10px] text-[var(--text-faint)]">
+              The background scheduler checks this cadence when `CRON_SECRET`-authenticated maintenance requests run.
+            </p>
+          </div>
+
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-[var(--border-subtle)]">
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={handleSave} disabled={saving || !!serviceKeyValidationError || !adminEmailLooksValid}>
               {saving ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : null}
@@ -314,7 +417,7 @@ export function GoogleWorkspaceSettings({
             <Button
               variant="outline"
               onClick={handleTest}
-              disabled={testing || (!hasServiceKey && !serviceKey.trim())}
+              disabled={testing || !!serviceKeyValidationError || !adminEmailLooksValid || (!hasServiceKey && !trimmedServiceKey)}
             >
               {testing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -322,6 +425,11 @@ export function GoogleWorkspaceSettings({
                 <Wifi className="mr-2 h-4 w-4" />
               )}
               {testing ? "Testing..." : "Test Connection"}
+            </Button>
+            <Button variant="ghost" asChild>
+              <Link href="/shadow-ai">
+                Open Shadow AI Dashboard <ArrowRight className="h-4 w-4" />
+              </Link>
             </Button>
           </div>
 

@@ -1,137 +1,118 @@
-import { prisma } from "@/lib/prisma";
-import { requireRole } from "@/lib/auth-guard";
-import { PageHeader } from "@/components/layout/page-header";
+import Link from "next/link";
+import {
+  ArrowRight,
+  Cog,
+  Cpu,
+  Eye,
+  KeyRound,
+  Search,
+  Shield,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { GoogleWorkspaceSettings } from "./google-workspace-settings";
-import { ProxySetupGuide } from "./proxy-setup-guide";
+import { getSettingsPageData } from "./data";
 
-export default async function SettingsPage() {
-  let isAdmin = false;
-  try {
-    await requireRole(["ADMIN"]);
-    isAdmin = true;
-  } catch {
-    // not admin
-  }
+export default async function SettingsOverviewPage() {
+  const {
+    isAdmin,
+    providerLabel,
+    modelLabel,
+    users,
+    hasAnthropicAdminKey,
+    hasOpenAIAdminKey,
+    settingsMap,
+  } = await getSettingsPageData();
 
-  const users = isAdmin
-    ? await prisma.user.findMany({
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          department: true,
-          createdAt: true,
-        },
-      })
-    : [];
-
-  // Load current Google settings for the form
-  const googleSettings = isAdmin
-    ? await prisma.appSetting.findMany({
-        where: {
-          key: {
-            in: [
-              "google_service_account_key",
-              "google_admin_email",
-              "google_scan_enabled",
-              "google_scan_lookback_days",
-            ],
-          },
-        },
-      })
-    : [];
-
-  const settingsMap: Record<string, string> = {};
-  for (const s of googleSettings) {
-    settingsMap[s.key] = s.value;
-  }
-
-  // Load proxy secret for the setup guide
-  const proxySecret = isAdmin
-    ? (await prisma.appSetting.findUnique({ where: { key: "proxy_secret" } }))?.value
-      ?? process.env.PROXY_SECRET
-      ?? "change-me-proxy-secret"
-    : "";
-  const platformUrl = process.env.NEXTAUTH_URL ?? "http://localhost:3001";
+  const cards = [
+    {
+      href: "/settings/general",
+      title: "General",
+      description: "Environment details and default AI provider settings.",
+      icon: Cpu,
+      badge: `${providerLabel} · ${modelLabel}`,
+      visible: true,
+    },
+    {
+      href: "/settings/provider-admin",
+      title: "Provider Admin APIs",
+      description: "Admin telemetry keys and background provider sync cadence.",
+      icon: Eye,
+      badge: `${Number(hasAnthropicAdminKey) + Number(hasOpenAIAdminKey)} connected`,
+      visible: isAdmin,
+    },
+    {
+      href: "/settings/proxy",
+      title: "Proxy Setup",
+      description: "Claude and OpenAI proxy routing instructions and shared secret setup.",
+      icon: KeyRound,
+      badge: "Developer routing",
+      visible: isAdmin,
+    },
+    {
+      href: "/settings/users",
+      title: "Users & Identity",
+      description: "Current users, roles, local auth, Microsoft 365, and Google sign-in.",
+      icon: Shield,
+      badge: `${users.length} users · identity controls`,
+      visible: isAdmin,
+    },
+    {
+      href: "/settings/shadow-ai",
+      title: "Shadow AI",
+      description: "Google Workspace discovery, service account setup, and scan cadence.",
+      icon: Search,
+      badge: `${settingsMap.google_scan_enabled === "true" ? "Google auto-scan on" : "Google manual"} · shadow AI`,
+      visible: isAdmin,
+    },
+  ].filter((card) => card.visible);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Settings" description="Platform configuration and integrations" />
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cog className="h-4 w-4 text-[var(--accent)]" />
+            Settings Overview
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+            Settings are now split into focused pages so it is easier to manage integrations,
+            security controls, and operational defaults without scrolling through one long form.
+          </p>
+        </CardContent>
+      </Card>
 
-      <Tabs defaultValue="general">
-        <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
-          {isAdmin && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
-          {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
-        </TabsList>
-
-        <TabsContent value="general">
-          <Card>
-            <CardHeader><CardTitle>Environment</CardTitle></CardHeader>
-            <CardContent>
-              <dl className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-[var(--text-muted)]">Platform</dt>
-                  <dd className="font-medium">Nammu v1.0</dd>
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <Link
+              key={card.href}
+              href={card.href}
+              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 transition-all hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)]"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-[var(--accent)]" />
+                    <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+                      {card.title}
+                    </h2>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-[var(--text-muted)]">
+                    {card.description}
+                  </p>
                 </div>
-                <div className="flex justify-between">
-                  <dt className="text-[var(--text-muted)]">Database</dt>
-                  <dd className="font-medium">PostgreSQL</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-[var(--text-muted)]">AI Provider</dt>
-                  <dd className="font-medium">Anthropic Claude</dd>
-                </div>
-              </dl>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {isAdmin && (
-          <TabsContent value="integrations" className="space-y-8">
-            <ProxySetupGuide
-              proxySecret={proxySecret}
-              platformUrl={platformUrl}
-            />
-            <div className="border-t border-[var(--border-subtle)] pt-8" />
-            <GoogleWorkspaceSettings
-              hasServiceKey={!!settingsMap.google_service_account_key}
-              adminEmail={settingsMap.google_admin_email ?? ""}
-              scanEnabled={settingsMap.google_scan_enabled === "true"}
-              lookbackDays={parseInt(settingsMap.google_scan_lookback_days ?? "30")}
-            />
-          </TabsContent>
-        )}
-
-        {isAdmin && (
-          <TabsContent value="users">
-            <Card>
-              <CardHeader><CardTitle>Users ({users.length})</CardTitle></CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {users.map((user) => (
-                    <div key={user.id} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
-                      <div>
-                        <p className="text-sm font-medium">{user.name ?? user.email}</p>
-                        <p className="text-xs text-[var(--text-muted)]">{user.email}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {user.department && <Badge variant="outline">{user.department}</Badge>}
-                        <Badge variant="info">{user.role.replace("_", " ")}</Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
-      </Tabs>
+                <ArrowRight className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
+              </div>
+              <div className="mt-4">
+                <Badge variant="outline">{card.badge}</Badge>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
 }

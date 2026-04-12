@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { handleAnthropicProxy } from "@/lib/anthropic-proxy";
 
+export const maxDuration = 300;
+
 /**
  * Root proxy route — handles POST /api/proxy/anthropic
  * (for clients that POST directly without /v1/messages path)

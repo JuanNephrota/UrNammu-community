@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
 
 export default async function AgentsPage() {
   const agents = await prisma.aIAgent.findMany({
@@ -59,9 +60,7 @@ export default async function AgentsPage() {
                     <Badge variant={statusBadgeVariant(agent.status)}>
                       {agent.status.replace("_", " ")}
                     </Badge>
-                    <Badge variant="outline">
-                      {agent.autonomyLevel.replace(/_/g, " ")}
-                    </Badge>
+                    <AutonomyBadge level={agent.autonomyLevel} />
                     {agent.humanReviewRequired && (
                       <Badge variant="info">HITL</Badge>
                     )}

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { withAuth, withRole } from "@/lib/auth-guard";
 import { updatePolicySchema, assignPolicySchema } from "@/lib/validations/policy";
 import { createAuditLog } from "@/lib/audit";
+import { parsePolicyRules } from "@/lib/policy-rules";
 
 export async function GET(
   _req: NextRequest,
@@ -72,7 +74,12 @@ export async function PUT(
 
     const policy = await prisma.policy.update({
       where: { id },
-      data: parsed.data,
+      data: {
+        ...parsed.data,
+        ...(parsed.data.rules !== undefined
+          ? { rules: parsed.data.rules ? (parsePolicyRules(parsed.data.rules) as unknown as Prisma.InputJsonValue) : Prisma.JsonNull }
+          : {}),
+      },
     });
 
     await createAuditLog({

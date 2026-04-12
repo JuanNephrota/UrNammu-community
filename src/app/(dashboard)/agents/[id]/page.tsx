@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
 
 export default async function AgentDetailPage({
   params,
@@ -35,7 +36,7 @@ export default async function AgentDetailPage({
       <div className="flex flex-wrap gap-2">
         <Badge variant={riskBadgeVariant(agent.riskLevel)}>Risk: {agent.riskLevel}</Badge>
         <Badge variant={statusBadgeVariant(agent.status)}>{agent.status.replace("_", " ")}</Badge>
-        <Badge variant="outline">{agent.autonomyLevel.replace(/_/g, " ")}</Badge>
+        <AutonomyBadge level={agent.autonomyLevel} />
         {agent.humanReviewRequired && <Badge variant="info">HITL Required</Badge>}
       </div>
 

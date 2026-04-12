@@ -16,8 +16,35 @@ export async function GET(
         owner: { select: { id: true, name: true, email: true, image: true } },
         agents: { select: { id: true, name: true, autonomyLevel: true, status: true } },
         riskAssessments: { orderBy: { createdAt: "desc" }, take: 5 },
+        approvals: {
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          include: {
+            decidedByUser: { select: { id: true, name: true, email: true } },
+          },
+        },
         policyAssignments: {
           include: { policy: { select: { id: true, name: true, framework: true } } },
+        },
+        governanceReviews: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+          include: { decidedByUser: { select: { id: true, name: true, email: true } } },
+        },
+        governanceExceptions: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+          include: { approvedByUser: { select: { id: true, name: true, email: true } } },
+        },
+        evidenceArtifacts: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+          include: { uploadedByUser: { select: { id: true, name: true, email: true } } },
+        },
+        governanceIncidents: {
+          orderBy: { openedAt: "desc" },
+          take: 20,
+          include: { openedByUser: { select: { id: true, name: true, email: true } } },
         },
         complianceMappings: true,
       },
@@ -50,9 +77,46 @@ export async function PUT(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    if (parsed.data.status === "APPROVED" && existing.status !== "APPROVED") {
+      return NextResponse.json(
+        {
+          error:
+            "Approved status must be recorded through the approval workflow after governance review.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const nextReviewDate = parsed.data.nextReviewDate
+      ? new Date(parsed.data.nextReviewDate)
+      : parsed.data.reviewIntervalDays
+        ? new Date(Date.now() + parsed.data.reviewIntervalDays * 24 * 60 * 60 * 1000)
+        : undefined;
+
+    const driftFields = [
+      "vendor",
+      "modelType",
+      "dataSensitivity",
+      "riskLevel",
+      "department",
+      "useCase",
+      "dataInputs",
+      "dataOutputs",
+    ] as const;
+    const driftChanges = driftFields
+      .map((field) => ({
+        field,
+        before: existing[field],
+        after: parsed.data[field],
+      }))
+      .filter((change) => change.after !== undefined && change.before !== change.after);
+
     const system = await prisma.aISystem.update({
       where: { id },
-      data: parsed.data,
+      data: {
+        ...parsed.data,
+        ...(nextReviewDate ? { nextReviewDate } : {}),
+      },
       include: {
         owner: { select: { id: true, name: true, email: true } },
       },
@@ -66,6 +130,24 @@ export async function PUT(
       aiSystemId: system.id,
       changes: JSON.parse(JSON.stringify({ before: existing, after: system })),
     });
+
+    if (
+      driftChanges.length > 0 &&
+      (existing.status === "APPROVED" || existing.status === "DEPLOYED")
+    ) {
+      await prisma.alert.create({
+        data: {
+          title: `Governance drift detected: ${existing.name}`,
+          description: `Detected changes to ${driftChanges.map((change) => change.field).join(", ")} on a governed system.`,
+          severity:
+            driftChanges.some((change) => change.field === "dataSensitivity" || change.field === "riskLevel")
+              ? "HIGH"
+              : "MEDIUM",
+          source: "system_drift",
+          aiSystemId: existing.id,
+        },
+      });
+    }
 
     return NextResponse.json(system);
   });

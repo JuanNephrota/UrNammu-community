@@ -1,6 +1,9 @@
 import { NextRequest } from "next/server";
 import { handleAnthropicProxy } from "@/lib/anthropic-proxy";
 
+// Allow longer execution for streaming responses
+export const maxDuration = 300;
+
 /**
  * Catch-all route for Anthropic API proxy.
  * Handles all paths under /api/proxy/anthropic/*, e.g.:

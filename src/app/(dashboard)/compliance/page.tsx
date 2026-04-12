@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 
 export default async function CompliancePage() {
-  const [policies, assignments, frameworks] = await Promise.all([
+  const [policies, assignments, frameworks, activeExceptions] = await Promise.all([
     prisma.policy.findMany({
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { assignments: true } } },
@@ -21,11 +21,22 @@ export default async function CompliancePage() {
       by: ["framework"],
       _count: true,
     }),
+    prisma.governanceException.findMany({
+      where: {
+        status: "ACTIVE",
+        expiresAt: { gte: new Date() },
+      },
+      orderBy: { expiresAt: "asc" },
+      take: 10,
+      include: {
+        aiSystem: { select: { id: true, name: true } },
+        approvedByUser: { select: { name: true, email: true } },
+      },
+    }),
   ]);
 
   const statusCounts: Record<string, number> = {};
   assignments.forEach((a) => { statusCounts[a.complianceStatus] = a._count; });
-  const totalAssignments = assignments.reduce((s, a) => s + a._count, 0);
 
   return (
     <div className="space-y-6">
@@ -83,6 +94,28 @@ export default async function CompliancePage() {
                     <span className="text-sm font-medium">{f.framework.replace(/_/g, " ")}</span>
                     <Badge variant="info">{f._count} policies</Badge>
                   </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Active Governance Exceptions</CardTitle></CardHeader>
+          <CardContent>
+            {activeExceptions.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">No active governance exceptions.</p>
+            ) : (
+              <div className="space-y-3">
+                {activeExceptions.map((exception) => (
+                  <Link key={exception.id} href={`/registry/${exception.aiSystem.id}`} className="block rounded-md border border-[var(--border-subtle)] p-3 hover:bg-[var(--bg-hover)]">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">{exception.title}</p>
+                      <Badge variant="warning">{new Date(exception.expiresAt).toLocaleDateString()}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      {exception.aiSystem.name} · {exception.approvedByUser.name ?? exception.approvedByUser.email}
+                    </p>
+                  </Link>
                 ))}
               </div>
             )}

@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
+
 interface RiskHeatMapProps {
   data: {
+    systemId: string;
     systemName: string;
     biasScore: number;
     securityScore: number;
@@ -85,12 +88,17 @@ export function RiskHeatMap({ data }: RiskHeatMapProps) {
         <tbody>
           {data.map((row, i) => (
             <tr
-              key={row.systemName}
-              className="border-t border-[var(--border-subtle)] animate-fade-in-up"
+              key={row.systemId}
+              className="border-t border-[var(--border-subtle)] animate-fade-in-up hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
               style={{ animationDelay: `${i * 80}ms` }}
             >
-              <td className="px-3 py-3 font-medium text-[var(--text-primary)] whitespace-nowrap text-[13px]">
-                {row.systemName}
+              <td className="px-3 py-3 font-medium whitespace-nowrap text-[13px]">
+                <Link
+                  href={`/registry/${row.systemId}?tab=risk`}
+                  className="text-[var(--accent)] hover:underline"
+                >
+                  {row.systemName}
+                </Link>
               </td>
               {dimensions.map((d) => {
                 const score = row[d];

@@ -73,6 +73,7 @@ async function getAuthClient(): Promise<JWT> {
 /**
  * Scan OAuth token authorization events from the Reports API.
  * This discovers AI tools that users have authorized via "Sign in with Google".
+ * Optimized for speed: limits pages, filters early, short timeout.
  */
 export async function scanTokenActivity(
   lookbackDays: number = 30
@@ -86,18 +87,22 @@ export async function scanTokenActivity(
   const events: TokenEvent[] = [];
   let pageToken: string | undefined;
   let totalScanned = 0;
+  let pageCount = 0;
+  const maxPages = 5; // Limit pagination to stay within serverless timeout
 
   do {
     const response = await service.activities.list({
       userKey: "all",
       applicationName: "token",
+      eventName: "authorize",
       startTime: startTime.toISOString(),
-      maxResults: 1000,
+      maxResults: 500,
       pageToken,
     });
 
     const items = response.data.items ?? [];
     totalScanned += items.length;
+    pageCount++;
 
     for (const item of items) {
       const params = item.events?.[0]?.parameters ?? [];
@@ -110,17 +115,21 @@ export async function scanTokenActivity(
         ?.multiValue ?? [];
 
       if (appName) {
-        events.push({
-          appName,
-          scopes,
-          userEmail: item.actor?.email ?? "unknown",
-          timestamp: item.id?.time ?? new Date().toISOString(),
-        });
+        // Early match — only keep events that match known AI tools
+        const match = matchAITool(appName, scopes);
+        if (match) {
+          events.push({
+            appName,
+            scopes,
+            userEmail: item.actor?.email ?? "unknown",
+            timestamp: item.id?.time ?? new Date().toISOString(),
+          });
+        }
       }
     }
 
     pageToken = response.data.nextPageToken ?? undefined;
-  } while (pageToken);
+  } while (pageToken && pageCount < maxPages);
 
   return { events, totalScanned };
 }
@@ -170,10 +179,11 @@ export async function runFullScan(
 ): Promise<FullScanResult> {
   const { events, totalScanned } = await scanTokenActivity(lookbackDays);
 
-  // Match events against known AI tools and aggregate
+  // Events are already filtered to known AI tools — just aggregate
   const discoveryMap = new Map<string, ScanDiscovery>();
 
   for (const event of events) {
+    // Re-match to get tool metadata (events are pre-filtered so this always matches)
     const match = matchAITool(event.appName, event.scopes);
     if (!match) continue;
 

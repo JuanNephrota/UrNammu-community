@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AutonomyHelpTooltip } from "@/components/ui/autonomy-tooltip";
 
 interface AgentFormProps {
   initialData?: {
@@ -132,7 +133,10 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
-              <Label>Autonomy Level</Label>
+              <Label className="flex items-center gap-1.5">
+                Autonomy Level
+                <AutonomyHelpTooltip />
+              </Label>
               <select name="autonomyLevel" defaultValue={initialData?.autonomyLevel ?? "HUMAN_IN_THE_LOOP"} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
                 <option value="MANUAL">Manual</option>
                 <option value="HUMAN_IN_THE_LOOP">Human in the Loop</option>

@@ -16,6 +16,8 @@ import { Button } from "./button";
 import { Input } from "./input";
 import { ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
 
+/* eslint-disable react-hooks/incompatible-library */
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];

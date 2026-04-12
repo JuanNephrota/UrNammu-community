@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isGoogleWorkspaceConfigured } from "@/lib/google-workspace";
-import { executeScan } from "@/lib/scan-executor";
+import { runScheduledMaintenance } from "@/lib/background-jobs";
 
 export async function GET(req: NextRequest) {
   // Authenticate cron requests via Bearer token
@@ -11,14 +10,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!(await isGoogleWorkspaceConfigured())) {
-    return NextResponse.json(
-      { error: "Google Workspace not configured" },
-      { status: 400 }
-    );
-  }
-
-  const result = await executeScan("system");
-
+  const result = await runScheduledMaintenance();
   return NextResponse.json(result);
 }

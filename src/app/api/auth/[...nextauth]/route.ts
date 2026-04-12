@@ -1,6 +1,8 @@
 import NextAuth from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getAuthOptions } from "@/lib/auth";
 
-const handler = NextAuth(authOptions);
+async function handler(request: Request, context: unknown) {
+  return NextAuth(await getAuthOptions())(request, context);
+}
 
 export { handler as GET, handler as POST };

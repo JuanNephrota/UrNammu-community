@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { withAuth, withRole } from "@/lib/auth-guard";
 import { createPolicySchema } from "@/lib/validations/policy";
 import { createAuditLog } from "@/lib/audit";
+import { parsePolicyRules } from "@/lib/policy-rules";
 
 export async function GET() {
   return withAuth(async () => {
@@ -22,7 +24,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const policy = await prisma.policy.create({ data: parsed.data });
+    const policy = await prisma.policy.create({
+      data: {
+        ...parsed.data,
+        rules: parsed.data.rules ? (parsePolicyRules(parsed.data.rules) as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+      },
+    });
 
     await createAuditLog({
       userId: session.user.userId,

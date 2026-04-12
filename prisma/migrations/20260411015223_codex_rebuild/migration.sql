@@ -1,0 +1,5 @@
+-- RenameIndex
+ALTER INDEX "CostBucket_provider_bucketStart_bucketEnd_granularity_dimension" RENAME TO "CostBucket_provider_bucketStart_bucketEnd_granularity_dimen_key";
+
+-- RenameIndex
+ALTER INDEX "UsageBucket_provider_bucketStart_bucketEnd_granularity_dimensio" RENAME TO "UsageBucket_provider_bucketStart_bucketEnd_granularity_dime_key";

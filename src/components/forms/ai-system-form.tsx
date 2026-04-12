@@ -6,18 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatDateForInput } from "@/lib/utils";
 
 interface AISystemFormProps {
   initialData?: {
+    discoveredToolId?: string | null;
     id?: string;
     name: string;
     description: string | null;
@@ -31,6 +26,12 @@ interface AISystemFormProps {
     modelType: string | null;
     dataInputs: string | null;
     dataOutputs: string | null;
+    reviewIntervalDays: number;
+    nextReviewDate: string | Date | null;
+    requireOwnerApproval: boolean;
+    requireSecurityApproval: boolean;
+    requireLegalApproval: boolean;
+    requireComplianceApproval: boolean;
   };
 }
 
@@ -40,6 +41,20 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!initialData?.id;
+  const requiredApprovalStages: Array<{
+    name:
+      | "requireOwnerApproval"
+      | "requireSecurityApproval"
+      | "requireLegalApproval"
+      | "requireComplianceApproval";
+    label: string;
+    checked: boolean;
+  }> = [
+    { name: "requireOwnerApproval", label: "Owner review", checked: initialData?.requireOwnerApproval ?? true },
+    { name: "requireSecurityApproval", label: "Security review", checked: initialData?.requireSecurityApproval ?? true },
+    { name: "requireLegalApproval", label: "Legal review", checked: initialData?.requireLegalApproval ?? false },
+    { name: "requireComplianceApproval", label: "Compliance review", checked: initialData?.requireComplianceApproval ?? true },
+  ];
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -47,19 +62,30 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
     setError(null);
 
     const formData = new FormData(e.currentTarget);
+    const val = (key: string) => {
+      const v = (formData.get(key) as string)?.trim();
+      return v || undefined;
+    };
     const data = {
-      name: formData.get("name") as string,
-      description: formData.get("description") as string,
-      version: formData.get("version") as string,
-      department: formData.get("department") as string,
-      riskLevel: formData.get("riskLevel") as string,
-      status: formData.get("status") as string,
-      useCase: formData.get("useCase") as string,
-      dataSensitivity: formData.get("dataSensitivity") as string,
-      vendor: formData.get("vendor") as string,
-      modelType: formData.get("modelType") as string,
-      dataInputs: formData.get("dataInputs") as string,
-      dataOutputs: formData.get("dataOutputs") as string,
+      name: val("name"),
+      description: val("description"),
+      version: val("version"),
+      department: val("department"),
+      riskLevel: val("riskLevel") ?? "MEDIUM",
+      status: val("status") ?? "DRAFT",
+      useCase: val("useCase"),
+      dataSensitivity: val("dataSensitivity") ?? "INTERNAL",
+      vendor: val("vendor"),
+      modelType: val("modelType"),
+      dataInputs: val("dataInputs"),
+      dataOutputs: val("dataOutputs"),
+      reviewIntervalDays: Number(formData.get("reviewIntervalDays") ?? 365),
+      nextReviewDate: val("nextReviewDate"),
+      requireOwnerApproval: formData.get("requireOwnerApproval") === "on",
+      requireSecurityApproval: formData.get("requireSecurityApproval") === "on",
+      requireLegalApproval: formData.get("requireLegalApproval") === "on",
+      requireComplianceApproval: formData.get("requireComplianceApproval") === "on",
+      discoveredToolId: val("discoveredToolId"),
     };
 
     try {
@@ -89,6 +115,7 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <input type="hidden" name="discoveredToolId" value={initialData?.discoveredToolId ?? ""} />
       {error && (
         <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">
           {error}
@@ -100,9 +127,10 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
           <TabsTrigger value="basic">Basic Info</TabsTrigger>
           <TabsTrigger value="technical">Technical Details</TabsTrigger>
           <TabsTrigger value="data">Data Classification</TabsTrigger>
+          <TabsTrigger value="governance">Governance Controls</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="basic">
+        <TabsContent value="basic" forceMount className="data-[state=inactive]:hidden">
           <Card>
             <CardHeader>
               <CardTitle>Basic Information</CardTitle>
@@ -170,11 +198,16 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                   >
                     <option value="DRAFT">Draft</option>
                     <option value="UNDER_REVIEW">Under Review</option>
-                    <option value="APPROVED">Approved</option>
+                    {initialData?.status === "APPROVED" && (
+                      <option value="APPROVED">Approved</option>
+                    )}
                     <option value="DEPLOYED">Deployed</option>
                     <option value="DEPRECATED">Deprecated</option>
                     <option value="RETIRED">Retired</option>
                   </select>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Approved status is recorded through the registry approval review.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="version">Version</Label>
@@ -190,7 +223,7 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
           </Card>
         </TabsContent>
 
-        <TabsContent value="technical">
+        <TabsContent value="technical" forceMount className="data-[state=inactive]:hidden">
           <Card>
             <CardHeader>
               <CardTitle>Technical Details</CardTitle>
@@ -220,7 +253,7 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
           </Card>
         </TabsContent>
 
-        <TabsContent value="data">
+        <TabsContent value="data" forceMount className="data-[state=inactive]:hidden">
           <Card>
             <CardHeader>
               <CardTitle>Data Classification</CardTitle>
@@ -258,6 +291,64 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                   placeholder="Describe what data this system produces"
                   rows={2}
                 />
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="governance" forceMount className="data-[state=inactive]:hidden">
+          <Card>
+            <CardHeader>
+              <CardTitle>Governance Controls</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="reviewIntervalDays">Review Interval (Days)</Label>
+                  <Input
+                    id="reviewIntervalDays"
+                    name="reviewIntervalDays"
+                    type="number"
+                    min={1}
+                    max={730}
+                    defaultValue={initialData?.reviewIntervalDays ?? 365}
+                  />
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Sets the standard renewal cadence for this system.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="nextReviewDate">Next Review Date</Label>
+                  <Input
+                    id="nextReviewDate"
+                    name="nextReviewDate"
+                    type="date"
+                    defaultValue={formatDateForInput(initialData?.nextReviewDate)}
+                  />
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Leave blank to calculate from today using the review interval.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Label>Required Approval Stages</Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {requiredApprovalStages.map(({ name, label, checked }) => (
+                    <label
+                      key={name}
+                      className="flex items-center gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 text-sm text-[var(--text-primary)]"
+                    >
+                      <input
+                        type="checkbox"
+                        name={name}
+                        defaultChecked={Boolean(checked)}
+                        className="h-4 w-4 rounded border-[var(--border-default)] bg-[var(--bg-elevated)]"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRole } from "@/lib/auth-guard";
-import { anthropic, AI_MODEL } from "@/lib/claude";
+import { generateAIResponse } from "@/lib/ai-provider";
 import { z } from "zod";
 
 const requestSchema = z.object({
   name: z.string(),
-  description: z.string(),
-  useCase: z.string().optional(),
-  vendor: z.string().optional(),
-  modelType: z.string().optional(),
+  description: z.string().nullish().transform((v) => v ?? "No description provided"),
+  useCase: z.string().nullish(),
+  vendor: z.string().nullish(),
+  modelType: z.string().nullish(),
+  dataInputs: z.string().nullish(),
+  dataOutputs: z.string().nullish(),
+  dataSensitivity: z.string().nullish(),
 });
 
 export async function POST(req: NextRequest) {
@@ -19,22 +22,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Validation failed" }, { status: 400 });
     }
 
-    const { name, description, useCase, vendor, modelType } = parsed.data;
+    const { name, description, useCase, vendor, modelType, dataInputs, dataOutputs, dataSensitivity } = parsed.data;
 
-    const message = await anthropic.messages.create({
-      model: AI_MODEL,
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: `You are an AI governance risk analyst. Analyze this AI system and provide risk scores from 0-100 for each dimension (higher = more risk).
+    try {
+      const text = await generateAIResponse(
+        "You are an AI governance risk analyst performing risk assessments for AI systems. Always respond with valid JSON only, no markdown or commentary.",
+        `Analyze this AI system and provide risk scores from 0-100 for each dimension (higher = more risk), with a specific justification for each score.
 
-AI System:
+AI System Details:
 - Name: ${name}
 - Description: ${description}
 - Use Case: ${useCase ?? "Not specified"}
 - Vendor: ${vendor ?? "Not specified"}
 - Model Type: ${modelType ?? "Not specified"}
+- Data Inputs: ${dataInputs ?? "Not specified"}
+- Data Outputs: ${dataOutputs ?? "Not specified"}
+- Data Sensitivity: ${dataSensitivity ?? "Not specified"}
+
+Risk Dimensions:
+- biasScore: Potential for discriminatory outputs or decisions
+- securityScore: Vulnerability to adversarial attacks, data breaches, prompt injection
+- privacyScore: Risk of exposing personal or sensitive data
+- fairnessScore: Unequal treatment across demographic groups
+- performanceScore: Risk of unreliable or degraded outputs
+- transparencyScore: Lack of explainability or interpretability
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -44,26 +55,25 @@ Respond ONLY with valid JSON in this exact format:
   "fairnessScore": <0-100>,
   "performanceScore": <0-100>,
   "transparencyScore": <0-100>,
-  "riskLevel": "CRITICAL|HIGH|MEDIUM|LOW|MINIMAL",
-  "reasoning": "<brief explanation>"
-}`,
-        },
-      ],
-    });
+  "justifications": {
+    "biasScore": "<2-3 sentence justification>",
+    "securityScore": "<2-3 sentence justification>",
+    "privacyScore": "<2-3 sentence justification>",
+    "fairnessScore": "<2-3 sentence justification>",
+    "performanceScore": "<2-3 sentence justification>",
+    "transparencyScore": "<2-3 sentence justification>"
+  },
+  "notes": "<brief overall assessment summary>"
+}`
+      );
 
-    const content = message.content[0];
-    if (content.type !== "text") {
-      return NextResponse.json({ error: "Unexpected response" }, { status: 500 });
-    }
-
-    try {
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON found");
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No JSON found in AI response");
       const result = JSON.parse(jsonMatch[0]);
       return NextResponse.json(result);
-    } catch {
+    } catch (err) {
       return NextResponse.json(
-        { error: "Failed to parse AI response", raw: content.text },
+        { error: err instanceof Error ? err.message : "AI generation failed" },
         { status: 500 }
       );
     }

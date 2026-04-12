@@ -1,0 +1,22 @@
+{
+  "name": "nammu-ai-proxy",
+  "version": "1.0.0",
+  "description": "Nammu AI API Proxy — Claude & OpenAI usage logging",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "build": "tsc && prisma generate",
+    "start": "npm run build && func start",
+    "prestart": "npm run build",
+    "test": "echo \"No tests yet...\""
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0-alpha.1",
+    "@prisma/client": "^6.19.3",
+    "prisma": "^6.19.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "azure-functions-core-tools": "^4.x",
+    "typescript": "^5.9.3"
+  }
+}

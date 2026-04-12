@@ -21,21 +21,32 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const provider = url.searchParams.get("provider");
     const department = url.searchParams.get("department");
+    const model = url.searchParams.get("model");
     const flagged = url.searchParams.get("flagged");
-    const take = parseInt(url.searchParams.get("take") ?? "50");
+    const take = Math.min(Math.max(parseInt(url.searchParams.get("take") ?? "50", 10) || 50, 1), 200);
+    const skip = Math.max(parseInt(url.searchParams.get("skip") ?? "0", 10) || 0, 0);
 
     const where: Record<string, unknown> = {};
     if (provider) where.provider = provider;
     if (department) where.department = department;
+    if (model) where.model = { contains: model, mode: "insensitive" };
     if (flagged === "true") where.flagged = true;
 
+    const total = await prisma.aPIUsageLog.count({ where });
     const logs = await prisma.aPIUsageLog.findMany({
       where,
+      skip,
       take,
       orderBy: { createdAt: "desc" },
       include: { user: { select: { name: true, email: true } } },
     });
-    return NextResponse.json(logs);
+    return NextResponse.json(logs, {
+      headers: {
+        "X-Total-Count": String(total),
+        "X-Page-Size": String(take),
+        "X-Page-Offset": String(skip),
+      },
+    });
   });
 }
 

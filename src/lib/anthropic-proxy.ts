@@ -28,13 +28,12 @@ function calculateCost(
 
 /**
  * Handle a proxied request to the Anthropic API.
- * @param req - The incoming request
- * @param subpath - The path after /api/proxy/anthropic (e.g. "/v1/messages")
+ * Supports both streaming and non-streaming requests.
  */
 export async function handleAnthropicProxy(
   req: NextRequest,
   subpath: string
-): Promise<NextResponse> {
+): Promise<NextResponse | Response> {
   // Authenticate proxy request
   const proxyKey = req.headers.get("x-proxy-key");
   const proxySecret =
@@ -72,15 +71,14 @@ export async function handleAnthropicProxy(
   // Build the target URL
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
 
-  // Forward headers (pass through anthropic-specific headers)
+  // Forward headers
   const forwardHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
+    "Content-Type": req.headers.get("Content-Type") ?? "application/json",
     "x-api-key": apiKey,
     "anthropic-version":
       req.headers.get("anthropic-version") ?? "2023-06-01",
   };
 
-  // Pass through anthropic-beta header if present
   const betaHeader = req.headers.get("anthropic-beta");
   if (betaHeader) {
     forwardHeaders["anthropic-beta"] = betaHeader;
@@ -95,10 +93,11 @@ export async function handleAnthropicProxy(
       bodyJson = JSON.parse(bodyText);
     }
   } catch {
-    // Not JSON or empty body — that's fine for some endpoints
+    // Not JSON or empty body
   }
 
-  const model = bodyJson?.model as string ?? "unknown";
+  const model = (bodyJson?.model as string) ?? "unknown";
+  const isStreaming = bodyJson?.stream === true;
   const startTime = Date.now();
 
   // Forward to Anthropic
@@ -110,7 +109,7 @@ export async function handleAnthropicProxy(
       body: bodyText || undefined,
     });
   } catch (err) {
-    await logUsage({
+    logUsage({
       provider: "claude",
       model,
       department,
@@ -131,16 +130,41 @@ export async function handleAnthropicProxy(
 
   const latencyMs = Date.now() - startTime;
 
-  // For non-messages endpoints, just pass through without logging
+  // For non-messages endpoints, pass through directly
   if (!subpath.includes("/messages")) {
     const responseBody = await anthropicResponse.text();
     return new NextResponse(responseBody, {
       status: anthropicResponse.status,
-      headers: { "Content-Type": anthropicResponse.headers.get("Content-Type") ?? "application/json" },
+      headers: {
+        "Content-Type":
+          anthropicResponse.headers.get("Content-Type") ?? "application/json",
+      },
     });
   }
 
-  // Parse message response for usage logging
+  // ── Streaming response ──
+  if (isStreaming && anthropicResponse.body) {
+    const contentType =
+      anthropicResponse.headers.get("Content-Type") ??
+      "text/event-stream";
+
+    // Tee the stream: one for the client, one to extract usage
+    const [clientStream, logStream] = anthropicResponse.body.tee();
+
+    // Extract usage from the log stream in the background (non-blocking)
+    extractStreamUsage(logStream, { model, department, userEmail, latencyMs, subpath });
+
+    return new Response(clientStream, {
+      status: anthropicResponse.status,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  // ── Non-streaming response ──
   const responseBody = await anthropicResponse.json();
 
   const usage = responseBody.usage ?? {};
@@ -157,7 +181,6 @@ export async function handleAnthropicProxy(
     flagReason = `API error: ${anthropicResponse.status} ${responseBody.error?.message ?? ""}`;
   }
 
-  // Log usage (non-blocking)
   logUsage({
     provider: "claude",
     model,
@@ -175,6 +198,87 @@ export async function handleAnthropicProxy(
   return NextResponse.json(responseBody, {
     status: anthropicResponse.status,
   });
+}
+
+/**
+ * Read a stream to extract usage info from the message_delta event,
+ * then log it. The stream is consumed and discarded.
+ */
+async function extractStreamUsage(
+  stream: ReadableStream<Uint8Array>,
+  ctx: {
+    model: string;
+    department: string | null;
+    userEmail: string | null;
+    latencyMs: number;
+    subpath: string;
+  }
+) {
+  try {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE lines
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") continue;
+
+        try {
+          const event = JSON.parse(data);
+
+          // message_start contains input token count
+          if (event.type === "message_start" && event.message?.usage) {
+            inputTokens = event.message.usage.input_tokens ?? 0;
+          }
+
+          // message_delta contains output token count
+          if (event.type === "message_delta" && event.usage) {
+            outputTokens = event.usage.output_tokens ?? 0;
+          }
+        } catch {
+          // skip non-JSON lines
+        }
+      }
+    }
+
+    const totalTokens = inputTokens + outputTokens;
+    const cost = calculateCost(ctx.model, inputTokens, outputTokens);
+
+    if (totalTokens > 0) {
+      logUsage({
+        provider: "claude",
+        model: ctx.model,
+        department: ctx.department,
+        userEmail: ctx.userEmail,
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
+        totalTokens,
+        cost,
+        flagged: false,
+        flagReason: null,
+        metadata: {
+          latencyMs: ctx.latencyMs,
+          streaming: true,
+          path: ctx.subpath,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("Failed to extract stream usage:", err);
+  }
 }
 
 async function logUsage(params: {

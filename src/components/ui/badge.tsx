@@ -68,6 +68,8 @@ export function statusBadgeVariant(
     DISCOVERED: "warning",
     REGISTERED: "success",
     BLOCKED: "critical",
+    CHANGES_REQUESTED: "warning",
+    REVOKED: "critical",
   };
   return map[status] ?? "default";
 }

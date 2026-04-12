@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRole } from "@/lib/auth-guard";
-import { anthropic, AI_MODEL } from "@/lib/claude";
+import { generateAIResponse } from "@/lib/ai-provider";
 import { z } from "zod";
 
 const requestSchema = z.object({
@@ -24,13 +24,10 @@ export async function POST(req: NextRequest) {
 
     const { systemName, framework, currentMappings } = parsed.data;
 
-    const message = await anthropic.messages.create({
-      model: AI_MODEL,
-      max_tokens: 2048,
-      messages: [
-        {
-          role: "user",
-          content: `You are an AI compliance analyst. Analyze the compliance gaps for this AI system against the specified framework.
+    try {
+      const text = await generateAIResponse(
+        "You are an AI compliance analyst. Always respond with valid JSON only, no markdown or commentary.",
+        `Analyze the compliance gaps for this AI system against the specified framework.
 
 AI System: ${systemName}
 Framework: ${framework}
@@ -50,24 +47,16 @@ Respond ONLY with valid JSON:
   ],
   "overallAssessment": "<brief summary>",
   "complianceScore": <0-100>
-}`,
-        },
-      ],
-    });
+}`
+      );
 
-    const content = message.content[0];
-    if (content.type !== "text") {
-      return NextResponse.json({ error: "Unexpected response" }, { status: 500 });
-    }
-
-    try {
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON found");
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No JSON found in AI response");
       const result = JSON.parse(jsonMatch[0]);
       return NextResponse.json(result);
-    } catch {
+    } catch (err) {
       return NextResponse.json(
-        { error: "Failed to parse AI response", raw: content.text },
+        { error: err instanceof Error ? err.message : "AI generation failed" },
         { status: 500 }
       );
     }

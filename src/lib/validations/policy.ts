@@ -6,6 +6,7 @@ export const createPolicySchema = z.object({
   framework: z.enum(["EU_AI_ACT", "NIST_AI_RMF", "ISO_42001", "SOC2", "CUSTOM"]),
   version: z.string().default("1.0"),
   content: z.string().min(1, "Policy content is required"),
+  rules: z.any().optional().nullable(),
   status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).default("DRAFT"),
 });
 

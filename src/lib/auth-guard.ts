@@ -1,6 +1,6 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "./auth";
+import { getAuthOptions } from "./auth";
 
 export type AuthSession = {
   user: {
@@ -14,7 +14,7 @@ export type AuthSession = {
 };
 
 export async function getSession(): Promise<AuthSession | null> {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession(await getAuthOptions());
   if (!session?.user?.userId) return null;
   return session as AuthSession;
 }

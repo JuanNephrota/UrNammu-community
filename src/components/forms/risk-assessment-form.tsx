@@ -1,15 +1,27 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronUp, MessageSquare } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, ChevronUp, MessageSquare, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+interface SystemDetail {
+  id: string;
+  name: string;
+  description?: string | null;
+  useCase?: string | null;
+  vendor?: string | null;
+  modelType?: string | null;
+  dataInputs?: string | null;
+  dataOutputs?: string | null;
+  dataSensitivity?: string | null;
+}
+
 interface RiskAssessmentFormProps {
-  systems: { id: string; name: string }[];
+  systems: SystemDetail[];
 }
 
 const dimensions = [
@@ -69,8 +81,12 @@ function scoreLabel(score: number): string {
 
 export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSystemId, setSelectedSystemId] = useState("");
+  const [aiGenerated, setAiGenerated] = useState(false);
   const [scores, setScores] = useState<Record<string, number>>({
     biasScore: 0,
     securityScore: 0,
@@ -87,9 +103,90 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
     performanceScore: "",
     transparencyScore: "",
   });
+  const [notes, setNotes] = useState("");
   const [expandedDimensions, setExpandedDimensions] = useState<Set<string>>(new Set());
 
+  const requestedSystemId = searchParams.get("systemId");
+
+  useEffect(() => {
+    if (
+      requestedSystemId &&
+      !selectedSystemId &&
+      systems.some((system) => system.id === requestedSystemId)
+    ) {
+      setSelectedSystemId(requestedSystemId);
+    }
+  }, [requestedSystemId, selectedSystemId, systems]);
+
   const overall = Object.values(scores).reduce((a, b) => a + b, 0) / 6;
+  const selectedSystem = systems.find((s) => s.id === selectedSystemId);
+
+  async function handleGenerateAI() {
+    if (!selectedSystem) {
+      setError("Select an AI system first.");
+      return;
+    }
+    if (!selectedSystem.description) {
+      setError("The selected system has no description. Add a description to the system before generating an AI assessment.");
+      return;
+    }
+
+    setGenerating(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/ai/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: selectedSystem.name,
+          description: selectedSystem.description,
+          useCase: selectedSystem.useCase,
+          vendor: selectedSystem.vendor,
+          modelType: selectedSystem.modelType,
+          dataInputs: selectedSystem.dataInputs,
+          dataOutputs: selectedSystem.dataOutputs,
+          dataSensitivity: selectedSystem.dataSensitivity,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error ?? "AI generation failed");
+      }
+
+      const result = await res.json();
+
+      // Populate scores
+      const newScores: Record<string, number> = {};
+      for (const dim of dimensions) {
+        newScores[dim.key] = Math.round(result[dim.key] ?? 0);
+      }
+      setScores(newScores);
+
+      // Populate justifications
+      if (result.justifications) {
+        const newJustifications: Record<string, string> = {};
+        for (const dim of dimensions) {
+          newJustifications[dim.key] = result.justifications[dim.key] ?? "";
+        }
+        setJustifications(newJustifications);
+        // Expand all dimensions that have justifications
+        setExpandedDimensions(new Set(dimensions.filter((d) => newJustifications[d.key]).map((d) => d.key)));
+      }
+
+      // Populate notes
+      if (result.notes) {
+        setNotes(result.notes);
+      }
+
+      setAiGenerated(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   function toggleExpanded(key: string) {
     setExpandedDimensions((prev) => {
@@ -131,8 +228,6 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       return;
     }
 
-    const formData = new FormData(e.currentTarget);
-
     // Clean justifications: only include non-empty ones
     const cleanJustifications: Record<string, string> = {};
     for (const [key, value] of Object.entries(justifications)) {
@@ -140,10 +235,10 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
     }
 
     const data = {
-      aiSystemId: formData.get("aiSystemId") as string,
+      aiSystemId: selectedSystemId,
       ...scores,
       justifications: Object.keys(cleanJustifications).length > 0 ? cleanJustifications : undefined,
-      notes: formData.get("notes") as string,
+      notes: notes.trim() + (aiGenerated ? "\n\n[Initial assessment generated by AI]" : ""),
     };
 
     try {
@@ -170,10 +265,12 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
 
       <Card>
         <CardHeader><CardTitle>Select AI System</CardTitle></CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <select
             name="aiSystemId"
             required
+            value={selectedSystemId}
+            onChange={(e) => { setSelectedSystemId(e.target.value); setAiGenerated(false); }}
             className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
           >
             <option value="">Select a system...</option>
@@ -181,6 +278,31 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
+
+          {/* AI Generate button */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleGenerateAI}
+            disabled={generating || !selectedSystemId}
+            className="w-full gap-2 border-[var(--accent-border)] text-[var(--accent)] hover:bg-[var(--accent-dim)]"
+          >
+            {generating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            {generating ? "Analyzing system..." : "Generate Assessment with AI"}
+          </Button>
+
+          {aiGenerated && (
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+              <Sparkles className="h-3.5 w-3.5 text-[var(--success)]" />
+              <p className="text-xs text-[var(--success)]">
+                AI assessment generated. Review and adjust the scores and justifications below before submitting.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -327,7 +449,7 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       <Card>
         <CardHeader><CardTitle>Overall Notes</CardTitle></CardHeader>
         <CardContent>
-          <Textarea name="notes" rows={3} placeholder="General assessment notes, recommendations, or context..." />
+          <Textarea name="notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="General assessment notes, recommendations, or context..." />
         </CardContent>
       </Card>
 

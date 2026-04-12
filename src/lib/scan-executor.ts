@@ -12,24 +12,33 @@ interface ScanResult {
 
 /**
  * Execute a Google Workspace scan for shadow AI tools.
- * Creates ScanHistory, runs the scan, deduplicates results,
- * creates DiscoveredAITool records and alerts.
+ * Runs the scan, deduplicates results, creates DiscoveredAITool records and alerts.
+ *
+ * @param triggeredBy - userId or "system" for cron
+ * @param existingScanId - optional pre-created ScanHistory ID (for async calls)
  */
-export async function executeScan(triggeredBy: string): Promise<ScanResult> {
+export async function executeScan(
+  triggeredBy: string,
+  existingScanId?: string
+): Promise<ScanResult> {
   if (!(await isGoogleWorkspaceConfigured())) {
     throw new Error(
       "Google Workspace not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY and GOOGLE_ADMIN_EMAIL environment variables."
     );
   }
 
-  // Create scan history record
-  const scan = await prisma.scanHistory.create({
-    data: {
-      scanType: "google_workspace",
-      status: "running",
-      triggeredBy,
-    },
-  });
+  // Use existing scan record or create a new one
+  const scanId =
+    existingScanId ??
+    (
+      await prisma.scanHistory.create({
+        data: {
+          scanType: "google_workspace",
+          status: "running",
+          triggeredBy,
+        },
+      })
+    ).id;
 
   try {
     const result = await runFullScan();
@@ -91,7 +100,7 @@ export async function executeScan(triggeredBy: string): Promise<ScanResult> {
 
     // Update scan history
     await prisma.scanHistory.update({
-      where: { id: scan.id },
+      where: { id: scanId },
       data: {
         status: "completed",
         toolsFound: result.aiToolsFound,
@@ -102,7 +111,7 @@ export async function executeScan(triggeredBy: string): Promise<ScanResult> {
     });
 
     return {
-      scanId: scan.id,
+      scanId,
       status: "completed",
       toolsFound: result.aiToolsFound,
       newToolsAdded,
@@ -113,7 +122,7 @@ export async function executeScan(triggeredBy: string): Promise<ScanResult> {
       error instanceof Error ? error.message : "Unknown error";
 
     await prisma.scanHistory.update({
-      where: { id: scan.id },
+      where: { id: scanId },
       data: {
         status: "failed",
         errorMessage,
@@ -122,7 +131,7 @@ export async function executeScan(triggeredBy: string): Promise<ScanResult> {
     });
 
     return {
-      scanId: scan.id,
+      scanId,
       status: "failed",
       toolsFound: 0,
       newToolsAdded: 0,

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
@@ -17,7 +18,14 @@ export default async function AuditTrailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Audit Trail" description="Complete history of governance actions" />
+      <PageHeader title="Audit Trail" description="Complete history of governance actions">
+        <a href="/api/reports/governance-summary?format=json">
+          <Button variant="outline">Export JSON Report</Button>
+        </a>
+        <a href="/api/reports/governance-summary?format=csv">
+          <Button variant="outline">Export CSV Report</Button>
+        </a>
+      </PageHeader>
       <Card>
         <CardContent className="pt-6">
           {logs.length === 0 ? (

@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/discovered-tools/scan/cron",
-      "schedule": "0 2 * * *"
+      "path": "/api/scheduler/maintenance",
+      "schedule": "0 * * * *"
     }
   ]
 }

@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock } from "lucide-react";
+import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { DNS_PROXY_IMPORT_SOURCES } from "@/lib/discovered-tools-ingest";
 
 type Tool = {
   id: string;
@@ -29,6 +31,7 @@ type Tool = {
   userCount: number;
   notes: string | null;
   detectedAt: string;
+  linkedSystemId?: string | null;
 };
 
 type ScanStatus = {
@@ -42,6 +45,20 @@ type ScanStatus = {
     completedAt: string | null;
     errorMessage: string | null;
   } | null;
+};
+
+type IngestionRun = {
+  id: string;
+  source: string;
+  status: string;
+  inputType: string;
+  fileName: string | null;
+  processed: number;
+  matched: number;
+  newTools: number;
+  updatedTools: number;
+  errorMessage: string | null;
+  createdAt: string;
 };
 
 function timeAgo(dateStr: string): string {
@@ -61,6 +78,10 @@ export default function ShadowAIPage() {
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
   const [scanResult, setScanResult] = useState<string | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [ingestionRuns, setIngestionRuns] = useState<IngestionRun[]>([]);
 
   const fetchTools = useCallback(() => {
     fetch("/api/discovered-tools")
@@ -76,28 +97,38 @@ export default function ShadowAIPage() {
       .then((r) => r.json())
       .then(setScanStatus)
       .catch(() => {});
+    fetch("/api/discovered-tools/ingest?take=10")
+      .then((r) => r.json())
+      .then(setIngestionRuns)
+      .catch(() => {});
   }, [fetchTools]);
 
   async function handleScan() {
     setScanning(true);
-    setScanResult(null);
+    setScanResult("Scanning Google Workspace...");
     try {
       const res = await fetch("/api/discovered-tools/scan", { method: "POST" });
       const data = await res.json();
+
       if (res.ok) {
-        setScanResult(
-          `Scan complete: ${data.toolsFound} AI tools found, ${data.newToolsAdded} new, ${data.updatedTools} updated.`
-        );
-        fetchTools(); // Refresh the list
+        if (data.status === "completed") {
+          setScanResult(
+            `Scan complete: ${data.toolsFound} AI tools found, ${data.newToolsAdded} new, ${data.updatedTools} updated.`
+          );
+        } else if (data.status === "failed") {
+          setScanResult(`Scan failed: ${data.errorMessage ?? "Unknown error"}`);
+        } else {
+          setScanResult(`Scan finished with status: ${data.status}`);
+        }
+        fetchTools();
         // Refresh scan status
         const statusRes = await fetch("/api/discovered-tools/scan");
-        const statusData = await statusRes.json();
-        setScanStatus(statusData);
+        if (statusRes.ok) setScanStatus(await statusRes.json());
       } else {
         setScanResult(`Scan failed: ${data.error}${data.details ? ` — ${data.details}` : ""}`);
       }
-    } catch (err) {
-      setScanResult("Scan failed: Network error");
+    } catch {
+      setScanResult("Scan timed out or network error. For large organizations, try reducing the lookback period in Settings > Shadow AI.");
     } finally {
       setScanning(false);
     }
@@ -133,17 +164,75 @@ export default function ShadowAIPage() {
     const res = await fetch(`/api/discovered-tools/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(action === "register" ? { action: "register" } : { status: action }),
+      body: JSON.stringify(
+        action === "register" || action === "register_and_assess"
+          ? { action }
+          : { status: action }
+      ),
     });
     if (res.ok) {
+      const data = await res.json();
       setTools((prev) =>
         prev.map((t) =>
           t.id === id
-            ? { ...t, status: action === "register" ? "REGISTERED" : action }
+            ? {
+                ...t,
+                status: action === "register" || action === "register_and_assess" ? "REGISTERED" : action,
+                linkedSystemId: data.tool?.linkedSystemId ?? t.linkedSystemId,
+              }
             : t
         )
       );
-      if (action === "register") router.refresh();
+      if (action === "register" || action === "register_and_assess") {
+        if (data.nextHref) router.push(data.nextHref);
+        router.refresh();
+      }
+    }
+  }
+
+  async function handleImportCSV(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setImporting(true);
+    setImportResult(null);
+
+    const formData = new FormData(e.currentTarget);
+    const file = formData.get("csvFile") as File;
+    const source = formData.get("source") as string || "dns_proxy";
+
+    if (!file) {
+      setImportResult("No file selected");
+      setImporting(false);
+      return;
+    }
+
+    try {
+      const upload = new FormData();
+      upload.set("source", source);
+      upload.set("file", file);
+
+      const res = await fetch("/api/discovered-tools/import", {
+        method: "POST",
+        body: upload,
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setImportResult(
+          `Processed ${data.processed} entries: ${data.matched} AI tools matched, ${data.newTools} new, ${data.updatedTools} updated.`
+        );
+        fetchTools();
+        fetch("/api/discovered-tools/ingest?take=10")
+          .then((r) => r.json())
+          .then(setIngestionRuns)
+          .catch(() => {});
+        if (data.newTools > 0) setShowImport(false);
+      } else {
+        setImportResult(`Import failed: ${data.error}`);
+      }
+    } catch (err) {
+      setImportResult(`Import failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -169,6 +258,59 @@ export default function ShadowAIPage() {
           )}
           {scanning ? "Scanning..." : "Scan Google Workspace"}
         </Button>
+        <Button variant="ghost" asChild>
+          <Link href="/settings/shadow-ai">Shadow AI Settings</Link>
+        </Button>
+        <Dialog open={showImport} onOpenChange={(v) => { setShowImport(v); if (!v) setImportResult(null); }}>
+          <DialogTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              <Upload className="h-4 w-4" />
+              Import Logs
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Import DNS / Proxy Logs</DialogTitle>
+              <DialogDescription>
+                Upload a CSV or text file containing domain access logs. AI tool domains will be automatically detected.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleImportCSV} className="space-y-4">
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Accepted Formats</p>
+                <div className="text-xs text-[var(--text-muted)] space-y-1">
+                  <p><span className="font-medium text-[var(--text-primary)]">Plain text</span> — one domain per line</p>
+                  <p><span className="font-medium text-[var(--text-primary)]">CSV with headers</span> — generic logs should include <code className="bg-[var(--bg-elevated)] px-1 rounded">domain</code> plus optional <code className="bg-[var(--bg-elevated)] px-1 rounded">user</code>, <code className="bg-[var(--bg-elevated)] px-1 rounded">department</code>, and <code className="bg-[var(--bg-elevated)] px-1 rounded">count</code></p>
+                  <p><span className="font-medium text-[var(--text-primary)]">Vendor presets</span> — Cisco Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Log File (.csv, .txt, .log)</Label>
+                <Input name="csvFile" type="file" accept=".csv,.txt,.log,.tsv" required className="file:mr-3 file:rounded-md file:border-0 file:bg-[var(--bg-elevated)] file:px-3 file:py-1 file:text-xs file:text-[var(--text-secondary)]" />
+              </div>
+              <div className="space-y-2">
+                <Label>Source</Label>
+                <select name="source" defaultValue="dns_proxy" className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                  {DNS_PROXY_IMPORT_SOURCES.map((source) => (
+                    <option key={source.id} value={source.id}>{source.label}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-[var(--text-faint)]">
+                  Choose the closest export type so we can map vendor-specific headers before matching AI domains.
+                </p>
+              </div>
+              {importResult && (
+                <p className={`text-xs font-medium ${importResult.includes("failed") ? "text-[var(--critical)]" : "text-[var(--success)]"}`}>
+                  {importResult}
+                </p>
+              )}
+              <Button type="submit" disabled={importing} className="w-full bg-[var(--accent)] text-[var(--bg-deep)] hover:brightness-110">
+                {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                {importing ? "Processing..." : "Upload & Analyze"}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
         <Dialog open={showAdd} onOpenChange={setShowAdd}>
           <DialogTrigger asChild>
             <Button className="bg-[var(--accent)] text-[var(--bg-deep)] hover:brightness-110">
@@ -227,31 +369,40 @@ export default function ShadowAIPage() {
 
       {/* Scan status bar */}
       {(scanStatus || scanResult) && (
-        <div className="flex flex-wrap items-center gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3">
-          {scanStatus?.configured ? (
-            <div className="flex items-center gap-2 text-xs text-[var(--success)]">
-              <Wifi className="h-3.5 w-3.5" />
-              <span>Google Workspace connected</span>
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-4">
+            {scanStatus?.configured ? (
+              <div className="flex items-center gap-2 text-xs text-[var(--success)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Google Workspace connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Google Workspace not configured</span>
+              </div>
+            )}
+            {scanStatus?.lastScan?.completedAt && (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                <Clock className="h-3.5 w-3.5" />
+                <span>
+                  Last scan: {timeAgo(scanStatus.lastScan.completedAt)} &mdash;{" "}
+                  {scanStatus.lastScan.status === "completed"
+                    ? `${scanStatus.lastScan.toolsFound} tools found, ${scanStatus.lastScan.newToolsAdded} new`
+                    : "failed"}
+                </span>
+              </div>
+            )}
+            {scanResult && (
+              <p className={`text-xs font-medium ${scanResult.includes("failed") || scanResult.includes("error") ? "text-[var(--critical)]" : "text-[var(--success)]"}`}>
+                {scanResult}
+              </p>
+            )}
+          </div>
+          {scanStatus?.lastScan?.status === "failed" && scanStatus.lastScan.errorMessage && (
+            <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-[var(--critical)]">
+              Error: {scanStatus.lastScan.errorMessage}
             </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
-              <Wifi className="h-3.5 w-3.5" />
-              <span>Google Workspace not configured</span>
-            </div>
-          )}
-          {scanStatus?.lastScan?.completedAt && (
-            <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              <Clock className="h-3.5 w-3.5" />
-              <span>
-                Last scan: {timeAgo(scanStatus.lastScan.completedAt)} &mdash;{" "}
-                {scanStatus.lastScan.toolsFound} tools found, {scanStatus.lastScan.newToolsAdded} new
-              </span>
-            </div>
-          )}
-          {scanResult && (
-            <p className={`text-xs font-medium ${scanResult.includes("failed") ? "text-[var(--critical)]" : "text-[var(--success)]"}`}>
-              {scanResult}
-            </p>
           )}
         </div>
       )}
@@ -304,8 +455,13 @@ export default function ShadowAIPage() {
                         </p>
                       </div>
                       <div className="flex gap-2 shrink-0 ml-4">
-                        <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "register")}>
-                          <Shield className="mr-1 h-3 w-3" /> Register
+                        <Button size="sm" variant="outline" asChild>
+                          <Link href={`/registry/new?discoveredToolId=${tool.id}`}>
+                            Convert to Governed System
+                          </Link>
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "register_and_assess")}>
+                          <Shield className="mr-1 h-3 w-3" /> Register & Assess
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "APPROVED")}>
                           Approve
@@ -336,8 +492,44 @@ export default function ShadowAIPage() {
                         {tool.detectionSource === "google_workspace" && (
                           <Badge variant="info" className="text-[9px] px-1.5">GOOGLE</Badge>
                         )}
+                        {tool.linkedSystemId && (
+                          <Button size="sm" variant="ghost" asChild>
+                            <a href={`/registry/${tool.linkedSystemId}`}>View System</a>
+                          </Button>
+                        )}
                       </div>
                       <Badge variant={statusBadgeVariant(tool.status)}>{tool.status}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {ingestionRuns.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Recent Imports</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {ingestionRuns.map((run) => (
+                    <div key={run.id} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+                      <div>
+                        <p className="text-sm font-medium">{run.fileName ?? run.source}</p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {run.inputType.toUpperCase()} · {run.processed} processed · {run.matched} matched · {run.newTools} new
+                        </p>
+                        {run.errorMessage && (
+                          <p className="text-xs text-[var(--critical)]">{run.errorMessage}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <Badge variant={run.status === "completed" ? "success" : run.status === "failed" ? "critical" : "warning"}>
+                          {run.status}
+                        </Badge>
+                        <p className="mt-1 text-xs text-[var(--text-faint)]">
+                          {new Date(run.createdAt).toLocaleString()}
+                        </p>
+                      </div>
                     </div>
                   ))}
                 </div>

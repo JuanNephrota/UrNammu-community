@@ -149,3 +149,35 @@ export function matchAITool(
 
   return null;
 }
+
+/**
+ * Match a domain (e.g. "chat.openai.com") against known AI tools.
+ * Supports both exact matches and subdomain matching.
+ */
+export function matchDomain(domain: string): KnownAITool | null {
+  const lowerDomain = domain.toLowerCase().replace(/^www\./, "");
+
+  for (const tool of KNOWN_AI_TOOLS) {
+    for (const knownDomain of tool.domains) {
+      const lower = knownDomain.toLowerCase();
+      if (lowerDomain === lower || lowerDomain.endsWith("." + lower)) {
+        return tool;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get all known AI tool domains as a flat set (for fast lookup).
+ */
+export function getAllKnownDomains(): Set<string> {
+  const domains = new Set<string>();
+  for (const tool of KNOWN_AI_TOOLS) {
+    for (const d of tool.domains) {
+      domains.add(d.toLowerCase());
+    }
+  }
+  return domains;
+}

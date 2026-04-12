@@ -1,6 +1,13 @@
 {
-  "name": "ai-gov",
+  "name": "nammu",
   "version": "0.1.0",
+  "description": "AI Governance & Compliance Platform — centralized oversight of AI systems, agents, and API usage",
+  "author": "JuanNephrota",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JuanNephrota/Nammu.git"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,6 +15,7 @@
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
+    "test": "tsx --test 'src/**/*.test.ts'",
     "db:migrate": "npx prisma migrate dev",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:reset": "npx prisma migrate reset --force"
@@ -34,6 +42,7 @@
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "crowdstrike-falcon": "^0.6.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.1",
     "google-auth-library": "^10.6.2",
@@ -42,6 +51,7 @@
     "motion": "^12.38.0",
     "next": "16.2.3",
     "next-auth": "^4.24.13",
+    "openai": "^6.34.0",
     "prisma": "^6.19.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",

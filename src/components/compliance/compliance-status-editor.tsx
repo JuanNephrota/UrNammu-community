@@ -58,7 +58,6 @@ const statusOptions = [
 ];
 
 export function ComplianceStatusEditor({
-  assignmentId,
   policyId,
   aiSystemId,
   currentStatus,
@@ -93,8 +92,6 @@ export function ComplianceStatusEditor({
     setOpen(false);
     router.refresh();
   }
-
-  const currentOption = statusOptions.find((o) => o.value === currentStatus);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

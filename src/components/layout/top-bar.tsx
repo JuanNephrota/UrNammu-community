@@ -1,7 +1,10 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { Bell, LogOut, User, Activity } from "lucide-react";
+import { useEffect, useEffectEvent, useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { Bell, LogOut, User, Activity, ExternalLink } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -10,10 +13,60 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { Badge } from "@/components/ui/badge";
+import { Badge, riskBadgeVariant } from "@/components/ui/badge";
+
+type Alert = {
+  id: string;
+  title: string;
+  severity: string;
+  source: string;
+  status: string;
+  createdAt: string;
+};
+
+function timeAgo(dateStr: string): string {
+  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function severityDot(severity: string): string {
+  switch (severity) {
+    case "CRITICAL": return "var(--critical)";
+    case "HIGH": return "var(--high)";
+    case "MEDIUM": return "var(--warning)";
+    default: return "var(--text-muted)";
+  }
+}
 
 export function TopBar() {
   const { data: session } = useSession();
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [openCount, setOpenCount] = useState(0);
+
+  const fetchAlerts = useEffectEvent(async () => {
+    try {
+      const res = await fetch("/api/alerts?status=OPEN");
+      if (res.ok) {
+        const data = await res.json();
+        setAlerts(data.slice(0, 8));
+        setOpenCount(data.length);
+      }
+    } catch {
+      // silently fail
+    }
+  });
+
+  useEffect(() => {
+    fetchAlerts();
+    // Poll every 30 seconds for new alerts
+    const interval = setInterval(() => {
+      fetchAlerts();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-base)]/80 backdrop-blur-md px-6">
@@ -25,23 +78,81 @@ export function TopBar() {
 
       {/* Right: actions */}
       <div className="flex items-center gap-3">
-        <button className="relative rounded-lg p-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-          <Bell className="h-[18px] w-[18px]" />
-          <span className="absolute right-1.5 top-1.5 flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--critical)] opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--critical)]" />
-          </span>
-        </button>
+        {/* Alerts dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger className="relative rounded-lg p-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors outline-none">
+            <Bell className="h-[18px] w-[18px]" />
+            {openCount > 0 && (
+              <span className="absolute right-1 top-1 flex h-[18px] min-w-[18px] items-center justify-center">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--critical)] opacity-40" />
+                <span className="relative inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--critical)] px-1 text-[10px] font-bold text-white">
+                  {openCount > 99 ? "99+" : openCount}
+                </span>
+              </span>
+            )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-80">
+            <DropdownMenuLabel className="flex items-center justify-between">
+              <span>Open Alerts</span>
+              {openCount > 0 && (
+                <Badge variant="critical">{openCount}</Badge>
+              )}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {alerts.length === 0 ? (
+              <div className="px-3 py-6 text-center">
+                <p className="text-sm font-medium text-[var(--success)]">All clear</p>
+                <p className="text-xs text-[var(--text-faint)] mt-0.5">No open alerts</p>
+              </div>
+            ) : (
+              <>
+                {alerts.map((alert) => (
+                  <DropdownMenuItem key={alert.id} asChild>
+                    <Link href="/alerts" className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer">
+                      <div
+                        className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                        style={{
+                          backgroundColor: severityDot(alert.severity),
+                          boxShadow: alert.severity === "CRITICAL" ? `0 0 6px ${severityDot(alert.severity)}` : "none",
+                        }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] text-[var(--text-primary)] truncate">
+                          {alert.title}
+                        </p>
+                        <p className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                          {alert.source} &middot; {timeAgo(alert.createdAt)}
+                        </p>
+                      </div>
+                      <Badge variant={riskBadgeVariant(alert.severity)} className="shrink-0 mt-0.5">
+                        {alert.severity}
+                      </Badge>
+                    </Link>
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/alerts" className="flex items-center justify-center gap-1.5 py-2 text-xs text-[var(--accent)]">
+                    View all alerts <ExternalLink className="h-3 w-3" />
+                  </Link>
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <div className="h-5 w-px bg-[var(--border-subtle)]" />
 
+        {/* User menu */}
         <DropdownMenu>
           <DropdownMenuTrigger className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-[var(--bg-hover)] transition-colors outline-none">
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-dim)] ring-1 ring-[var(--accent-border)]">
               {session?.user?.image ? (
-                <img
+                <Image
                   src={session.user.image}
                   alt=""
+                  width={28}
+                  height={28}
                   className="h-7 w-7 rounded-full"
                 />
               ) : (

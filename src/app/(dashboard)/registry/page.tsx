@@ -27,6 +27,11 @@ export default async function RegistryPage() {
           </Button>
         </Link>
       </PageHeader>
+
+      <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-5 py-4 text-sm text-[var(--text-muted)] leading-relaxed">
+        An <span className="font-semibold text-[var(--text-primary)]">AI System</span> is any software that uses machine learning models, large language models, or algorithmic decision-making to generate outputs, predictions, or recommendations. This includes third-party AI services (e.g. ChatGPT, Claude), internally developed models, AI-powered SaaS tools, and automated decision systems that impact business operations, customers, or employees.
+      </div>
+
       <SystemsTable data={systems} />
     </div>
   );

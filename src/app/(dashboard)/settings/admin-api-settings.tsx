@@ -1,0 +1,349 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Check,
+  X,
+  Loader2,
+  Wifi,
+  WifiOff,
+  KeyRound,
+  Eye,
+  Clock,
+  RefreshCw,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+
+interface ProviderConfig {
+  id: string;
+  name: string;
+  description: string;
+  keyPlaceholder: string;
+  testEndpoint: string;
+  settingKey: string;
+  hasKey: boolean;
+  setupSteps: string[];
+  docsUrl: string;
+  docsLabel: string;
+  color: string;
+}
+
+const PROVIDERS: ProviderConfig[] = [
+  {
+    id: "anthropic",
+    name: "Anthropic Admin API",
+    description: "Access organization usage reports, API key inventory, workspace members, and audit data from your Anthropic account.",
+    keyPlaceholder: "sk-ant-admin-...",
+    testEndpoint: "/api/settings/test-anthropic-admin",
+    settingKey: "anthropic_admin_key",
+    hasKey: false,
+    setupSteps: [
+      "Go to console.anthropic.com > Settings > Admin API keys",
+      "Create a new Admin API key",
+      "Copy the key and paste it below",
+    ],
+    docsUrl: "https://docs.anthropic.com/en/api/administration-api",
+    docsLabel: "Anthropic Admin API Docs",
+    color: "var(--accent)",
+  },
+  {
+    id: "openai",
+    name: "OpenAI Admin API",
+    description: "Access organization usage, costs, API key inventory, and auto-discover OpenAI Assistants as AI agents.",
+    keyPlaceholder: "sk-admin-...",
+    testEndpoint: "/api/settings/test-openai-admin",
+    settingKey: "openai_admin_key",
+    hasKey: false,
+    setupSteps: [
+      "Go to platform.openai.com > Settings > Organization > Admin API keys",
+      "Create a new admin key (requires Organization Owner role)",
+      "Copy the key and paste it below",
+    ],
+    docsUrl: "https://platform.openai.com/docs/api-reference/admin-api-keys",
+    docsLabel: "OpenAI Admin API Docs",
+    color: "var(--success)",
+  },
+];
+
+interface Props {
+  hasAnthropicAdminKey: boolean;
+  hasOpenAIAdminKey: boolean;
+  providerSyncEnabled: boolean;
+  providerSyncIntervalHours: number;
+}
+
+export function AdminAPISettings({
+  hasAnthropicAdminKey,
+  hasOpenAIAdminKey,
+  providerSyncEnabled: initialProviderSyncEnabled,
+  providerSyncIntervalHours: initialProviderSyncIntervalHours,
+}: Props) {
+  const router = useRouter();
+  const [providerSyncEnabled, setProviderSyncEnabled] = useState(initialProviderSyncEnabled);
+  const [providerSyncIntervalHours, setProviderSyncIntervalHours] = useState(initialProviderSyncIntervalHours);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleResult, setScheduleResult] = useState<string | null>(null);
+
+  const providers = PROVIDERS.map((p) => ({
+    ...p,
+    hasKey: p.id === "anthropic" ? hasAnthropicAdminKey : hasOpenAIAdminKey,
+  }));
+
+  async function handleSaveSchedule() {
+    setSavingSchedule(true);
+    setScheduleResult(null);
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider_sync_enabled: providerSyncEnabled ? "true" : "false",
+          provider_sync_interval_hours: String(providerSyncIntervalHours),
+        }),
+      });
+
+      if (res.ok) {
+        setScheduleResult("Background provider sync schedule saved.");
+        router.refresh();
+      } else {
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error ?? msg; } catch { msg = text || msg; }
+        setScheduleResult(`Failed: ${msg}`);
+      }
+    } catch (err) {
+      setScheduleResult(`Failed: ${err instanceof Error ? err.message : "Network error"}`);
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Eye className="h-4 w-4 text-[var(--accent)]" />
+          AI Provider Admin APIs
+        </CardTitle>
+        <CardDescription>
+          Connect to Anthropic and OpenAI admin APIs to pull organization-level usage data, costs, API key inventories, and auto-discover AI assistants.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h4 className="text-sm font-semibold">Background Provider Sync</h4>
+              <p className="text-xs text-[var(--text-muted)]">
+                Lets the shared maintenance scheduler refresh provider telemetry and assistant inventory without manual button presses.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs">Auto-sync</Label>
+              <select
+                value={providerSyncEnabled ? "true" : "false"}
+                onChange={(e) => setProviderSyncEnabled(e.target.value === "true")}
+                className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2 text-xs">
+                <Clock className="h-3 w-3" />
+                Sync Interval
+              </Label>
+              <select
+                value={String(providerSyncIntervalHours)}
+                onChange={(e) => setProviderSyncIntervalHours(parseInt(e.target.value, 10))}
+                className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
+              >
+                <option value="1">Every hour</option>
+                <option value="6">Every 6 hours</option>
+                <option value="12">Every 12 hours</option>
+                <option value="24">Every 24 hours</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleSaveSchedule} disabled={savingSchedule}>
+              {savingSchedule ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+              {savingSchedule ? "Saving..." : "Save Sync Schedule"}
+            </Button>
+            {scheduleResult && (
+              <span className={`text-xs ${scheduleResult.includes("saved") ? "text-[var(--success)]" : "text-[var(--critical)]"}`}>
+                {scheduleResult}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {providers.map((provider) => (
+          <ProviderSection key={provider.id} provider={provider} />
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProviderSection({ provider }: { provider: ProviderConfig & { hasKey: boolean } }) {
+  const router = useRouter();
+  const [apiKey, setApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [saveResult, setSaveResult] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!apiKey.trim()) return;
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [provider.settingKey]: apiKey.trim() }),
+      });
+      if (res.ok) {
+        setSaveResult("Saved.");
+        setApiKey("");
+        router.refresh();
+      } else {
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error ?? msg; } catch { msg = text || msg; }
+        setSaveResult(`Failed: ${msg}`);
+      }
+    } catch {
+      setSaveResult("Failed to save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(provider.testEndpoint, { method: "POST" });
+      const data = await res.json();
+      setTestResult(res.ok ? data : { success: false, message: data.error ?? `HTTP ${res.status}` });
+    } catch {
+      setTestResult({ success: false, message: "Test failed." });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-[var(--border-subtle)] p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-sm font-semibold text-[var(--text-primary)]">{provider.name}</h4>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">{provider.description}</p>
+        </div>
+        {provider.hasKey ? (
+          <div className="flex items-center gap-1.5 text-xs text-[var(--success)]">
+            <Wifi className="h-3.5 w-3.5" /> Connected
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-faint)]">
+            <WifiOff className="h-3.5 w-3.5" /> Not configured
+          </div>
+        )}
+      </div>
+
+      {/* Setup steps */}
+      <div className="rounded-md bg-[var(--bg-base)] p-3">
+        <ol className="space-y-1 text-xs text-[var(--text-muted)]">
+          {provider.setupSteps.map((step, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="font-bold shrink-0" style={{ color: provider.color }}>{i + 1}.</span>
+              {step}
+            </li>
+          ))}
+        </ol>
+        <a
+          href={provider.docsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--accent)] hover:underline"
+        >
+          {provider.docsLabel}
+        </a>
+      </div>
+
+      {/* Key input */}
+      <div className="space-y-2">
+        <Label className="flex items-center gap-2 text-xs">
+          <KeyRound className="h-3 w-3" />
+          Admin API Key
+        </Label>
+        {provider.hasKey && !apiKey ? (
+          <div className="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2">
+            <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+            <span className="text-xs text-[var(--text-muted)] flex-1">Key configured</span>
+            <Button size="sm" variant="ghost" onClick={() => setApiKey(" ")} className="text-xs h-6 px-2">
+              Replace
+            </Button>
+          </div>
+        ) : (
+          <Input
+            type="password"
+            value={apiKey.trim()}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={provider.keyPlaceholder}
+            className="font-mono text-xs"
+          />
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={handleSave} disabled={saving || !apiKey.trim()}>
+          {saving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+          {saving ? "Saving..." : "Save"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleTest} disabled={testing || !provider.hasKey}>
+          {testing ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Wifi className="mr-1.5 h-3 w-3" />}
+          {testing ? "Testing..." : "Test"}
+        </Button>
+        {saveResult && (
+          <span className={`text-xs ${saveResult.includes("Saved") ? "text-[var(--success)]" : "text-[var(--critical)]"}`}>
+            {saveResult}
+          </span>
+        )}
+      </div>
+
+      {testResult && (
+        <div
+          className="flex items-start gap-2 rounded-md border p-3"
+          style={{
+            borderColor: testResult.success ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)",
+            background: testResult.success ? "rgba(16,185,129,0.05)" : "rgba(239,68,68,0.05)",
+          }}
+        >
+          {testResult.success ? (
+            <Check className="h-3.5 w-3.5 text-[var(--success)] mt-0.5 shrink-0" />
+          ) : (
+            <X className="h-3.5 w-3.5 text-[var(--critical)] mt-0.5 shrink-0" />
+          )}
+          <p className="text-xs" style={{ color: testResult.success ? "var(--success)" : "var(--critical)" }}>
+            {testResult.message}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}

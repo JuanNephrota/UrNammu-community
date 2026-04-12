@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings";
+import { logger } from "@/lib/observability";
 
 /**
  * OpenAI API Proxy
@@ -101,6 +102,12 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(body),
     });
   } catch (err) {
+    logger.error("openai_proxy.upstream_unreachable", {
+      model,
+      department,
+      userEmail,
+      error: err instanceof Error ? err.message : "Network error",
+    });
     await logUsage({
       provider: "chatgpt",
       model,
@@ -197,6 +204,10 @@ async function logUsage(params: {
       },
     });
   } catch (err) {
-    console.error("Failed to log API usage:", err);
+    logger.error("openai_proxy.log_usage_failed", {
+      model: params.model,
+      provider: params.provider,
+      error: err instanceof Error ? err.message : "Unknown error",
+    });
   }
 }

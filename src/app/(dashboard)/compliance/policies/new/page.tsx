@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { normalizePolicyRules } from "@/lib/policy-rules";
 
 export default function NewPolicyPage() {
   const router = useRouter();
@@ -26,6 +27,13 @@ export default function NewPolicyPage() {
       framework: formData.get("framework") as string,
       version: formData.get("version") as string || "1.0",
       content: formData.get("content") as string,
+      rules: normalizePolicyRules({
+        allowedVendors: formData.get("allowedVendors") as string,
+        blockedDataSensitivities: formData.getAll("blockedDataSensitivities") as string[],
+        requiredStages: formData.getAll("requiredStages") as string[],
+        maxReviewIntervalDays: Number(formData.get("maxReviewIntervalDays") || 0),
+        minimumRiskLevel: formData.get("minimumRiskLevel") as string,
+      }),
       status: formData.get("status") as string,
     };
 
@@ -91,6 +99,55 @@ export default function NewPolicyPage() {
             <div className="space-y-2">
               <Label htmlFor="content">Policy Content *</Label>
               <Textarea id="content" name="content" rows={10} required placeholder="Enter the full policy text..." />
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Machine-Readable Rules</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="allowedVendors">Allowed Vendors</Label>
+              <Input id="allowedVendors" name="allowedVendors" placeholder="OpenAI, Anthropic, Internal" />
+              <p className="text-xs text-[var(--text-muted)]">Comma-separated approved vendors for this policy.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Blocked Data Sensitivities</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"].map((value) => (
+                  <label key={value} className="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-2 text-sm">
+                    <input type="checkbox" name="blockedDataSensitivities" value={value} />
+                    <span>{value}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Required Governance Stages</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {["OWNER", "SECURITY", "LEGAL", "COMPLIANCE"].map((value) => (
+                  <label key={value} className="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-2 text-sm">
+                    <input type="checkbox" name="requiredStages" value={value} />
+                    <span>{value}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="maxReviewIntervalDays">Max Review Interval (Days)</Label>
+                <Input id="maxReviewIntervalDays" name="maxReviewIntervalDays" type="number" min={0} placeholder="365" />
+              </div>
+              <div className="space-y-2">
+                <Label>Minimum Risk Level</Label>
+                <select name="minimumRiskLevel" defaultValue="" className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                  <option value="">No minimum</option>
+                  <option value="MINIMAL">Minimal</option>
+                  <option value="LOW">Low</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HIGH">High</option>
+                  <option value="CRITICAL">Critical</option>
+                </select>
+              </div>
             </div>
           </CardContent>
         </Card>

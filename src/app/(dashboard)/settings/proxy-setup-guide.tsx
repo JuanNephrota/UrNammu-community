@@ -10,6 +10,7 @@ import {
   Braces,
   Server,
   ShieldCheck,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,6 +62,8 @@ function CopyBlock({ code, label }: { code: string; label?: string }) {
 export function ProxySetupGuide({ proxySecret, platformUrl }: Props) {
   const [customUrl, setCustomUrl] = useState(platformUrl);
   const [customSecret, setCustomSecret] = useState(proxySecret);
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<string | null>(null);
 
   const claudeProxyUrl = `${customUrl}/api/proxy/anthropic`;
   const openaiProxyUrl = `${customUrl}/api/proxy/openai`;
@@ -174,6 +177,28 @@ completion = client.chat.completions.create(
     messages=[{"role": "user", "content": "Hello"}],
 )`;
 
+  async function saveProxySettings() {
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proxy_secret: customSecret,
+          platform_url: customUrl,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error ?? "Failed to save proxy settings");
+      setSaveResult("Proxy settings saved.");
+    } catch (error) {
+      setSaveResult(error instanceof Error ? error.message : "Failed to save proxy settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -236,8 +261,17 @@ completion = client.chat.completions.create(
               </div>
             </div>
             <p className="text-[10px] text-[var(--text-faint)]">
-              Edit these values to generate correct code snippets below. The proxy secret must match the <code className="bg-[var(--bg-elevated)] px-1 rounded">PROXY_SECRET</code> environment variable on the server.
+              Edit these values to generate correct code snippets below. Saving here updates the app-level proxy configuration used by ingestion and usage-monitoring routes.
             </p>
+            <div className="flex items-center gap-3 pt-1">
+              <Button onClick={saveProxySettings} disabled={saving}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {saving ? "Saving..." : "Save Proxy Settings"}
+              </Button>
+              {saveResult && (
+                <span className="text-sm text-[var(--text-muted)]">{saveResult}</span>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>

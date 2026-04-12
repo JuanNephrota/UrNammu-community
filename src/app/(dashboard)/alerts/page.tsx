@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,10 @@ export default async function AlertsPage() {
   const alerts = await prisma.alert.findMany({
     orderBy: { createdAt: "desc" },
     take: 100,
+    include: {
+      aiSystem: { select: { id: true, name: true } },
+      governanceIncident: { select: { id: true, title: true } },
+    },
   });
 
   const openAlerts = alerts.filter((a) => a.status === "OPEN");
@@ -40,6 +45,17 @@ export default async function AlertsPage() {
                       <p className="text-xs text-[var(--text-faint)] mt-1">
                         {alert.source} &middot; {formatDateTime(alert.createdAt)}
                       </p>
+                      {(alert.aiSystem || alert.governanceIncident) && (
+                        <p className="text-xs text-[var(--text-muted)] mt-1">
+                          {alert.aiSystem && (
+                            <>
+                              System: <Link href={`/registry/${alert.aiSystem.id}`} className="text-[var(--accent)] hover:underline">{alert.aiSystem.name}</Link>
+                            </>
+                          )}
+                          {alert.aiSystem && alert.governanceIncident && " · "}
+                          {alert.governanceIncident && <>Incident: {alert.governanceIncident.title}</>}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <AlertActions alertId={alert.id} />
@@ -73,6 +89,17 @@ export default async function AlertsPage() {
                     <div>
                       <p className="text-sm">{alert.title}</p>
                       <p className="text-xs text-[var(--text-faint)]">{alert.source} &middot; {formatDateTime(alert.createdAt)}</p>
+                      {(alert.aiSystem || alert.governanceIncident) && (
+                        <p className="text-xs text-[var(--text-muted)] mt-1">
+                          {alert.aiSystem && (
+                            <>
+                              System: <Link href={`/registry/${alert.aiSystem.id}`} className="text-[var(--accent)] hover:underline">{alert.aiSystem.name}</Link>
+                            </>
+                          )}
+                          {alert.aiSystem && alert.governanceIncident && " · "}
+                          {alert.governanceIncident && <>Incident: {alert.governanceIncident.title}</>}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <Badge variant={statusBadgeVariant(alert.status)}>{alert.status}</Badge>

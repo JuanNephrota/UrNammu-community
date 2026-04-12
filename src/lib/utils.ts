@@ -22,3 +22,8 @@ export function formatDateTime(date: Date | string): string {
     minute: "2-digit",
   });
 }
+
+export function formatDateForInput(date: Date | string | null | undefined): string {
+  if (!date) return "";
+  return new Date(date).toISOString().slice(0, 10);
+}

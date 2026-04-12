@@ -4,7 +4,7 @@ import { RiskAssessmentForm } from "@/components/forms/risk-assessment-form";
 
 export default async function NewAssessmentPage() {
   const systems = await prisma.aISystem.findMany({
-    select: { id: true, name: true },
+    select: { id: true, name: true, description: true, useCase: true, vendor: true, modelType: true, dataInputs: true, dataOutputs: true, dataSensitivity: true },
     orderBy: { name: "asc" },
   });
 

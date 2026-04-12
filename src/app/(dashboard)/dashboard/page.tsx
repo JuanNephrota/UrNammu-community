@@ -6,12 +6,17 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { GovernanceActionQueue } from "@/components/dashboard/governance-action-queue";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
+import { isDemoModeEnabled } from "@/lib/demo-mode";
+import { ExecutivePostureChart } from "@/components/dashboard/executive-posture-chart";
+import { SegmentRiskHeatmap } from "@/components/dashboard/segment-risk-heatmap";
 
 export default async function DashboardPage() {
+  const demoMode = isDemoModeEnabled();
   const [
     systemCount,
     agentCount,
@@ -20,6 +25,17 @@ export default async function DashboardPage() {
     discoveredTools,
     recentSystems,
     recentAlerts,
+    systemsNeedingAssessment,
+    systemsMissingPolicies,
+    nonCompliantAssignments,
+    systemsReadyForApproval,
+    systemsWithApprovalChanges,
+    systemsWithOverdueReviews,
+    systemsMissingStageApprovals,
+    activeGovernanceExceptions,
+    systemsWithScores,
+    approvedSystems,
+    unresolvedDiscoveries,
   ] = await Promise.all([
     prisma.aISystem.count(),
     prisma.aIAgent.count(),
@@ -37,7 +53,180 @@ export default async function DashboardPage() {
       take: 5,
       orderBy: { createdAt: "desc" },
     }),
+    prisma.aISystem.count({
+      where: { riskAssessments: { none: {} } },
+    }),
+    prisma.aISystem.count({
+      where: { policyAssignments: { none: {} } },
+    }),
+    prisma.policyAssignment.count({
+      where: { complianceStatus: { in: ["NON_COMPLIANT", "NOT_ASSESSED"] } },
+    }),
+    prisma.aISystem.findMany({
+      where: {
+        riskAssessments: { some: {} },
+        policyAssignments: {
+          some: {},
+          every: { complianceStatus: "COMPLIANT" },
+        },
+        approvals: { none: { decision: "APPROVED" } },
+        nextReviewDate: { gte: new Date() },
+      },
+      select: {
+        id: true,
+        requireOwnerApproval: true,
+        requireSecurityApproval: true,
+        requireLegalApproval: true,
+        requireComplianceApproval: true,
+        governanceReviews: {
+          select: { stage: true, approved: true },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }).then((systems) =>
+      systems.filter((system) => {
+        const latestStageDecisions = new Map<string, boolean>();
+        for (const review of system.governanceReviews) {
+          if (!latestStageDecisions.has(review.stage)) {
+            latestStageDecisions.set(review.stage, review.approved);
+          }
+        }
+        const requiredStages = [
+          ...(system.requireOwnerApproval ? ["OWNER"] : []),
+          ...(system.requireSecurityApproval ? ["SECURITY"] : []),
+          ...(system.requireLegalApproval ? ["LEGAL"] : []),
+          ...(system.requireComplianceApproval ? ["COMPLIANCE"] : []),
+        ];
+        return requiredStages.every((stage) => latestStageDecisions.get(stage) === true);
+      }).length
+    ),
+    prisma.aISystem.count({
+      where: {
+        approvals: {
+          some: {
+            decision: { in: ["CHANGES_REQUESTED", "REVOKED"] },
+          },
+        },
+      },
+    }),
+    prisma.aISystem.count({
+      where: {
+        nextReviewDate: { lt: new Date() },
+      },
+    }),
+    prisma.aISystem.findMany({
+      select: {
+        id: true,
+        requireOwnerApproval: true,
+        requireSecurityApproval: true,
+        requireLegalApproval: true,
+        requireComplianceApproval: true,
+        governanceReviews: {
+          select: { stage: true, approved: true },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }).then((systems) =>
+      systems.filter((system) => {
+        const latestStageDecisions = new Map<string, boolean>();
+        for (const review of system.governanceReviews) {
+          if (!latestStageDecisions.has(review.stage)) {
+            latestStageDecisions.set(review.stage, review.approved);
+          }
+        }
+        const requiredStages = [
+          ...(system.requireOwnerApproval ? ["OWNER"] : []),
+          ...(system.requireSecurityApproval ? ["SECURITY"] : []),
+          ...(system.requireLegalApproval ? ["LEGAL"] : []),
+          ...(system.requireComplianceApproval ? ["COMPLIANCE"] : []),
+        ];
+        return requiredStages.some((stage) => latestStageDecisions.get(stage) !== true);
+      }).length
+    ),
+    prisma.governanceException.count({
+      where: {
+        status: "ACTIVE",
+        expiresAt: { gte: new Date() },
+      },
+    }),
+    prisma.aISystem.findMany({
+      include: {
+        riskAssessments: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+    }),
+    prisma.aISystem.findMany({
+      where: { status: { in: ["APPROVED", "DEPLOYED"] } },
+      select: { createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.discoveredAITool.findMany({
+      where: { status: { in: ["DISCOVERED", "UNDER_REVIEW"] } },
+      select: { detectedAt: true },
+      orderBy: { detectedAt: "asc" },
+    }),
   ]);
+
+  const posturePeriods = new Set<string>();
+  approvedSystems.forEach((s) => posturePeriods.add(new Date(s.createdAt).toLocaleString("en-US", { month: "short", year: "2-digit" })));
+  unresolvedDiscoveries.forEach((d) => posturePeriods.add(new Date(d.detectedAt).toLocaleString("en-US", { month: "short", year: "2-digit" })));
+  const orderedPeriods = [...posturePeriods].sort((a, b) => new Date(`1 ${a}`).getTime() - new Date(`1 ${b}`).getTime());
+  const executiveTrend = orderedPeriods.reduce<{ period: string; approved: number; ungoverned: number }[]>(
+    (acc, period) => {
+      const previous = acc[acc.length - 1] ?? { approved: 0, ungoverned: 0 };
+      const approvedDelta = approvedSystems.filter(
+        (s) => new Date(s.createdAt).toLocaleString("en-US", { month: "short", year: "2-digit" }) === period
+      ).length;
+      const ungovernedDelta = unresolvedDiscoveries.filter(
+        (d) => new Date(d.detectedAt).toLocaleString("en-US", { month: "short", year: "2-digit" }) === period
+      ).length;
+      acc.push({
+        period,
+        approved: previous.approved + approvedDelta,
+        ungoverned: previous.ungoverned + ungovernedDelta,
+      });
+      return acc;
+    },
+    []
+  );
+
+  const scoredSystems = systemsWithScores
+    .map((system) => ({
+      label: system.name,
+      department: system.department,
+      vendor: system.vendor ?? "Unknown",
+      dataSensitivity: system.dataSensitivity,
+      riskLevel: system.riskLevel,
+      avgScore: Math.round(system.riskAssessments[0]?.overallScore ?? 0),
+    }))
+    .filter((system) => system.avgScore > 0);
+
+  function buildSegmentRows<K extends "department" | "vendor" | "dataSensitivity">(key: K) {
+    const map = new Map<string, { systems: number; totalScore: number; highRisk: number }>();
+    for (const system of scoredSystems) {
+      const segment = system[key];
+      const current = map.get(segment) ?? { systems: 0, totalScore: 0, highRisk: 0 };
+      current.systems += 1;
+      current.totalScore += system.avgScore;
+      current.highRisk += ["HIGH", "CRITICAL"].includes(system.riskLevel) ? 1 : 0;
+      map.set(segment, current);
+    }
+    return [...map.entries()]
+      .map(([label, stats]) => ({
+        label,
+        systems: stats.systems,
+        avgScore: Math.round(stats.totalScore / stats.systems),
+        highRisk: stats.highRisk,
+      }))
+      .sort((a, b) => b.avgScore - a.avgScore)
+      .slice(0, 6);
+  }
+
+  const departmentRiskRows = buildSegmentRows("department");
+  const vendorRiskRows = buildSegmentRows("vendor");
+  const sensitivityRiskRows = buildSegmentRows("dataSensitivity");
 
   const complianceAssignments = await prisma.policyAssignment.groupBy({
     by: ["complianceStatus"],
@@ -55,12 +244,96 @@ export default async function DashboardPage() {
       ? Math.round((compliantCount / totalAssignments) * 100)
       : 0;
 
+  const governanceItems = [
+    {
+      label: "Shadow AI triage",
+      description: "Discovered tools still need registration, approval, or blocking.",
+      count: discoveredTools,
+      href: "/shadow-ai",
+      tone: discoveredTools > 0 ? "warning" : "success",
+    },
+    {
+      label: "Risk assessments due",
+      description: "Registered systems without an initial risk assessment.",
+      count: systemsNeedingAssessment,
+      href: "/risk-center/assessments/new",
+      tone: systemsNeedingAssessment > 0 ? "warning" : "success",
+    },
+    {
+      label: "Policy mapping needed",
+      description: "Systems without assigned policies cannot complete governance review.",
+      count: systemsMissingPolicies,
+      href: "/compliance",
+      tone: systemsMissingPolicies > 0 ? "warning" : "success",
+    },
+    {
+      label: "Stage approvals missing",
+      description: "Systems still waiting on owner, security, legal, or compliance signoff.",
+      count: systemsMissingStageApprovals,
+      href: "/registry",
+      tone: systemsMissingStageApprovals > 0 ? "warning" : "success",
+    },
+    {
+      label: "Approval review ready",
+      description: "Systems have completed governance steps and are waiting on a formal approval decision.",
+      count: systemsReadyForApproval,
+      href: "/registry",
+      tone: systemsReadyForApproval > 0 ? "success" : "info",
+    },
+    {
+      label: "Approval follow-up",
+      description: "Systems have requested changes or revoked approvals that need re-review.",
+      count: systemsWithApprovalChanges,
+      href: "/registry",
+      tone: systemsWithApprovalChanges > 0 ? "critical" : "success",
+    },
+    {
+      label: "Renewals overdue",
+      description: "Systems have passed their scheduled governance review date.",
+      count: systemsWithOverdueReviews,
+      href: "/registry",
+      tone: systemsWithOverdueReviews > 0 ? "critical" : "success",
+    },
+    {
+      label: "Compliance blockers",
+      description: "Assignments marked non-compliant or not assessed need evidence updates.",
+      count: nonCompliantAssignments,
+      href: "/compliance",
+      tone: nonCompliantAssignments > 0 ? "critical" : "success",
+    },
+    {
+      label: "Active exceptions",
+      description: "Time-boxed governance waivers that should be tracked to expiry.",
+      count: activeGovernanceExceptions,
+      href: "/compliance",
+      tone: activeGovernanceExceptions > 0 ? "info" : "success",
+    },
+  ] as const;
+
   return (
     <div className="space-y-8">
       <PageHeader
         title="Command Center"
-        description="Real-time AI governance posture overview"
+        description={
+          demoMode
+            ? "Demo workspace with seeded governance workflows, approvals, telemetry, and shadow AI discoveries"
+            : "Real-time AI governance posture overview"
+        }
       />
+
+      {demoMode && (
+        <Card className="border-amber-500/20 bg-amber-500/5">
+          <CardContent className="pt-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="warning">Demo Data Loaded</Badge>
+              <Badge variant="outline">No live provider credentials required</Badge>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
+              This environment is preloaded with example systems, approvals, alerts, usage telemetry, sync history, and shadow-AI findings so new users can explore the full governance workflow immediately after setup.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stat Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 stagger-children">
@@ -105,6 +378,21 @@ export default async function DashboardPage() {
 
       {/* Main content grid */}
       <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="lg:col-span-2 animate-fade-in-up" style={{ animationDelay: "280ms" }}>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-[var(--accent)]" />
+              Executive Governance Posture
+            </CardTitle>
+            <Link href="/oversight/vendors" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">
+              Vendor governance <ArrowRight className="h-3 w-3" />
+            </Link>
+          </CardHeader>
+          <CardContent>
+            <ExecutivePostureChart data={executiveTrend} />
+          </CardContent>
+        </Card>
+
         {/* Recent AI Systems */}
         <Card className="animate-fade-in-up" style={{ animationDelay: "300ms" }}>
           <CardHeader className="flex-row items-center justify-between">
@@ -218,6 +506,16 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <SegmentRiskHeatmap title="Risk by Department" rows={departmentRiskRows} />
+        <SegmentRiskHeatmap title="Risk by Vendor" rows={vendorRiskRows} />
+        <SegmentRiskHeatmap title="Risk by Data Sensitivity" rows={sensitivityRiskRows} />
+      </div>
+
+      <GovernanceActionQueue
+        items={governanceItems.filter((item) => item.count > 0)}
+      />
     </div>
   );
 }

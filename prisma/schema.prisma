@@ -91,6 +91,31 @@ enum ComplianceFramework {
   CUSTOM
 }
 
+enum ProviderSyncStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  CHANGES_REQUESTED
+  REVOKED
+}
+
+enum GovernanceReviewStage {
+  OWNER
+  SECURITY
+  LEGAL
+  COMPLIANCE
+}
+
+enum GovernanceExceptionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
 // ─── Auth (NextAuth) ────────────────────────────────────
 
 model Account {
@@ -135,6 +160,7 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
+  passwordHash  String?   @db.Text
   role          Role      @default(VIEWER)
   department    String?
 
@@ -144,6 +170,13 @@ model User {
   ownedAgents  AIAgent[]     @relation("AgentOwner")
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
+  syncRuns     ProviderSyncRun[]
+  ingestionRuns IngestionRun[]
+  systemApprovals SystemApproval[]
+  governanceReviews GovernanceReview[]
+  governanceExceptions GovernanceException[]
+  evidenceArtifacts EvidenceArtifact[]
+  governanceIncidents GovernanceIncident[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -167,10 +200,22 @@ model AISystem {
   modelType       String?
   dataInputs      String?         @db.Text
   dataOutputs     String?         @db.Text
+  reviewIntervalDays Int          @default(365)
+  nextReviewDate  DateTime?
+  requireOwnerApproval Boolean    @default(true)
+  requireSecurityApproval Boolean @default(true)
+  requireLegalApproval Boolean    @default(false)
+  requireComplianceApproval Boolean @default(true)
 
   complianceMappings ComplianceMapping[]
   riskAssessments    RiskAssessment[]
   policyAssignments  PolicyAssignment[]
+  approvals          SystemApproval[]
+  governanceReviews  GovernanceReview[]
+  governanceExceptions GovernanceException[]
+  evidenceArtifacts  EvidenceArtifact[]
+  governanceIncidents GovernanceIncident[]
+  alerts             Alert[]
   agents             AIAgent[]
   auditLogs          AuditLog[]       @relation("SystemAuditLogs")
 
@@ -250,6 +295,152 @@ model AppSetting {
   createdAt DateTime @default(now())
 }
 
+model IngestionRun {
+  id                String   @id @default(cuid())
+  source            String
+  status            String   @default("running")
+  inputType         String   @default("json")
+  fileName          String?
+  triggeredByUser   User?    @relation(fields: [triggeredByUserId], references: [id])
+  triggeredByUserId String?
+  processed         Int      @default(0)
+  matched           Int      @default(0)
+  newTools          Int      @default(0)
+  updatedTools      Int      @default(0)
+  errorMessage      String?  @db.Text
+  details           Json?
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  createdAt         DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+}
+
+// ─── Provider Telemetry ─────────────────────────────────
+
+model ProviderSyncRun {
+  id               String             @id @default(cuid())
+  provider         String
+  syncType         String
+  status           ProviderSyncStatus @default(RUNNING)
+  triggeredByUser  User?              @relation(fields: [triggeredByUserId], references: [id])
+  triggeredByUserId String?
+  startedAt        DateTime           @default(now())
+  completedAt      DateTime?
+  recordsProcessed Int                @default(0)
+  errorMessage     String?            @db.Text
+  metadata         Json?
+
+  rawSnapshots     ProviderRawSnapshot[]
+  usageBuckets     UsageBucket[]
+  costBuckets      CostBucket[]
+  providerProjects ProviderProject[]
+  providerActors   ProviderActor[]
+}
+
+model ProviderRawSnapshot {
+  id            String          @id @default(cuid())
+  provider      String
+  resourceType  String
+  externalId    String?
+  payload       Json
+  capturedAt    DateTime        @default(now())
+  syncRun       ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId     String
+
+  @@index([provider, resourceType, capturedAt])
+  @@index([syncRunId])
+}
+
+model UsageBucket {
+  id               String          @id @default(cuid())
+  provider         String
+  bucketStart      DateTime
+  bucketEnd        DateTime
+  granularity      String
+  dimensionKey     String
+  model            String?
+  projectExternalId String?
+  projectName      String?
+  actorExternalId  String?
+  actorName        String?
+  apiKeyExternalId String?
+  apiKeyName       String?
+  inputTokens      Int             @default(0)
+  outputTokens     Int             @default(0)
+  totalTokens      Int             @default(0)
+  requestCount     Int?
+  metadata         Json?
+  syncRun          ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId        String
+  createdAt        DateTime        @default(now())
+
+  @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
+  @@index([provider, bucketStart, granularity])
+  @@index([syncRunId])
+}
+
+model CostBucket {
+  id               String          @id @default(cuid())
+  provider         String
+  bucketStart      DateTime
+  bucketEnd        DateTime
+  granularity      String
+  dimensionKey     String
+  amount           Float           @default(0)
+  currency         String          @default("usd")
+  model            String?
+  projectExternalId String?
+  projectName      String?
+  actorExternalId  String?
+  actorName        String?
+  lineItem         String?
+  metadata         Json?
+  syncRun          ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId        String
+  createdAt        DateTime        @default(now())
+
+  @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
+  @@index([provider, bucketStart, granularity])
+  @@index([syncRunId])
+}
+
+model ProviderProject {
+  id               String          @id @default(cuid())
+  provider         String
+  externalId       String
+  name             String?
+  status           String?
+  metadata         Json?
+  lastSeenAt       DateTime        @default(now())
+  syncRun          ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId        String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([provider, externalId])
+  @@index([syncRunId])
+}
+
+model ProviderActor {
+  id               String          @id @default(cuid())
+  provider         String
+  externalId       String
+  email            String?
+  name             String?
+  role             String?
+  metadata         Json?
+  lastSeenAt       DateTime        @default(now())
+  syncRun          ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId        String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([provider, externalId])
+  @@index([syncRunId])
+}
+
 // ─── Risk Assessment ────────────────────────────────────
 
 model RiskAssessment {
@@ -300,6 +491,7 @@ model Policy {
   framework   ComplianceFramework
   version     String              @default("1.0")
   content     String              @db.Text
+  rules       Json?
   status      PolicyStatus        @default(DRAFT)
 
   assignments PolicyAssignment[]
@@ -338,6 +530,89 @@ model ComplianceMapping {
   updatedAt DateTime @updatedAt
 }
 
+model SystemApproval {
+  id               String           @id @default(cuid())
+  aiSystem         AISystem         @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId       String
+  decidedByUser    User             @relation(fields: [decidedByUserId], references: [id], onDelete: Cascade)
+  decidedByUserId  String
+  decision         ApprovalDecision
+  rationale        String?          @db.Text
+  createdAt        DateTime         @default(now())
+
+  @@index([aiSystemId, createdAt])
+  @@index([decidedByUserId, createdAt])
+}
+
+model GovernanceReview {
+  id              String               @id @default(cuid())
+  aiSystem        AISystem             @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId      String
+  stage           GovernanceReviewStage
+  decidedByUser   User                 @relation(fields: [decidedByUserId], references: [id], onDelete: Cascade)
+  decidedByUserId String
+  approved        Boolean              @default(false)
+  rationale       String?              @db.Text
+  createdAt       DateTime             @default(now())
+
+  @@index([aiSystemId, stage, createdAt])
+  @@index([decidedByUserId, createdAt])
+}
+
+model GovernanceException {
+  id               String                    @id @default(cuid())
+  aiSystem         AISystem                  @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId       String
+  approvedByUser   User                      @relation(fields: [approvedByUserId], references: [id], onDelete: Cascade)
+  approvedByUserId String
+  title            String
+  rationale        String                    @db.Text
+  expiresAt        DateTime
+  status           GovernanceExceptionStatus @default(ACTIVE)
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  @@index([aiSystemId, status, expiresAt])
+  @@index([approvedByUserId, createdAt])
+}
+
+model EvidenceArtifact {
+  id              String   @id @default(cuid())
+  aiSystem        AISystem @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId      String
+  uploadedByUser  User     @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  uploadedByUserId String
+  title           String
+  category        String
+  content         String?  @db.Text
+  linkUrl         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([aiSystemId, createdAt])
+  @@index([uploadedByUserId, createdAt])
+}
+
+model GovernanceIncident {
+  id              String        @id @default(cuid())
+  aiSystem        AISystem      @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId      String
+  openedByUser    User          @relation(fields: [openedByUserId], references: [id], onDelete: Cascade)
+  openedByUserId  String
+  title           String
+  summary         String?       @db.Text
+  severity        AlertSeverity
+  status          AlertStatus   @default(OPEN)
+  openedAt        DateTime      @default(now())
+  closedAt        DateTime?
+  alerts          Alert[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([aiSystemId, status, openedAt])
+  @@index([openedByUserId, createdAt])
+}
+
 // ─── Alerts ─────────────────────────────────────────────
 
 model Alert {
@@ -347,6 +622,10 @@ model Alert {
   severity       AlertSeverity
   status         AlertStatus       @default(OPEN)
   source         String
+  aiSystem       AISystem?         @relation(fields: [aiSystemId], references: [id])
+  aiSystemId     String?
+  governanceIncident GovernanceIncident? @relation(fields: [governanceIncidentId], references: [id])
+  governanceIncidentId String?
   relatedToolId  String?
   discoveredTool DiscoveredAITool? @relation(fields: [relatedToolId], references: [id])
 
