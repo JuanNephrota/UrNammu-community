@@ -270,7 +270,6 @@ npm run db:reset
 
 ### Oversight
 
-- [ ] Usage attribution remediation — surface unattributed usage and link to projects/systems
 - [ ] Per-system telemetry attribution for governed systems
 - [ ] Time range picker and provider/model/project filters on usage pages
 - [ ] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
