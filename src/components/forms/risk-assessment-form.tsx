@@ -20,6 +20,7 @@ import {
 } from "@/lib/risk-center";
 import { getDynamicRiskQuestions } from "@/lib/risk-questionnaire";
 import { getRiskAssessmentTemplates } from "@/lib/risk-templates";
+import { generateAssessmentIssues, type RiskAssessmentIssueInput } from "@/lib/risk-issues";
 
 interface SystemDetail {
   id: string;
@@ -68,6 +69,10 @@ interface SystemDetail {
 interface RiskAssessmentFormProps {
   systems: SystemDetail[];
 }
+
+type EditableRiskIssue = RiskAssessmentIssueInput & {
+  id: string;
+};
 
 const dimensions = [
   {
@@ -152,6 +157,7 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
   const [expandedDimensions, setExpandedDimensions] = useState<Set<string>>(new Set());
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
+  const [issues, setIssues] = useState<EditableRiskIssue[]>([]);
 
   const requestedSystemId = searchParams.get("systemId");
 
@@ -210,6 +216,7 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
     if (!selectedSystem) {
       setQuestionAnswers({});
       setAppliedTemplateId(null);
+      setIssues([]);
       return;
     }
 
@@ -227,6 +234,27 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       return next;
     });
   }, [selectedSystem]);
+
+  function refreshDerivedIssues(
+    nextScores: Record<string, number>,
+    nextJustifications: Record<string, string>,
+    nextNotes: string
+  ) {
+    setIssues((prev) => {
+      const manualIssues = prev.filter((issue) => issue.source !== "assessment");
+      const generated = generateAssessmentIssues({
+        scores: nextScores as RiskScores,
+        justifications: nextJustifications,
+        notes: nextNotes,
+      }).map((issue, index) => ({
+        ...issue,
+        id: `derived-${index}-${issue.category}`,
+        status: issue.status ?? "OPEN",
+        source: issue.source ?? "assessment",
+      }));
+      return [...generated, ...manualIssues];
+    });
+  }
 
   function applyTemplate(templateId: string) {
     const template = templates.find((entry) => entry.id === templateId);
@@ -252,6 +280,18 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       if (!prev.trim()) return template.defaults.notes;
       return prev.includes(template.defaults.notes) ? prev : `${template.defaults.notes}\n\n${prev}`;
     });
+    refreshDerivedIssues(
+      template.defaults.scores,
+      {
+        biasScore: template.defaults.justifications.biasScore ?? "",
+        securityScore: template.defaults.justifications.securityScore ?? "",
+        privacyScore: template.defaults.justifications.privacyScore ?? "",
+        fairnessScore: template.defaults.justifications.fairnessScore ?? "",
+        performanceScore: template.defaults.justifications.performanceScore ?? "",
+        transparencyScore: template.defaults.justifications.transparencyScore ?? "",
+      },
+      template.defaults.notes
+    );
     setAiGenerated(false);
     setAppliedTemplateId(template.id);
   }
@@ -315,6 +355,29 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
         setNotes(result.notes);
       }
 
+      const nextJustifications = result.justifications
+        ? dimensions.reduce<Record<string, string>>((acc, dim) => {
+            acc[dim.key] = result.justifications[dim.key] ?? "";
+            return acc;
+          }, {})
+        : justifications;
+      const nextNotes = result.notes ?? notes;
+      const generatedIssues = Array.isArray(result.issues)
+        ? result.issues
+        : generateAssessmentIssues({
+            scores: newScores as RiskScores,
+            justifications: nextJustifications,
+            notes: nextNotes,
+          });
+      setIssues(
+        generatedIssues.map((issue: RiskAssessmentIssueInput, index: number) => ({
+          ...issue,
+          id: `generated-${index}-${issue.category}`,
+          status: issue.status ?? "OPEN",
+          source: issue.source ?? "assessment",
+        }))
+      );
+
       setAiGenerated(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "AI generation failed");
@@ -334,7 +397,11 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
 
   // Auto-expand justification when score is >= 40
   function handleScoreChange(key: string, value: number) {
-    setScores((prev) => ({ ...prev, [key]: value }));
+    setScores((prev) => {
+      const next = { ...prev, [key]: value };
+      refreshDerivedIssues(next, justifications, notes);
+      return next;
+    });
     if (value >= 40 && !expandedDimensions.has(key)) {
       setExpandedDimensions((prev) => new Set(prev).add(key));
     }
@@ -386,6 +453,15 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       aiSystemId: selectedSystemId,
       ...scores,
       justifications: Object.keys(cleanJustifications).length > 0 ? cleanJustifications : undefined,
+      issues: issues.map((issue) => ({
+        category: issue.category,
+        title: issue.title,
+        detail: issue.detail,
+        remediation: issue.remediation,
+        severity: issue.severity,
+        status: issue.status,
+        source: issue.source,
+      })),
       contextualAnswers: dynamicQuestions.map((question) => ({
         id: question.id,
         category: question.category,
@@ -868,12 +944,14 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
                     <div className="px-4 pb-4">
                       <Textarea
                         value={justifications[dim.key]}
-                        onChange={(e) =>
-                          setJustifications((prev) => ({
-                            ...prev,
+                        onChange={(e) => {
+                          const nextJustifications = {
+                            ...justifications,
                             [dim.key]: e.target.value,
-                          }))
-                        }
+                          };
+                          setJustifications(nextJustifications);
+                          refreshDerivedIssues(scores, nextJustifications, notes);
+                        }}
                         rows={3}
                         placeholder={dim.placeholder}
                         className="text-xs"
@@ -893,9 +971,50 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       </Card>
 
       <Card>
+        <CardHeader><CardTitle>Assessment Issues</CardTitle></CardHeader>
+        <CardContent>
+          {issues.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No separate assessment issues have been identified yet. High-risk dimensions and AI-generated follow-up items will appear here automatically.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {issues.map((issue) => (
+                <div
+                  key={issue.id}
+                  className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={riskBadgeVariant(issue.severity)}>{issue.severity}</Badge>
+                    <Badge variant="outline">{issue.category.replace(/_/g, " ")}</Badge>
+                    <p className="text-sm font-medium text-[var(--text-primary)]">{issue.title}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-[var(--text-secondary)]">{issue.detail}</p>
+                  {issue.remediation && (
+                    <p className="mt-2 text-xs text-[var(--text-muted)]">
+                      Recommended action: {issue.remediation}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle>Overall Notes</CardTitle></CardHeader>
         <CardContent>
-          <Textarea name="notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="General assessment notes, recommendations, or context..." />
+          <Textarea
+            name="notes"
+            rows={3}
+            value={notes}
+            onChange={(e) => {
+              setNotes(e.target.value);
+              refreshDerivedIssues(scores, justifications, e.target.value);
+            }}
+            placeholder="General assessment notes, recommendations, or context..."
+          />
         </CardContent>
       </Card>
 

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
 import { AlertActions } from "./alert-actions";
+import { InvestigationButton } from "@/components/oversight/investigation-button";
 
 export default async function AlertsPage() {
   const alerts = await prisma.alert.findMany({
@@ -13,6 +14,7 @@ export default async function AlertsPage() {
     include: {
       aiSystem: { select: { id: true, name: true } },
       governanceIncident: { select: { id: true, title: true } },
+      investigation: { select: { id: true, status: true } },
     },
   });
 
@@ -58,7 +60,17 @@ export default async function AlertsPage() {
                       )}
                     </div>
                   </div>
-                  <AlertActions alertId={alert.id} />
+                  <div className="flex flex-col items-end gap-2">
+                    <AlertActions alertId={alert.id} />
+                    <InvestigationButton
+                      title={`Investigate: ${alert.title}`}
+                      summary={alert.description}
+                      aiSystemId={alert.aiSystem?.id ?? null}
+                      alertId={alert.id}
+                      governanceIncidentId={alert.governanceIncident?.id ?? null}
+                      existingInvestigationId={alert.investigation?.id ?? null}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -102,7 +114,12 @@ export default async function AlertsPage() {
                       )}
                     </div>
                   </div>
-                  <Badge variant={statusBadgeVariant(alert.status)}>{alert.status}</Badge>
+                  <div className="flex items-center gap-2">
+                    {alert.investigation && (
+                      <Badge variant="info">{alert.investigation.status.replace(/_/g, " ")}</Badge>
+                    )}
+                    <Badge variant={statusBadgeVariant(alert.status)}>{alert.status}</Badge>
+                  </div>
                 </div>
               ))}
             </div>

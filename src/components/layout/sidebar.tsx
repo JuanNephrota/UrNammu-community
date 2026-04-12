@@ -41,6 +41,7 @@ const navItems = [
       { name: "Shadow AI", href: "/shadow-ai", icon: Search },
       { name: "Risk Center", href: "/risk-center", icon: ShieldAlert },
       { name: "AI Oversight", href: "/oversight", icon: Eye },
+      { name: "Investigations", href: "/oversight/investigations", icon: Bell },
       { name: "Vendor Governance", href: "/oversight/vendors", icon: Building2 },
       { name: "Claude Code", href: "/oversight/claude-code", icon: Terminal },
       { name: "Compliance", href: "/compliance", icon: FileCheck },

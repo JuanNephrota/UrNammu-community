@@ -63,7 +63,16 @@ Respond ONLY with valid JSON in this exact format:
     "performanceScore": "<2-3 sentence justification>",
     "transparencyScore": "<2-3 sentence justification>"
   },
-  "notes": "<brief overall assessment summary>"
+  "notes": "<brief overall assessment summary>",
+  "issues": [
+    {
+      "category": "<bias|security|privacy|fairness|performance|transparency|assessment_follow_up>",
+      "title": "<short issue title>",
+      "detail": "<specific issue detail>",
+      "remediation": "<recommended next step>",
+      "severity": "<CRITICAL|HIGH|MEDIUM|LOW|MINIMAL>"
+    }
+  ]
 }`
       );
 

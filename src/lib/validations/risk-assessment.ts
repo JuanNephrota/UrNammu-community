@@ -7,6 +7,16 @@ const contextualAnswerSchema = z.object({
   answer: z.string().min(1),
 });
 
+const riskAssessmentIssueSchema = z.object({
+  category: z.string().min(1),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  remediation: z.string().optional().nullable(),
+  severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"]),
+  status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "ACCEPTED"]).optional(),
+  source: z.string().optional(),
+});
+
 export const createRiskAssessmentSchema = z.object({
   aiSystemId: z.string().min(1, "AI System is required"),
   biasScore: z.number().min(0).max(100).default(0),
@@ -23,6 +33,7 @@ export const createRiskAssessmentSchema = z.object({
     performanceScore: z.string().optional(),
     transparencyScore: z.string().optional(),
   }).optional(),
+  issues: z.array(riskAssessmentIssueSchema).optional(),
   contextualAnswers: z.array(contextualAnswerSchema).optional(),
   notes: z.string().optional(),
 });

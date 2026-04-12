@@ -132,6 +132,25 @@ enum VendorReviewStatus {
   REJECTED
 }
 
+enum RiskIssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  ACCEPTED
+}
+
+enum InvestigationStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum BudgetScopeType {
+  PROVIDER
+  AI_SYSTEM
+  DEPARTMENT
+}
+
 // ─── Auth (NextAuth) ────────────────────────────────────
 
 model Account {
@@ -193,6 +212,8 @@ model User {
   governanceExceptions GovernanceException[]
   evidenceArtifacts EvidenceArtifact[]
   governanceIncidents GovernanceIncident[]
+  investigations Investigation[]      @relation("InvestigationOwner")
+  spendBudgets SpendBudget[]          @relation("SpendBudgetOwner")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -232,6 +253,7 @@ model AISystem {
   evidenceArtifacts  EvidenceArtifact[]
   governanceIncidents GovernanceIncident[]
   alerts             Alert[]
+  investigations     Investigation[]
   agents             AIAgent[]
   auditLogs          AuditLog[]       @relation("SystemAuditLogs")
   usageBuckets       UsageBucket[]
@@ -498,9 +520,28 @@ model RiskAssessment {
   contextualAnswers Json?    // [{ id, category, prompt, answer }]
   assessedBy        String
   notes             String?  @db.Text
+  issues            RiskAssessmentIssue[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model RiskAssessmentIssue {
+  id               String           @id @default(cuid())
+  riskAssessment   RiskAssessment   @relation(fields: [riskAssessmentId], references: [id], onDelete: Cascade)
+  riskAssessmentId String
+  category         String
+  title            String
+  detail           String           @db.Text
+  remediation      String?          @db.Text
+  severity         RiskLevel        @default(MEDIUM)
+  status           RiskIssueStatus  @default(OPEN)
+  source           String           @default("assessment")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([riskAssessmentId, status, createdAt])
 }
 
 // ─── API Usage Monitoring ───────────────────────────────
@@ -647,6 +688,7 @@ model GovernanceIncident {
   openedAt        DateTime      @default(now())
   closedAt        DateTime?
   alerts          Alert[]
+  investigation   Investigation?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -669,9 +711,50 @@ model Alert {
   governanceIncidentId String?
   relatedToolId  String?
   discoveredTool DiscoveredAITool? @relation(fields: [relatedToolId], references: [id])
+  investigation  Investigation?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Investigation {
+  id                  String              @id @default(cuid())
+  title               String
+  summary             String?             @db.Text
+  status              InvestigationStatus @default(OPEN)
+  ownerUser           User?               @relation("InvestigationOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  ownerUserId         String?
+  aiSystem            AISystem?           @relation(fields: [aiSystemId], references: [id], onDelete: SetNull)
+  aiSystemId          String?
+  alert               Alert?              @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  alertId             String?             @unique
+  governanceIncident  GovernanceIncident? @relation(fields: [governanceIncidentId], references: [id], onDelete: SetNull)
+  governanceIncidentId String?            @unique
+  notes               String?             @db.Text
+  resolutionSummary   String?             @db.Text
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  resolvedAt          DateTime?
+
+  @@index([status, createdAt])
+  @@index([ownerUserId, status])
+  @@index([aiSystemId, status])
+}
+
+model SpendBudget {
+  id                  String          @id @default(cuid())
+  scopeType           BudgetScopeType
+  scopeKey            String
+  label               String
+  monthlyBudget       Float
+  warningThresholdPct Int             @default(80)
+  ownerUser           User?           @relation("SpendBudgetOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  ownerUserId         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([scopeType, scopeKey])
+  @@index([scopeType, scopeKey])
 }
 
 // ─── Audit Log ──────────────────────────────────────────

@@ -12,9 +12,15 @@ import { OrgDataPanel } from "@/components/dashboard/org-data-panel";
 import { OversightActionQueue } from "@/components/dashboard/governance-action-queue";
 import {
   buildCostLookup,
+  buildDataExposureFindings,
+  buildSystemTelemetrySummaries,
   buildTelemetryActivityRows,
   getTelemetryAttributionLabel,
+  summarizeDataExposureFindings,
 } from "@/lib/oversight-telemetry";
+import { SpendBudgetManager } from "@/components/oversight/spend-budget-manager";
+import { getTopCostDrivers, summarizeSpendBudgets } from "@/lib/spend-governance";
+import { getOversightRecommendations } from "@/lib/oversight-recommendations";
 
 export default async function OversightPage() {
   const now = new Date();
@@ -29,6 +35,8 @@ export default async function OversightPage() {
     dailyUsage,
     costBuckets,
     syncRuns,
+    spendBudgets,
+    investigations,
     unlinkedOpenAIAgents,
     driftAlerts,
     openIncidents,
@@ -43,6 +51,18 @@ export default async function OversightPage() {
       where: { bucketStart: { gte: thirtyDaysAgo } },
       take: 120,
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
+      include: {
+        aiSystem: {
+          select: {
+            id: true,
+            name: true,
+            dataSensitivity: true,
+            department: true,
+            status: true,
+            riskLevel: true,
+          },
+        },
+      },
     }),
     prisma.$queryRaw<{ date: string; tokens: number; cost: number }[]>`
       SELECT
@@ -65,6 +85,20 @@ export default async function OversightPage() {
       where: { syncType: "telemetry" },
       orderBy: { startedAt: "desc" },
       take: 12,
+    }),
+    prisma.spendBudget.findMany({
+      orderBy: [{ scopeType: "asc" }, { label: "asc" }],
+    }),
+    prisma.investigation.findMany({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+      orderBy: { updatedAt: "desc" },
+      take: 6,
+      include: {
+        ownerUser: { select: { name: true, email: true } },
+        aiSystem: { select: { id: true, name: true } },
+        alert: { select: { id: true, title: true, severity: true } },
+        governanceIncident: { select: { id: true, title: true, severity: true } },
+      },
     }),
     prisma.aIAgent.count({
       where: {
@@ -90,8 +124,19 @@ export default async function OversightPage() {
     costLookup,
     10
   );
+  const attributedSystemSummaries = buildSystemTelemetrySummaries(
+    recentUsageBuckets,
+    costLookup,
+    6
+  );
+  const exposureFindings = buildDataExposureFindings(recentUsageBuckets, costLookup, 8);
+  const exposureSummary = summarizeDataExposureFindings(exposureFindings);
   const totalCost = costBuckets.reduce((s, bucket) => s + bucket.amount, 0);
   const totalTokens = providerStats.reduce((s, p) => s + (p._sum.totalTokens ?? 0), 0);
+  const attributedTokens = recentUsageBuckets
+    .filter((bucket) => bucket.aiSystemId)
+    .reduce((sum, bucket) => sum + bucket.totalTokens, 0);
+  const attributedCoverage = totalTokens > 0 ? Math.round((attributedTokens / totalTokens) * 100) : 0;
   const trackedEntities = new Set(
     recentUsageBuckets.map((bucket) => getTelemetryAttributionLabel(bucket))
   ).size;
@@ -113,6 +158,66 @@ export default async function OversightPage() {
     previousSevenDayCost > 0 && recentSevenDayCost > previousSevenDayCost * 1.5;
 
   const latestFailedSync = syncRuns.find((run) => run.status === "FAILED");
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currentMonthBuckets = recentUsageBuckets.filter(
+    (bucket) => bucket.bucketStart >= currentMonthStart
+  );
+  const spendByScope = new Map<string, number>();
+  const departmentTotals = new Map<string, number>();
+  for (const bucket of currentMonthBuckets) {
+    const bucketCost = costLookup.get([
+      bucket.provider,
+      bucket.bucketStart.toISOString(),
+      bucket.bucketEnd.toISOString(),
+      bucket.granularity,
+      bucket.dimensionKey,
+    ].join(":")) ?? 0;
+    spendByScope.set(
+      `PROVIDER:${bucket.provider}`,
+      (spendByScope.get(`PROVIDER:${bucket.provider}`) ?? 0) + bucketCost
+    );
+    if (bucket.aiSystemId && bucket.aiSystem) {
+      spendByScope.set(
+        `AI_SYSTEM:${bucket.aiSystemId}`,
+        (spendByScope.get(`AI_SYSTEM:${bucket.aiSystemId}`) ?? 0) + bucketCost
+      );
+      departmentTotals.set(
+        bucket.aiSystem.department,
+        (departmentTotals.get(bucket.aiSystem.department) ?? 0) + bucketCost
+      );
+      spendByScope.set(
+        `DEPARTMENT:${bucket.aiSystem.department}`,
+        (spendByScope.get(`DEPARTMENT:${bucket.aiSystem.department}`) ?? 0) + bucketCost
+      );
+    }
+  }
+  const budgetSummaries = summarizeSpendBudgets({
+    budgets: spendBudgets,
+    spendByScope,
+    now,
+  });
+  const topCostDrivers = getTopCostDrivers({
+    providerTotals: costByProvider,
+    systemTotals: attributedSystemSummaries.map((summary) => ({
+      label: summary.systemName,
+      amount: summary.cost,
+    })),
+    departmentTotals: [...departmentTotals.entries()].map(([label, amount]) => ({
+      label,
+      amount,
+    })),
+    take: 6,
+  });
+  const oversightRecommendations = getOversightRecommendations({
+    staleProviders,
+    latestFailedSyncMessage: latestFailedSync?.errorMessage ?? null,
+    exposureFindingCount: exposureSummary.totalFindings,
+    openInvestigations: investigations.length,
+    unattributedCoverageGapPct: 100 - attributedCoverage,
+    driftAlerts,
+    budgetSummaries,
+    recentAlerts: [],
+  });
 
   return (
     <div className="space-y-6">
@@ -130,9 +235,14 @@ export default async function OversightPage() {
             <Eye className="mr-2 h-4 w-4" /> View All Logs
           </Button>
         </Link>
+        <Link href="/oversight/investigations">
+          <Button variant="outline">
+            <AlertTriangle className="mr-2 h-4 w-4" /> Investigations
+          </Button>
+        </Link>
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" />
         <StatCard title="Total Tokens" value={totalTokens.toLocaleString()} iconName="Eye" variant="default" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" />
@@ -142,6 +252,17 @@ export default async function OversightPage() {
           description="Recent projects, actors, or API keys"
           iconName="Database"
           variant={trackedEntities > 0 ? "success" : "default"}
+        />
+        <StatCard
+          title="Exposure Signals"
+          value={exposureSummary.totalFindings}
+          description={
+            exposureSummary.criticalFindings > 0
+              ? `${exposureSummary.criticalFindings} critical`
+              : "No critical signals"
+          }
+          iconName="AlertTriangle"
+          variant={exposureSummary.totalFindings > 0 ? "warning" : "success"}
         />
       </div>
 
@@ -177,6 +298,81 @@ export default async function OversightPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Governed System Telemetry Attribution</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+                Attributed Coverage
+              </p>
+              <p className="mt-2 text-2xl font-semibold">{attributedCoverage}%</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                Of recent token volume is linked to a governed system
+              </p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+                Governed Systems Seen
+              </p>
+              <p className="mt-2 text-2xl font-semibold">{attributedSystemSummaries.length}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                Systems with attributed telemetry in the last 30 days
+              </p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+                Unattributed Gap
+              </p>
+              <p className="mt-2 text-2xl font-semibold">
+                {(100 - attributedCoverage).toLocaleString()}%
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                Remaining recent token volume to map to governed systems
+              </p>
+            </div>
+          </div>
+
+          {attributedSystemSummaries.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No governed systems have attributed telemetry yet. Link usage buckets from the usage page to start system-level oversight.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {attributedSystemSummaries.map((summary) => (
+                <Link
+                  key={summary.aiSystemId}
+                  href={`/registry/${summary.aiSystemId}`}
+                  className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-[var(--border-subtle)] p-4 hover:bg-[var(--bg-hover)]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium">{summary.systemName}</p>
+                      <Badge variant="info">{summary.department}</Badge>
+                      <Badge variant="outline">{summary.status.replace(/_/g, " ")}</Badge>
+                      <Badge variant={summary.dataSensitivity === "RESTRICTED" ? "critical" : "warning"}>
+                        {summary.dataSensitivity}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      {summary.bucketCount} buckets · {summary.providerCount} providers · last seen {formatDateTime(summary.lastSeen)}
+                    </p>
+                  </div>
+                  <div className="text-right text-sm">
+                    <p className="font-semibold">{summary.tokens.toLocaleString()} tokens</p>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      {summary.requests.toLocaleString()} requests · ${summary.cost.toFixed(2)}
+                    </p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <OversightActionQueue
@@ -235,6 +431,36 @@ export default async function OversightPage() {
                   tone: "critical" as const,
                 }]
               : []),
+            ...(exposureSummary.totalFindings > 0
+              ? [{
+                  label: "Restricted-data exposure signals",
+                  description:
+                    exposureSummary.restrictedSystemFindings > 0
+                      ? `${exposureSummary.restrictedSystemFindings} findings are tied to systems already classified as restricted.`
+                      : "Provider-visible telemetry includes sensitive markers that merit review.",
+                  count: exposureSummary.totalFindings,
+                  href: "/oversight/usage",
+                  tone: exposureSummary.criticalFindings > 0 ? "critical" as const : "warning" as const,
+                }]
+              : []),
+            ...(investigations.length > 0
+              ? [{
+                  label: "Open investigations",
+                  description: "Alerts and incidents already in follow-up need owner attention and closure tracking.",
+                  count: investigations.length,
+                  href: "/oversight/investigations",
+                  tone: "warning" as const,
+                }]
+              : []),
+            ...(budgetSummaries.filter((budget) => budget.pacingStatus !== "on_track").length > 0
+              ? [{
+                  label: "Spend budgets are off pace",
+                  description: "One or more provider, system, or department budgets are above warning thresholds.",
+                  count: budgetSummaries.filter((budget) => budget.pacingStatus !== "on_track").length,
+                  href: "/oversight",
+                  tone: budgetSummaries.some((budget) => budget.pacingStatus === "critical") ? "critical" as const : "warning" as const,
+                }]
+              : []),
           ]}
         />
 
@@ -287,6 +513,153 @@ export default async function OversightPage() {
         </Card>
       </div>
 
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Oversight Recommendations</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {oversightRecommendations.map((recommendation) => (
+              <Link
+                key={recommendation.key}
+                href={recommendation.href}
+                className="block rounded-lg border border-[var(--border-subtle)] p-4 hover:bg-[var(--bg-hover)]"
+              >
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant={
+                      recommendation.tone === "critical"
+                        ? "critical"
+                        : recommendation.tone === "warning"
+                          ? "warning"
+                          : recommendation.tone === "success"
+                            ? "success"
+                            : "info"
+                    }
+                  >
+                    {recommendation.tone}
+                  </Badge>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">
+                    {recommendation.title}
+                  </p>
+                </div>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  {recommendation.detail}
+                </p>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Active Investigations</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {investigations.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No active investigations right now.
+              </p>
+            ) : (
+              investigations.map((investigation) => (
+                <Link
+                  key={investigation.id}
+                  href="/oversight/investigations"
+                  className="block rounded-lg border border-[var(--border-subtle)] p-4 hover:bg-[var(--bg-hover)]"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={investigation.status === "OPEN" ? "critical" : "warning"}>
+                      {investigation.status.replace(/_/g, " ")}
+                    </Badge>
+                    <p className="text-sm font-medium text-[var(--text-primary)]">
+                      {investigation.title}
+                    </p>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    Owner: {investigation.ownerUser?.name ?? investigation.ownerUser?.email ?? "Unassigned"}
+                  </p>
+                  {investigation.summary && (
+                    <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                      {investigation.summary}
+                    </p>
+                  )}
+                </Link>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Spend Governance</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <SpendBudgetManager budgets={spendBudgets} />
+            {budgetSummaries.length > 0 && (
+              <div className="space-y-3">
+                {budgetSummaries.map((budget) => (
+                  <div
+                    key={budget.id}
+                    className="rounded-lg border border-[var(--border-subtle)] p-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--text-primary)]">{budget.label}</p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {budget.scopeType.replace("_", " ")} · {budget.currentSpend.toFixed(2)} / {budget.monthlyBudget.toFixed(2)}
+                        </p>
+                      </div>
+                      <Badge
+                        variant={
+                          budget.pacingStatus === "critical"
+                            ? "critical"
+                            : budget.pacingStatus === "warning"
+                              ? "warning"
+                              : "success"
+                        }
+                      >
+                        {budget.pacingStatus.replace("_", " ")}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                      Utilization {budget.utilizationPct.toFixed(1)}% · projected month end ${budget.projectedMonthEndSpend.toFixed(2)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Cost Drivers</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {topCostDrivers.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No cost drivers yet.
+              </p>
+            ) : (
+              topCostDrivers.map((driver) => (
+                <div
+                  key={`${driver.scopeType}:${driver.label}`}
+                  className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text-primary)]">{driver.label}</p>
+                    <p className="text-xs text-[var(--text-muted)] capitalize">{driver.scopeType}</p>
+                  </div>
+                  <p className="text-sm font-semibold">${driver.amount.toFixed(2)}</p>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardHeader><CardTitle>Recent Telemetry Activity</CardTitle></CardHeader>
         <CardContent>
@@ -309,6 +682,69 @@ export default async function OversightPage() {
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-[var(--text-faint)]">{formatDateTime(row.date)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Restricted-Data Exposure Monitoring</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {exposureFindings.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No restricted-data exposure signals were detected from recent provider-visible telemetry.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {exposureFindings.map((finding) => (
+                <div
+                  key={finding.id}
+                  className="rounded-lg border border-[var(--border-subtle)] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            finding.severity === "critical"
+                              ? "critical"
+                              : finding.severity === "warning"
+                                ? "warning"
+                                : "info"
+                          }
+                        >
+                          {finding.severity.toUpperCase()}
+                        </Badge>
+                        <Badge variant="info" className="capitalize">
+                          {finding.provider}
+                        </Badge>
+                        {finding.systemSensitivity && (
+                          <Badge variant={finding.systemSensitivity === "RESTRICTED" ? "critical" : "warning"}>
+                            {finding.systemSensitivity}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-2 text-sm font-medium">
+                        {finding.attribution} · {finding.model}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        {finding.reasons.join(" ")}
+                      </p>
+                      <p className="mt-2 text-xs text-[var(--text-faint)]">
+                        Indicators: {finding.matchedIndicators.join(", ") || "Sensitivity markers only"} · Visibility:{" "}
+                        {finding.visibilitySignals.join(", ")}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs text-[var(--text-faint)]">
+                      <p>{formatDateTime(finding.date)}</p>
+                      <p className="mt-1">{finding.tokens.toLocaleString()} tokens</p>
+                      <p className="mt-1">${finding.cost.toFixed(4)}</p>
+                    </div>
                   </div>
                 </div>
               ))}

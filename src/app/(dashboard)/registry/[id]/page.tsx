@@ -9,6 +9,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDate } from "@/lib/utils";
 import {
+  buildCostLookup,
+  getBucketIdentityKey,
+  buildTelemetryActivityRows,
+} from "@/lib/oversight-telemetry";
+import {
   getRequiredStages,
   getSystemGovernanceRecommendations,
 } from "@/lib/governance-recommendations";
@@ -23,6 +28,7 @@ import {
   ComplianceStatusEditor,
   ComplianceEvidence,
 } from "@/components/compliance/compliance-status-editor";
+import { RiskAssessmentIssueStatusEditor } from "@/components/registry/risk-assessment-issue-status-editor";
 
 export default async function SystemDetailPage({
   params,
@@ -41,7 +47,15 @@ export default async function SystemDetailPage({
       agents: {
         select: { id: true, name: true, autonomyLevel: true, status: true, riskLevel: true },
       },
-      riskAssessments: { orderBy: { createdAt: "desc" }, take: 5 },
+      riskAssessments: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: {
+          issues: {
+            orderBy: [{ status: "asc" }, { severity: "desc" }, { createdAt: "asc" }],
+          },
+        },
+      },
       approvals: {
         orderBy: { createdAt: "desc" },
         take: 10,
@@ -98,6 +112,27 @@ export default async function SystemDetailPage({
     take: 5,
   });
   const now = new Date();
+  const telemetryWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const [usageBuckets, costBuckets] = await Promise.all([
+    prisma.usageBucket.findMany({
+      where: {
+        aiSystemId: system.id,
+        bucketStart: { gte: telemetryWindowStart },
+      },
+      orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
+      take: 40,
+      include: {
+        aiSystem: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.costBucket.findMany({
+      where: {
+        bucketStart: { gte: telemetryWindowStart },
+      },
+      orderBy: [{ bucketStart: "desc" }],
+      take: 120,
+    }),
+  ]);
   const exceptionSummaries = system.governanceExceptions.map((exception) => ({
     ...exception,
     status:
@@ -147,6 +182,18 @@ export default async function SystemDetailPage({
   });
   const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
   const requiredStages = getRequiredStages(system);
+  const costLookup = buildCostLookup(costBuckets);
+  const telemetryRows = buildTelemetryActivityRows(usageBuckets, costLookup, 8);
+  const telemetryProviders = new Set(usageBuckets.map((bucket) => bucket.provider));
+  const telemetryTokens = usageBuckets.reduce((sum, bucket) => sum + bucket.totalTokens, 0);
+  const telemetryRequests = usageBuckets.reduce(
+    (sum, bucket) => sum + (bucket.requestCount ?? 0),
+    0
+  );
+  const telemetryCost = usageBuckets.reduce(
+    (sum, bucket) => sum + (costLookup.get(getBucketIdentityKey(bucket)) ?? 0),
+    0
+  );
 
   return (
     <div className="space-y-6">
@@ -258,6 +305,68 @@ export default async function SystemDetailPage({
               systemId={system.id}
               incidents={system.governanceIncidents}
             />
+            <Card>
+              <CardHeader>
+                <CardTitle>Telemetry Attribution</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-[var(--border-subtle)] p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                      Last 30 days
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold">{telemetryTokens.toLocaleString()}</p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      {telemetryRequests.toLocaleString()} requests · ${telemetryCost.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-[var(--border-subtle)] p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                      Coverage
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold">{telemetryProviders.size}</p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      Providers · {usageBuckets.length} attributed buckets
+                    </p>
+                  </div>
+                </div>
+
+                {telemetryRows.length === 0 ? (
+                  <p className="text-sm text-[var(--text-muted)]">
+                    No attributed telemetry for this system yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {telemetryRows.map((row) => (
+                      <div
+                        key={row.id}
+                        className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="info" className="capitalize">
+                              {row.provider}
+                            </Badge>
+                            <span className="font-mono text-xs text-[var(--text-secondary)]">
+                              {row.model}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-[var(--text-muted)]">
+                            {row.tokens.toLocaleString()} tokens · {row.requests.toLocaleString()} requests · ${row.cost.toFixed(4)}
+                          </p>
+                        </div>
+                        <span className="text-xs text-[var(--text-faint)]">
+                          {formatDate(row.date)}
+                        </span>
+                      </div>
+                    ))}
+                    <Link href="/oversight/usage" className="text-xs font-medium text-[var(--accent)] hover:underline">
+                      View full telemetry attribution in Oversight
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
             <GovernanceRecommendationsCard recommendations={recommendations.slice(0, 6)} />
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -439,6 +548,49 @@ export default async function SystemDetailPage({
                           <div className="rounded-md bg-[var(--bg-base)] px-3 py-2">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-1">Notes</p>
                             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{ra.notes}</p>
+                          </div>
+                        )}
+                        {ra.issues.length > 0 && (
+                          <div className="rounded-md bg-[var(--bg-base)] px-3 py-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-2">
+                              Assessment Issues
+                            </p>
+                            <div className="space-y-2">
+                              {ra.issues.map((issue) => (
+                                <div
+                                  key={issue.id}
+                                  className="rounded-md border border-[var(--border-subtle)] p-3"
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant={riskBadgeVariant(issue.severity)}>
+                                          {issue.severity}
+                                        </Badge>
+                                        <Badge variant="outline">
+                                          {issue.category.replace(/_/g, " ")}
+                                        </Badge>
+                                        <p className="text-xs font-medium text-[var(--text-primary)]">
+                                          {issue.title}
+                                        </p>
+                                      </div>
+                                      <p className="mt-2 text-xs leading-relaxed text-[var(--text-secondary)]">
+                                        {issue.detail}
+                                      </p>
+                                      {issue.remediation && (
+                                        <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+                                          Recommended action: {issue.remediation}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <RiskAssessmentIssueStatusEditor
+                                      issueId={issue.id}
+                                      currentStatus={issue.status}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                         {contextualAnswers.length > 0 && (

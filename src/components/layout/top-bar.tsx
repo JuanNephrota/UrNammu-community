@@ -24,6 +24,16 @@ type Alert = {
   createdAt: string;
 };
 
+type WorkflowNotification = {
+  id: string;
+  title: string;
+  detail: string;
+  href: string;
+  category: string;
+  createdAt: string;
+  tone: "critical" | "warning" | "info";
+};
+
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
   if (seconds < 60) return "just now";
@@ -44,16 +54,29 @@ function severityDot(severity: string): string {
 export function TopBar() {
   const { data: session } = useSession();
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [workflowNotifications, setWorkflowNotifications] = useState<WorkflowNotification[]>([]);
   const [openCount, setOpenCount] = useState(0);
 
   const fetchAlerts = useEffectEvent(async () => {
     try {
-      const res = await fetch("/api/alerts?status=OPEN");
-      if (res.ok) {
-        const data = await res.json();
-        setAlerts(data.slice(0, 8));
-        setOpenCount(data.length);
+      const [alertRes, notificationRes] = await Promise.all([
+        fetch("/api/alerts?status=OPEN"),
+        fetch("/api/workflow-notifications"),
+      ]);
+      let alertCount = 0;
+      let workflowCount = 0;
+      if (alertRes.ok) {
+        const data = await alertRes.json();
+        setAlerts(data.slice(0, 6));
+        alertCount = Array.isArray(data) ? data.length : 0;
       }
+      if (notificationRes.ok) {
+        const notifications = await notificationRes.json();
+        const workflowItems = Array.isArray(notifications) ? notifications : [];
+        setWorkflowNotifications(workflowItems.slice(0, 6));
+        workflowCount = workflowItems.length;
+      }
+      setOpenCount(alertCount + workflowCount);
     } catch {
       // silently fail
     }
@@ -91,21 +114,59 @@ export function TopBar() {
               </span>
             )}
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
+            <DropdownMenuContent align="end" className="w-80">
             <DropdownMenuLabel className="flex items-center justify-between">
-              <span>Open Alerts</span>
+              <span>Workflow Activity</span>
               {openCount > 0 && (
                 <Badge variant="critical">{openCount}</Badge>
               )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {alerts.length === 0 ? (
+            {alerts.length === 0 && workflowNotifications.length === 0 ? (
               <div className="px-3 py-6 text-center">
                 <p className="text-sm font-medium text-[var(--success)]">All clear</p>
                 <p className="text-xs text-[var(--text-faint)] mt-0.5">No open alerts</p>
               </div>
             ) : (
               <>
+                {workflowNotifications.length > 0 && (
+                  <>
+                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
+                      Notifications
+                    </DropdownMenuLabel>
+                    {workflowNotifications.map((item) => (
+                      <DropdownMenuItem key={item.id} asChild>
+                        <Link href={item.href} className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer">
+                          <div
+                            className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor:
+                                item.tone === "critical"
+                                  ? "var(--critical)"
+                                  : item.tone === "warning"
+                                    ? "var(--warning)"
+                                    : "var(--accent)",
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] text-[var(--text-primary)] truncate">
+                              {item.title}
+                            </p>
+                            <p className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                              {item.category} &middot; {timeAgo(item.createdAt)}
+                            </p>
+                          </div>
+                        </Link>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {alerts.length > 0 && (
+                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
+                    Open Alerts
+                  </DropdownMenuLabel>
+                )}
                 {alerts.map((alert) => (
                   <DropdownMenuItem key={alert.id} asChild>
                     <Link href="/alerts" className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer">

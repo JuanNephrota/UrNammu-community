@@ -258,6 +258,7 @@ npm run db:reset
 
 - Admin sync now persists normalized telemetry for OpenAI and Anthropic.
 - Main oversight views now use normalized `UsageBucket` and `CostBucket` data.
+- Oversight now includes metadata-driven restricted-data exposure monitoring and governed-system telemetry attribution.
 - Policy rules support richer conditions, advisory vs blocking enforcement, and exception-aware evaluation.
 - Vendor governance includes editable vendor profiles with contract posture, lifecycle tracking, renewal queues, security review status, data residency, subprocessors, approved use cases, and composite vendor risk scoring.
 - Risk Center includes recommended tiers, control-gap detection, agent-aware overlays, branching contextual questions, and use-case templates.
@@ -281,7 +282,6 @@ npm run db:reset
 - [ ] Investigation workflows tied to alerts and incidents with owner, notes, and resolution tracking
 - [ ] Oversight recommendations with next-best actions for spend spikes, model shifts, and new projects
 - [ ] Model drift and change tracking across provider/model families
-- [ ] Data exposure monitoring for restricted-data patterns where provider visibility allows
 - [ ] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
 - [ ] Remediation status dashboards for alerts, incidents, and corrective actions
 - [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)

@@ -5,9 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import {
   buildCostLookup,
+  buildDataExposureFindings,
   buildTelemetryActivityRows,
   getBucketIdentityKey,
   getTelemetryAttributionLabel,
+  summarizeDataExposureFindings,
 } from "@/lib/oversight-telemetry";
 import { LinkUsageDialog } from "@/components/oversight/link-usage-dialog";
 
@@ -20,7 +22,7 @@ export default async function UsageLogsPage() {
       where: { bucketStart: { gte: thirtyDaysAgo } },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       take: 300,
-      include: { aiSystem: { select: { id: true, name: true } } },
+      include: { aiSystem: { select: { id: true, name: true, dataSensitivity: true } } },
     }),
     prisma.costBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
@@ -90,6 +92,8 @@ export default async function UsageLogsPage() {
 
   const tableRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
   const recentTelemetry = buildTelemetryActivityRows(usageBuckets, costMap, 30);
+  const exposureFindings = buildDataExposureFindings(usageBuckets, costMap, 20);
+  const exposureSummary = summarizeDataExposureFindings(exposureFindings);
 
   // Group unattributed buckets (no aiSystemId) by label+provider+model for remediation
   const unattributedGroups = new Map<
@@ -163,7 +167,82 @@ export default async function UsageLogsPage() {
             <p className="mt-1 text-sm text-[var(--text-muted)]">Providers synced recently</p>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+              Exposure Signals
+            </p>
+            <p className="mt-2 text-3xl font-semibold">{exposureSummary.totalFindings}</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              {exposureSummary.restrictedSystemFindings} linked to restricted systems
+            </p>
+          </CardContent>
+        </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Restricted-Data Exposure Findings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {exposureFindings.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No restricted-data signals were detected from the last 30 days of provider-visible telemetry.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {exposureFindings.map((finding) => (
+                <div
+                  key={finding.id}
+                  className="rounded-lg border border-[var(--border-subtle)] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            finding.severity === "critical"
+                              ? "critical"
+                              : finding.severity === "warning"
+                                ? "warning"
+                                : "info"
+                          }
+                        >
+                          {finding.severity.toUpperCase()}
+                        </Badge>
+                        <Badge variant="info" className="capitalize">
+                          {finding.provider}
+                        </Badge>
+                        {finding.systemSensitivity && (
+                          <Badge variant={finding.systemSensitivity === "RESTRICTED" ? "critical" : "warning"}>
+                            {finding.systemSensitivity}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-2 text-sm font-medium">
+                        {finding.attribution} · {finding.model}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        {finding.reasons.join(" ")}
+                      </p>
+                      <p className="mt-2 text-xs text-[var(--text-faint)]">
+                        Indicators: {finding.matchedIndicators.join(", ") || "Sensitivity markers only"} · Visibility:{" "}
+                        {finding.visibilitySignals.join(", ")}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs text-[var(--text-faint)]">
+                      <p>{formatDateTime(finding.date)}</p>
+                      <p className="mt-1">{finding.tokens.toLocaleString()} tokens</p>
+                      <p className="mt-1">{finding.requests.toLocaleString()} requests</p>
+                      <p className="mt-1">${finding.cost.toFixed(4)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {unattributedList.length > 0 && (
         <Card>

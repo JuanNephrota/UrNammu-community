@@ -4,6 +4,7 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { createRiskAssessmentSchema } from "@/lib/validations/risk-assessment";
 import { createAuditLog } from "@/lib/audit";
 import type { Prisma } from "@prisma/client";
+import { generateAssessmentIssues } from "@/lib/risk-issues";
 
 export async function GET() {
   return withAuth(async () => {
@@ -11,6 +12,7 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
       include: {
         aiSystem: { select: { id: true, name: true, riskLevel: true } },
+        issues: true,
       },
     });
     return NextResponse.json(assessments);
@@ -30,6 +32,21 @@ export async function POST(req: NextRequest) {
 
     const { biasScore, securityScore, privacyScore, fairnessScore, performanceScore, transparencyScore } = parsed.data;
     const overallScore = (biasScore + securityScore + privacyScore + fairnessScore + performanceScore + transparencyScore) / 6;
+    const derivedIssues =
+      parsed.data.issues && parsed.data.issues.length > 0
+        ? parsed.data.issues
+        : generateAssessmentIssues({
+            scores: {
+              biasScore,
+              securityScore,
+              privacyScore,
+              fairnessScore,
+              performanceScore,
+              transparencyScore,
+            },
+            justifications: parsed.data.justifications,
+            notes: parsed.data.notes,
+          });
 
     const assessment = await prisma.riskAssessment.create({
       data: {
@@ -37,6 +54,22 @@ export async function POST(req: NextRequest) {
         contextualAnswers: parsed.data.contextualAnswers as Prisma.InputJsonValue | undefined,
         overallScore: Math.round(overallScore * 10) / 10,
         assessedBy: session.user.name ?? session.user.email ?? "Unknown",
+        issues: derivedIssues.length
+          ? {
+              create: derivedIssues.map((issue) => ({
+                category: issue.category,
+                title: issue.title,
+                detail: issue.detail,
+                remediation: issue.remediation ?? null,
+                severity: issue.severity,
+                status: issue.status ?? "OPEN",
+                source: issue.source ?? "assessment",
+              })),
+            }
+          : undefined,
+      },
+      include: {
+        issues: true,
       },
     });
 
@@ -70,6 +103,9 @@ export async function POST(req: NextRequest) {
       entityType: "RiskAssessment",
       entityId: assessment.id,
       aiSystemId: parsed.data.aiSystemId,
+      changes: {
+        issueCount: assessment.issues.length,
+      },
     });
 
     return NextResponse.json(assessment, { status: 201 });
