@@ -14,8 +14,18 @@ export async function getSetting(key: string): Promise<string | null> {
     google_admin_email: process.env.GOOGLE_ADMIN_EMAIL,
     google_scan_schedule: process.env.GOOGLE_SCAN_SCHEDULE,
     google_scan_interval_hours: process.env.GOOGLE_SCAN_INTERVAL_HOURS,
+    google_scan_enabled: process.env.GOOGLE_SCAN_ENABLED,
+    google_scan_lookback_days: process.env.GOOGLE_SCAN_LOOKBACK_DAYS,
     google_oauth_client_id: process.env.GOOGLE_CLIENT_ID,
     google_oauth_client_secret: process.env.GOOGLE_CLIENT_SECRET,
+    microsoft_shadow_ai_tenant_id: process.env.MICROSOFT_SHADOW_AI_TENANT_ID,
+    microsoft_shadow_ai_client_id: process.env.MICROSOFT_SHADOW_AI_CLIENT_ID,
+    microsoft_shadow_ai_client_secret:
+      process.env.MICROSOFT_SHADOW_AI_CLIENT_SECRET,
+    microsoft_shadow_ai_scan_enabled:
+      process.env.MICROSOFT_SHADOW_AI_SCAN_ENABLED,
+    microsoft_shadow_ai_scan_interval_hours:
+      process.env.MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS,
     provider_sync_enabled: process.env.PROVIDER_SYNC_ENABLED,
     provider_sync_interval_hours: process.env.PROVIDER_SYNC_INTERVAL_HOURS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
@@ -73,6 +83,14 @@ export const GOOGLE_SETTINGS_KEYS = {
   SCAN_ENABLED: "google_scan_enabled",
   SCAN_LOOKBACK_DAYS: "google_scan_lookback_days",
   SCAN_INTERVAL_HOURS: "google_scan_interval_hours",
+} as const;
+
+export const MICROSOFT_SHADOW_AI_SETTINGS_KEYS = {
+  TENANT_ID: "microsoft_shadow_ai_tenant_id",
+  CLIENT_ID: "microsoft_shadow_ai_client_id",
+  CLIENT_SECRET: "microsoft_shadow_ai_client_secret",
+  SCAN_ENABLED: "microsoft_shadow_ai_scan_enabled",
+  SCAN_INTERVAL_HOURS: "microsoft_shadow_ai_scan_interval_hours",
 } as const;
 
 export const PROVIDER_SYNC_SETTINGS_KEYS = {

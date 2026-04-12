@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload } from "lucide-react";
+import { Building2, Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,15 +36,28 @@ type Tool = {
 
 type ScanStatus = {
   configured: boolean;
-  lastScan: {
+  lastScan: ScanHistorySummary | null;
+  sources?: {
+    googleWorkspace: {
+      configured: boolean;
+      lastScan: ScanHistorySummary | null;
+    };
+    microsoft365: {
+      configured: boolean;
+      lastScan: ScanHistorySummary | null;
+    };
+  };
+};
+
+type ScanHistorySummary = {
     id: string;
+    scanType: string;
     status: string;
     toolsFound: number;
     newToolsAdded: number;
     updatedTools: number;
     completedAt: string | null;
     errorMessage: string | null;
-  } | null;
 };
 
 type IngestionRun = {
@@ -103,11 +116,19 @@ export default function ShadowAIPage() {
       .catch(() => {});
   }, [fetchTools]);
 
-  async function handleScan() {
+  async function handleScan(provider: "google_workspace" | "microsoft_365") {
     setScanning(true);
-    setScanResult("Scanning Google Workspace...");
+    setScanResult(
+      provider === "google_workspace"
+        ? "Scanning Google Workspace..."
+        : "Scanning Microsoft 365..."
+    );
     try {
-      const res = await fetch("/api/discovered-tools/scan", { method: "POST" });
+      const res = await fetch("/api/discovered-tools/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
       const data = await res.json();
 
       if (res.ok) {
@@ -128,10 +149,20 @@ export default function ShadowAIPage() {
         setScanResult(`Scan failed: ${data.error}${data.details ? ` — ${data.details}` : ""}`);
       }
     } catch {
-      setScanResult("Scan timed out or network error. For large organizations, try reducing the lookback period in Settings > Shadow AI.");
+      setScanResult(
+        provider === "google_workspace"
+          ? "Scan timed out or network error. For large organizations, try reducing the lookback period in Settings > Shadow AI."
+          : "Scan timed out or network error. Check the Microsoft Graph app credentials in Settings > Shadow AI."
+      );
     } finally {
       setScanning(false);
     }
+  }
+
+  function sourceBadgeLabel(source: string) {
+    if (source === "google_workspace") return "GOOGLE";
+    if (source === "microsoft_365") return "MICROSOFT";
+    return source.replace(/_/g, " ").toUpperCase();
   }
 
   async function handleAdd(e: React.FormEvent<HTMLFormElement>) {
@@ -246,7 +277,7 @@ export default function ShadowAIPage() {
         description="Detect and manage unauthorized AI tool usage"
       >
         <Button
-          onClick={handleScan}
+          onClick={() => handleScan("google_workspace")}
           disabled={scanning}
           variant="outline"
           className="gap-2"
@@ -257,6 +288,19 @@ export default function ShadowAIPage() {
             <RefreshCw className="h-4 w-4" />
           )}
           {scanning ? "Scanning..." : "Scan Google Workspace"}
+        </Button>
+        <Button
+          onClick={() => handleScan("microsoft_365")}
+          disabled={scanning}
+          variant="outline"
+          className="gap-2"
+        >
+          {scanning ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Building2 className="h-4 w-4" />
+          )}
+          {scanning ? "Scanning..." : "Scan Microsoft 365"}
         </Button>
         <Button variant="ghost" asChild>
           <Link href="/settings/shadow-ai">Shadow AI Settings</Link>
@@ -344,6 +388,7 @@ export default function ShadowAIPage() {
                     <option value="siem">SIEM</option>
                     <option value="browser_extension">Browser Extension</option>
                     <option value="google_workspace">Google Workspace</option>
+                    <option value="microsoft_365">Microsoft 365</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -371,7 +416,7 @@ export default function ShadowAIPage() {
       {(scanStatus || scanResult) && (
         <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 space-y-2">
           <div className="flex flex-wrap items-center gap-4">
-            {scanStatus?.configured ? (
+            {scanStatus?.sources?.googleWorkspace.configured ? (
               <div className="flex items-center gap-2 text-xs text-[var(--success)]">
                 <Wifi className="h-3.5 w-3.5" />
                 <span>Google Workspace connected</span>
@@ -382,11 +427,23 @@ export default function ShadowAIPage() {
                 <span>Google Workspace not configured</span>
               </div>
             )}
+            {scanStatus?.sources?.microsoft365.configured ? (
+              <div className="flex items-center gap-2 text-xs text-[var(--success)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Microsoft 365 connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Microsoft 365 not configured</span>
+              </div>
+            )}
             {scanStatus?.lastScan?.completedAt && (
               <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
                 <Clock className="h-3.5 w-3.5" />
                 <span>
                   Last scan: {timeAgo(scanStatus.lastScan.completedAt)} &mdash;{" "}
+                  {scanStatus.lastScan.scanType} &mdash;{" "}
                   {scanStatus.lastScan.status === "completed"
                     ? `${scanStatus.lastScan.toolsFound} tools found, ${scanStatus.lastScan.newToolsAdded} new`
                     : "failed"}
@@ -442,8 +499,11 @@ export default function ShadowAIPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-medium">{tool.toolName}</p>
-                          {tool.detectionSource === "google_workspace" && (
-                            <Badge variant="info" className="text-[9px] px-1.5">GOOGLE</Badge>
+                          {(tool.detectionSource === "google_workspace" ||
+                            tool.detectionSource === "microsoft_365") && (
+                            <Badge variant="info" className="text-[9px] px-1.5">
+                              {sourceBadgeLabel(tool.detectionSource)}
+                            </Badge>
                           )}
                         </div>
                         <p className="text-xs text-[var(--text-muted)]">
@@ -489,8 +549,11 @@ export default function ShadowAIPage() {
                           <p className="text-sm font-medium">{tool.toolName}</p>
                           <p className="text-xs text-[var(--text-muted)]">{tool.vendor ?? "—"} &middot; {tool.department ?? "—"}</p>
                         </div>
-                        {tool.detectionSource === "google_workspace" && (
-                          <Badge variant="info" className="text-[9px] px-1.5">GOOGLE</Badge>
+                        {(tool.detectionSource === "google_workspace" ||
+                          tool.detectionSource === "microsoft_365") && (
+                          <Badge variant="info" className="text-[9px] px-1.5">
+                            {sourceBadgeLabel(tool.detectionSource)}
+                          </Badge>
                         )}
                         {tool.linkedSystemId && (
                           <Button size="sm" variant="ghost" asChild>

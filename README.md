@@ -3,7 +3,7 @@
 AI Gov is an internal AI governance platform for admin and compliance teams. It combines:
 
 - AI system and agent inventory
-- Shadow AI discovery from Google Workspace and DNS/proxy CSV imports
+- Shadow AI discovery from Google Workspace, Microsoft 365, and DNS/proxy CSV imports
 - Risk assessments and policy mapping
 - Oversight telemetry from provider admin APIs
 
@@ -51,6 +51,18 @@ MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
 MICROSOFT_TENANT_ID=
 
+# Optional Microsoft 365 Shadow AI scanning fallback settings
+MICROSOFT_SHADOW_AI_TENANT_ID=
+MICROSOFT_SHADOW_AI_CLIENT_ID=
+MICROSOFT_SHADOW_AI_CLIENT_SECRET=
+MICROSOFT_SHADOW_AI_SCAN_ENABLED=false
+MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS=24
+
+# Optional Google Workspace Shadow AI scanning fallback settings
+GOOGLE_SCAN_ENABLED=false
+GOOGLE_SCAN_LOOKBACK_DAYS=30
+GOOGLE_SCAN_INTERVAL_HOURS=24
+
 # Optional public demo experience
 DEMO_MODE=true
 NEXT_PUBLIC_DEMO_MODE=true
@@ -94,12 +106,24 @@ With `DEMO_MODE=true` and `NEXT_PUBLIC_DEMO_MODE=true`, the app shows a visible 
 Google configuration now lives in two different settings areas:
 
 - `Settings > Users & Identity`: Google Sign-In for employee authentication via OAuth
-- `Settings > Shadow AI`: Google Workspace Discovery for shadow AI scanning via the Admin SDK
+- `Settings > Shadow AI`: Google Workspace and Microsoft 365 discovery for shadow AI scanning
 
 These use different credentials:
 
 - Google Sign-In uses a Google OAuth client ID and client secret
 - Google Workspace Discovery uses a service account JSON key plus a Workspace admin email
+
+### Microsoft Setup Split
+
+Microsoft configuration also lives in two different settings areas:
+
+- `Settings > Users & Identity`: Microsoft / Entra ID sign-in for employee authentication
+- `Settings > Shadow AI`: Microsoft 365 delegated-app discovery for shadow AI scanning via Microsoft Graph
+
+These use different credentials:
+
+- Microsoft sign-in uses the standard Entra app configuration for OAuth login
+- Microsoft 365 Shadow AI Discovery uses a tenant ID, client ID, and client secret for an app with Microsoft Graph application permissions
 
 ## Settings and Secret Storage
 
@@ -108,6 +132,7 @@ Integration secrets are stored in `AppSetting`, but secret values are encrypted 
 - provider API keys
 - provider admin API keys
 - Google Workspace service account JSON
+- Microsoft 365 Shadow AI client secret
 - proxy secrets
 
 `SETTINGS_ENCRYPTION_KEY` is required before saving secret settings through the UI or API.
@@ -158,6 +183,18 @@ Required settings:
 
 Configure in `Settings > Shadow AI`.
 
+### Microsoft 365
+
+Used for shadow AI discovery from delegated Microsoft 365 / Entra-connected apps.
+
+Required settings:
+
+- Microsoft tenant ID
+- Microsoft client ID
+- Microsoft client secret
+
+Configure in `Settings > Shadow AI`.
+
 ## Background Scheduling
 
 The project now includes a shared maintenance endpoint for background jobs:
@@ -170,11 +207,12 @@ It handles:
 - provider admin telemetry sync
 - OpenAI assistant follow-up discovery
 - Google Workspace shadow-AI follow-up scans
+- Microsoft 365 shadow-AI follow-up scans
 
 Cadence is controlled in Settings:
 
 - `Settings > Provider Admin APIs`: provider sync enable/interval
-- `Settings > Shadow AI`: Google Workspace auto-scan enable/interval
+- `Settings > Shadow AI`: Google Workspace and Microsoft 365 auto-scan enable/interval
 
 For Vercel deployments, [vercel.json](/Users/pmarsh/scripts/AI-gov/vercel.json) is configured to call the maintenance endpoint hourly. The route itself checks each job’s saved interval before running, so one hourly cron can safely drive multiple background jobs.
 

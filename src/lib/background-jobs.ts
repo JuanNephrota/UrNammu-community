@@ -6,9 +6,11 @@ import { executeScan } from "./scan-executor";
 import {
   getSetting,
   GOOGLE_SETTINGS_KEYS,
+  MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
   PROVIDER_SYNC_SETTINGS_KEYS,
 } from "./settings";
 import { isGoogleWorkspaceConfigured } from "./google-workspace";
+import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
 
 type BackgroundActor = string;
 
@@ -34,6 +36,12 @@ export type ScheduledMaintenanceResult = {
     result?: ProviderSyncJobResult;
   };
   googleWorkspaceScan: {
+    enabled: boolean;
+    due: boolean;
+    skippedReason?: string;
+    result?: Awaited<ReturnType<typeof executeScan>>;
+  };
+  microsoft365Scan: {
     enabled: boolean;
     due: boolean;
     skippedReason?: string;
@@ -197,16 +205,23 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     providerSyncIntervalRaw,
     googleScanEnabledRaw,
     googleScanIntervalRaw,
+    microsoftScanEnabledRaw,
+    microsoftScanIntervalRaw,
     latestTelemetryRun,
     latestGoogleScan,
+    latestMicrosoftScan,
     runningTelemetryRun,
     runningGoogleScan,
+    runningMicrosoftScan,
     googleConfigured,
+    microsoftConfigured,
   ] = await Promise.all([
     getSetting(PROVIDER_SYNC_SETTINGS_KEYS.ENABLED),
     getSetting(PROVIDER_SYNC_SETTINGS_KEYS.INTERVAL_HOURS),
     getSetting(GOOGLE_SETTINGS_KEYS.SCAN_ENABLED),
     getSetting(GOOGLE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
+    getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_ENABLED),
+    getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
     prisma.providerSyncRun.findFirst({
       where: {
         syncType: "telemetry",
@@ -216,6 +231,7 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       orderBy: { completedAt: "desc" },
     }),
     getLatestCompletedScan("google_workspace"),
+    getLatestCompletedScan("microsoft_365"),
     prisma.providerSyncRun.findFirst({
       where: {
         syncType: "telemetry",
@@ -232,13 +248,30 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       },
       orderBy: { startedAt: "desc" },
     }),
+    prisma.scanHistory.findFirst({
+      where: {
+        scanType: "microsoft_365",
+        status: "running",
+        startedAt: { gte: tenMinutesAgo },
+      },
+      orderBy: { startedAt: "desc" },
+    }),
     isGoogleWorkspaceConfigured(),
+    isMicrosoft365Configured(),
   ]);
 
   const providerSyncEnabled = parseBooleanSetting(providerSyncEnabledRaw, true);
   const providerSyncIntervalHours = parseIntervalHours(providerSyncIntervalRaw, 6);
   const googleScanEnabled = parseBooleanSetting(googleScanEnabledRaw, false);
   const googleScanIntervalHours = parseIntervalHours(googleScanIntervalRaw, 24);
+  const microsoftScanEnabled = parseBooleanSetting(
+    microsoftScanEnabledRaw,
+    false
+  );
+  const microsoftScanIntervalHours = parseIntervalHours(
+    microsoftScanIntervalRaw,
+    24
+  );
 
   const providerSyncDue =
     providerSyncEnabled &&
@@ -249,6 +282,15 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     googleConfigured &&
     !runningGoogleScan &&
     isDue(latestGoogleScan?.completedAt ?? null, googleScanIntervalHours, now);
+  const microsoftScanDue =
+    microsoftScanEnabled &&
+    microsoftConfigured &&
+    !runningMicrosoftScan &&
+    isDue(
+      latestMicrosoftScan?.completedAt ?? null,
+      microsoftScanIntervalHours,
+      now
+    );
 
   const result: ScheduledMaintenanceResult = {
     providerSync: {
@@ -275,7 +317,21 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
               ? "A Google Workspace scan is already running."
             : !googleScanDue
               ? `Not due yet. Interval is ${googleScanIntervalHours} hour(s).`
-              : undefined,
+            : undefined,
+    },
+    microsoft365Scan: {
+      enabled: microsoftScanEnabled,
+      due: microsoftScanDue,
+      skippedReason:
+        !microsoftScanEnabled
+          ? "Microsoft 365 auto-scan is disabled."
+          : !microsoftConfigured
+            ? "Microsoft 365 Shadow AI is not configured."
+            : runningMicrosoftScan
+              ? "A Microsoft 365 scan is already running."
+              : !microsoftScanDue
+                ? `Not due yet. Interval is ${microsoftScanIntervalHours} hour(s).`
+                : undefined,
     },
   };
 
@@ -284,7 +340,17 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
   }
 
   if (googleScanDue) {
-    result.googleWorkspaceScan.result = await executeScan("system");
+    result.googleWorkspaceScan.result = await executeScan(
+      "system",
+      "google_workspace"
+    );
+  }
+
+  if (microsoftScanDue) {
+    result.microsoft365Scan.result = await executeScan(
+      "system",
+      "microsoft_365"
+    );
   }
   return result;
 }

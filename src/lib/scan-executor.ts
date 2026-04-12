@@ -1,5 +1,11 @@
 import { prisma } from "./prisma";
 import { isGoogleWorkspaceConfigured, runFullScan } from "./google-workspace";
+import {
+  isMicrosoft365Configured,
+  runMicrosoft365Scan,
+} from "./microsoft-365-shadow-ai";
+
+export type ShadowAIScanProvider = "google_workspace" | "microsoft_365";
 
 interface ScanResult {
   scanId: string;
@@ -19,12 +25,18 @@ interface ScanResult {
  */
 export async function executeScan(
   triggeredBy: string,
+  provider: ShadowAIScanProvider = "google_workspace",
   existingScanId?: string
 ): Promise<ScanResult> {
-  if (!(await isGoogleWorkspaceConfigured())) {
-    throw new Error(
-      "Google Workspace not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY and GOOGLE_ADMIN_EMAIL environment variables."
-    );
+  if (
+    provider === "google_workspace" &&
+    !(await isGoogleWorkspaceConfigured())
+  ) {
+    throw new Error("Google Workspace not configured.");
+  }
+
+  if (provider === "microsoft_365" && !(await isMicrosoft365Configured())) {
+    throw new Error("Microsoft 365 Shadow AI not configured.");
   }
 
   // Use existing scan record or create a new one
@@ -33,7 +45,7 @@ export async function executeScan(
     (
       await prisma.scanHistory.create({
         data: {
-          scanType: "google_workspace",
+          scanType: provider,
           status: "running",
           triggeredBy,
         },
@@ -41,7 +53,10 @@ export async function executeScan(
     ).id;
 
   try {
-    const result = await runFullScan();
+    const result =
+      provider === "google_workspace"
+        ? await runFullScan()
+        : await runMicrosoft365Scan();
 
     let newToolsAdded = 0;
     let updatedTools = 0;
@@ -76,10 +91,13 @@ export async function executeScan(
             toolName: discovery.toolName,
             vendor: discovery.vendor,
             detectedDomain: discovery.domain,
-            detectionSource: "google_workspace",
+            detectionSource: provider,
             userCount: discovery.userCount,
             status: "DISCOVERED",
-            notes: `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.`,
+            notes:
+              provider === "google_workspace"
+                ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.`
+                : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.`,
           },
         });
 
@@ -87,7 +105,10 @@ export async function executeScan(
         await prisma.alert.create({
           data: {
             title: `Shadow AI detected: ${discovery.toolName}`,
-            description: `${discovery.toolName} (${discovery.vendor}) discovered via Google Workspace OAuth scan. ${discovery.userCount} user(s) have authorized this tool.`,
+            description:
+              provider === "google_workspace"
+                ? `${discovery.toolName} (${discovery.vendor}) discovered via Google Workspace OAuth scan. ${discovery.userCount} user(s) have authorized this tool.`
+                : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
             severity: discovery.userCount >= 10 ? "HIGH" : "MEDIUM",
             source: "shadow_ai",
             relatedToolId: tool.id,
