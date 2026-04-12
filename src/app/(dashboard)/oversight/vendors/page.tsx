@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { VendorProfileEditor } from "@/components/oversight/vendor-profile-editor";
 import { getVendorRiskSummary } from "@/lib/vendor-risk";
+import { getVendorLifecycleSummary } from "@/lib/vendor-lifecycle";
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
@@ -68,7 +69,10 @@ export default async function VendorGovernancePage() {
     dataResidency: string[];
     contractStatus: string;
     contractOwner: string | null;
+    contractStartDate: Date | null;
     contractRenewalDate: Date | null;
+    renewalNoticeDays: number;
+    renewalNotes: string | null;
     securityReviewStatus: string;
     notes: string | null;
   }>();
@@ -89,7 +93,10 @@ export default async function VendorGovernancePage() {
       dataResidency: [],
       contractStatus: "UNKNOWN",
       contractOwner: null,
+      contractStartDate: null,
       contractRenewalDate: null,
+      renewalNoticeDays: 60,
+      renewalNotes: null,
       securityReviewStatus: "NOT_REVIEWED",
       notes: null,
     };
@@ -120,7 +127,10 @@ export default async function VendorGovernancePage() {
       dataResidency: [],
       contractStatus: "UNKNOWN",
       contractOwner: null,
+      contractStartDate: null,
       contractRenewalDate: null,
+      renewalNoticeDays: 60,
+      renewalNotes: null,
       securityReviewStatus: "NOT_REVIEWED",
       notes: null,
     };
@@ -143,7 +153,10 @@ export default async function VendorGovernancePage() {
       dataResidency: [],
       contractStatus: "UNKNOWN",
       contractOwner: null,
+      contractStartDate: null,
       contractRenewalDate: null,
+      renewalNoticeDays: 60,
+      renewalNotes: null,
       securityReviewStatus: "NOT_REVIEWED",
       notes: null,
     };
@@ -152,7 +165,10 @@ export default async function VendorGovernancePage() {
     current.dataResidency = asStringArray(profile.dataResidency);
     current.contractStatus = profile.contractStatus;
     current.contractOwner = profile.contractOwner;
+    current.contractStartDate = profile.contractStartDate;
     current.contractRenewalDate = profile.contractRenewalDate;
+    current.renewalNoticeDays = profile.renewalNoticeDays;
+    current.renewalNotes = profile.renewalNotes;
     current.securityReviewStatus = profile.securityReviewStatus;
     current.notes = profile.notes;
     current.unapprovedUseCases = current.liveUseCases.filter(
@@ -169,6 +185,12 @@ export default async function VendorGovernancePage() {
     .map(([vendor, stats]) => ({
       vendor,
       stats,
+      lifecycle: getVendorLifecycleSummary({
+        contractStatus: stats.contractStatus,
+        contractStartDate: stats.contractStartDate,
+        contractRenewalDate: stats.contractRenewalDate,
+        renewalNoticeDays: stats.renewalNoticeDays,
+      }),
       risk: getVendorRiskSummary({
         vendor,
         systems: stats.systems,
@@ -186,6 +208,20 @@ export default async function VendorGovernancePage() {
     .sort((a, b) => b.risk.score - a.risk.score || b.stats.systems - a.stats.systems);
 
   const topVendorRisks = vendors.slice(0, 3);
+  const renewalQueue = vendors
+    .filter(
+      ({ lifecycle }) =>
+        lifecycle.phase === "RENEWAL_DUE" ||
+        lifecycle.phase === "RENEWAL_SOON" ||
+        lifecycle.phase === "OVERDUE" ||
+        lifecycle.phase === "EXPIRED"
+    )
+    .sort((a, b) => {
+      const aDays = a.lifecycle.daysUntilRenewal ?? Number.POSITIVE_INFINITY;
+      const bDays = b.lifecycle.daysUntilRenewal ?? Number.POSITIVE_INFINITY;
+      return aDays - bDays;
+    })
+    .slice(0, 6);
 
   return (
     <div className="space-y-6">
@@ -226,6 +262,57 @@ export default async function VendorGovernancePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
+            <FileCheck className="h-4 w-4 text-[var(--accent)]" />
+            Contract Renewal Queue
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {renewalQueue.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No vendor renewals are currently inside their notice window.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {renewalQueue.map(({ vendor, stats, lifecycle }) => (
+                <div
+                  key={vendor}
+                  className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">{vendor}</p>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        {stats.contractOwner ?? "No owner"} · {lifecycle.message}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={lifecycle.badgeTone}>
+                        {lifecycle.phase.replace(/_/g, " ")}
+                      </Badge>
+                      {lifecycle.daysUntilRenewal !== null && (
+                        <Badge variant={lifecycle.daysUntilRenewal <= 30 ? "critical" : "warning"}>
+                          {lifecycle.daysUntilRenewal >= 0
+                            ? `${lifecycle.daysUntilRenewal} days`
+                            : `${Math.abs(lifecycle.daysUntilRenewal)} days overdue`}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  {stats.renewalNotes && (
+                    <p className="mt-3 text-sm text-[var(--text-secondary)]">
+                      {stats.renewalNotes}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-[var(--accent)]" />
             Vendor Profiles
           </CardTitle>
@@ -235,7 +322,7 @@ export default async function VendorGovernancePage() {
             <p className="text-sm text-[var(--text-muted)]">No vendor-governed systems yet.</p>
           ) : (
             <div className="space-y-3">
-              {vendors.map(({ vendor, stats, risk }) => (
+              {vendors.map(({ vendor, stats, risk, lifecycle }) => (
                 <div key={vendor} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -248,6 +335,9 @@ export default async function VendorGovernancePage() {
                       <div className="flex flex-wrap gap-2">
                         <Badge variant={vendorRiskBadgeVariant(risk.tier)}>
                           Vendor risk {risk.score} · {risk.tier}
+                        </Badge>
+                        <Badge variant={lifecycle.badgeTone}>
+                          {lifecycle.phase.replace(/_/g, " ")}
                         </Badge>
                         <Badge variant={stats.highRisk > 0 ? "warning" : "success"}>{stats.highRisk} high risk</Badge>
                         <Badge variant={stats.openAlerts > 0 ? "critical" : "outline"}>{stats.openAlerts} open alerts</Badge>
@@ -304,11 +394,19 @@ export default async function VendorGovernancePage() {
                         <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
                           <p>Owner: {stats.contractOwner ?? "—"}</p>
                           <p>
+                            Start:{" "}
+                            {stats.contractStartDate
+                              ? stats.contractStartDate.toLocaleDateString()
+                              : "—"}
+                          </p>
+                          <p>
                             Renewal:{" "}
                             {stats.contractRenewalDate
                               ? stats.contractRenewalDate.toLocaleDateString()
                               : "—"}
                           </p>
+                          <p>Notice window: {stats.renewalNoticeDays} days</p>
+                          <p>{lifecycle.message}</p>
                         </div>
                       </div>
 
@@ -390,11 +488,25 @@ export default async function VendorGovernancePage() {
                       </div>
                     )}
 
+                    {stats.renewalNotes && (
+                      <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                          Renewal Notes
+                        </p>
+                        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                          {stats.renewalNotes}
+                        </p>
+                      </div>
+                    )}
+
                     <VendorProfileEditor
                       vendor={vendor}
                       contractStatus={stats.contractStatus}
                       contractOwner={stats.contractOwner}
+                      contractStartDate={stats.contractStartDate?.toISOString() ?? null}
                       contractRenewalDate={stats.contractRenewalDate?.toISOString() ?? null}
+                      renewalNoticeDays={stats.renewalNoticeDays}
+                      renewalNotes={stats.renewalNotes}
                       securityReviewStatus={stats.securityReviewStatus}
                       dataResidency={stats.dataResidency}
                       approvedUseCases={stats.approvedUseCases}

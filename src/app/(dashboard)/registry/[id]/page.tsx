@@ -367,6 +367,14 @@ export default async function SystemDetailPage({
                 <div className="space-y-4">
                   {system.riskAssessments.map((ra) => {
                     const justifications = (ra.justifications ?? {}) as Record<string, string>;
+                    const contextualAnswers = Array.isArray(ra.contextualAnswers)
+                      ? (ra.contextualAnswers as Array<{
+                          id: string;
+                          category: string;
+                          prompt: string;
+                          answer: string;
+                        }>)
+                      : [];
                     const dims = [
                       { key: "biasScore", label: "Bias", score: ra.biasScore },
                       { key: "securityScore", label: "Security", score: ra.securityScore },
@@ -431,6 +439,30 @@ export default async function SystemDetailPage({
                           <div className="rounded-md bg-[var(--bg-base)] px-3 py-2">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-1">Notes</p>
                             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{ra.notes}</p>
+                          </div>
+                        )}
+                        {contextualAnswers.length > 0 && (
+                          <div className="rounded-md bg-[var(--bg-base)] px-3 py-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-2">
+                              Contextual Review
+                            </p>
+                            <div className="space-y-2">
+                              {contextualAnswers.map((entry) => (
+                                <div key={entry.id} className="rounded-md border border-[var(--border-subtle)] p-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Badge variant="outline">
+                                      {entry.category.replace(/_/g, " ")}
+                                    </Badge>
+                                    <p className="text-xs font-medium text-[var(--text-primary)]">
+                                      {entry.prompt}
+                                    </p>
+                                  </div>
+                                  <p className="mt-2 text-xs leading-relaxed text-[var(--text-secondary)]">
+                                    {entry.answer}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>

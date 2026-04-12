@@ -12,7 +12,10 @@ type Props = {
   vendor: string;
   contractStatus: string;
   contractOwner: string | null;
+  contractStartDate: string | null;
   contractRenewalDate: string | null;
+  renewalNoticeDays: number;
+  renewalNotes: string | null;
   securityReviewStatus: string;
   dataResidency: string[];
   approvedUseCases: string[];
@@ -24,7 +27,10 @@ export function VendorProfileEditor({
   vendor,
   contractStatus,
   contractOwner,
+  contractStartDate,
   contractRenewalDate,
+  renewalNoticeDays,
+  renewalNotes,
   securityReviewStatus,
   dataResidency,
   approvedUseCases,
@@ -43,7 +49,10 @@ export function VendorProfileEditor({
       vendor,
       contractStatus: String(formData.get("contractStatus") ?? "UNKNOWN"),
       contractOwner: String(formData.get("contractOwner") ?? ""),
+      contractStartDate: String(formData.get("contractStartDate") ?? ""),
       contractRenewalDate: String(formData.get("contractRenewalDate") ?? ""),
+      renewalNoticeDays: String(formData.get("renewalNoticeDays") ?? "60"),
+      renewalNotes: String(formData.get("renewalNotes") ?? ""),
       securityReviewStatus: String(
         formData.get("securityReviewStatus") ?? "NOT_REVIEWED"
       ),
@@ -116,6 +125,24 @@ export function VendorProfileEditor({
             defaultValue={formatDateForInput(contractRenewalDate)}
           />
         </div>
+        <div className="space-y-2">
+          <Label>Contract Start Date</Label>
+          <Input
+            type="date"
+            name="contractStartDate"
+            defaultValue={formatDateForInput(contractStartDate)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>Renewal Notice Window (days)</Label>
+          <Input
+            type="number"
+            min={1}
+            max={365}
+            name="renewalNoticeDays"
+            defaultValue={renewalNoticeDays}
+          />
+        </div>
         <div className="space-y-2 xl:col-span-2">
           <Label>Data Residency</Label>
           <Input name="dataResidency" defaultValue={dataResidency.join(", ")} placeholder="US, EU, Canada" />
@@ -140,6 +167,15 @@ export function VendorProfileEditor({
             defaultValue={notes ?? ""}
             rows={3}
             placeholder="Contract carve-outs, data-processing notes, regional restrictions, approval conditions"
+          />
+        </div>
+        <div className="space-y-2 xl:col-span-2">
+          <Label>Renewal Notes</Label>
+          <Textarea
+            name="renewalNotes"
+            defaultValue={renewalNotes ?? ""}
+            rows={2}
+            placeholder="Renewal dependencies, procurement blockers, legal follow-up, planned negotiation timeline"
           />
         </div>
         <div className="xl:col-span-2 flex items-center gap-3">

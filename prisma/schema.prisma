@@ -317,7 +317,10 @@ model VendorProfile {
   vendor                String               @unique
   contractStatus        VendorContractStatus @default(UNKNOWN)
   contractOwner         String?
+  contractStartDate     DateTime?
   contractRenewalDate   DateTime?
+  renewalNoticeDays     Int                  @default(60)
+  renewalNotes          String?              @db.Text
   securityReviewStatus  VendorReviewStatus   @default(NOT_REVIEWED)
   dataResidency         Json?
   approvedUseCases      Json?
@@ -492,6 +495,7 @@ model RiskAssessment {
   transparencyScore Float    @default(0)
   overallScore      Float    @default(0)
   justifications    Json?    // { biasScore: "reason", securityScore: "reason", ... }
+  contextualAnswers Json?    // [{ id, category, prompt, answer }]
   assessedBy        String
   notes             String?  @db.Text
 

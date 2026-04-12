@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+const contextualAnswerSchema = z.object({
+  id: z.string().min(1),
+  category: z.enum(["data_sensitivity", "autonomy", "user_impact"]),
+  prompt: z.string().min(1),
+  answer: z.string().min(1),
+});
+
 export const createRiskAssessmentSchema = z.object({
   aiSystemId: z.string().min(1, "AI System is required"),
   biasScore: z.number().min(0).max(100).default(0),
@@ -16,6 +23,7 @@ export const createRiskAssessmentSchema = z.object({
     performanceScore: z.string().optional(),
     transparencyScore: z.string().optional(),
   }).optional(),
+  contextualAnswers: z.array(contextualAnswerSchema).optional(),
   notes: z.string().optional(),
 });
 

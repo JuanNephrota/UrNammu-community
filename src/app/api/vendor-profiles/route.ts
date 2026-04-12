@@ -26,9 +26,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const startDate = parsed.data.contractStartDate
+      ? new Date(parsed.data.contractStartDate)
+      : null;
+
     const renewalDate = parsed.data.contractRenewalDate
       ? new Date(parsed.data.contractRenewalDate)
       : null;
+
+    if (
+      startDate &&
+      Number.isNaN(startDate.getTime())
+    ) {
+      return NextResponse.json(
+        { error: "Invalid contract start date" },
+        { status: 400 }
+      );
+    }
 
     if (
       renewalDate &&
@@ -45,7 +59,10 @@ export async function POST(req: NextRequest) {
       update: {
         contractStatus: parsed.data.contractStatus,
         contractOwner: parsed.data.contractOwner || null,
+        contractStartDate: startDate,
         contractRenewalDate: renewalDate,
+        renewalNoticeDays: parsed.data.renewalNoticeDays,
+        renewalNotes: parsed.data.renewalNotes || null,
         securityReviewStatus: parsed.data.securityReviewStatus,
         dataResidency: parsed.data.dataResidency as Prisma.InputJsonValue,
         approvedUseCases: parsed.data.approvedUseCases as Prisma.InputJsonValue,
@@ -56,7 +73,10 @@ export async function POST(req: NextRequest) {
         vendor: parsed.data.vendor,
         contractStatus: parsed.data.contractStatus,
         contractOwner: parsed.data.contractOwner || null,
+        contractStartDate: startDate,
         contractRenewalDate: renewalDate,
+        renewalNoticeDays: parsed.data.renewalNoticeDays,
+        renewalNotes: parsed.data.renewalNotes || null,
         securityReviewStatus: parsed.data.securityReviewStatus,
         dataResidency: parsed.data.dataResidency as Prisma.InputJsonValue,
         approvedUseCases: parsed.data.approvedUseCases as Prisma.InputJsonValue,

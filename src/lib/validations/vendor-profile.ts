@@ -21,7 +21,10 @@ export const upsertVendorProfileSchema = z.object({
     .enum(["UNKNOWN", "IN_REVIEW", "ACTIVE", "EXPIRED", "TERMINATED"])
     .default("UNKNOWN"),
   contractOwner: z.string().trim().max(200).optional().nullable(),
+  contractStartDate: z.string().optional().nullable(),
   contractRenewalDate: z.string().optional().nullable(),
+  renewalNoticeDays: z.coerce.number().int().min(1).max(365).default(60),
+  renewalNotes: z.string().trim().max(5000).optional().nullable(),
   securityReviewStatus: z
     .enum(["NOT_REVIEWED", "IN_PROGRESS", "APPROVED", "CONDITIONAL", "REJECTED"])
     .default("NOT_REVIEWED"),

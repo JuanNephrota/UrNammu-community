@@ -257,7 +257,8 @@ npm run db:reset
 - Admin sync now persists normalized telemetry for OpenAI and Anthropic.
 - Main oversight views now use normalized `UsageBucket` and `CostBucket` data.
 - Policy rules support richer conditions, advisory vs blocking enforcement, and exception-aware evaluation.
-- Vendor governance includes editable vendor profiles with contract posture, security review status, data residency, subprocessors, and approved use cases.
+- Vendor governance includes editable vendor profiles with contract posture, lifecycle tracking, renewal queues, security review status, data residency, subprocessors, approved use cases, and composite vendor risk scoring.
+- Risk Center includes recommended tiers, control-gap detection, agent-aware overlays, branching contextual questions, and use-case templates.
 - Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
 
 ## TODO / Roadmap
@@ -282,7 +283,6 @@ npm run db:reset
 - [ ] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
 - [ ] Remediation status dashboards for alerts, incidents, and corrective actions
 - [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)
-- [ ] Vendor risk scoring combining contract health, security review, incidents, and high-risk systems
 - [ ] CSV/PDF export of usage logs and scheduled spend summary reports
 - [ ] Audit-ready reporting in board, auditor, and regulator-focused export formats
 - [ ] Evidence quality scoring for stale, weak, or missing governance artifacts
@@ -292,8 +292,6 @@ npm run db:reset
 
 - [ ] Radar charts for per-system risk profile comparison
 - [ ] Risk trend line charts per system over assessment history
-- [ ] Assessment templates by use case (copilot, vendor AI SaaS, autonomous agent, customer-facing AI)
-- [ ] Dynamic question sets that branch by data sensitivity, autonomy, and user impact
 - [ ] Residual-risk tracking alongside inherent risk
 - [ ] Portfolio views by department, vendor, owner, and use case
 - [ ] Scoring calibration controls for compliance admins
@@ -310,4 +308,3 @@ npm run db:reset
 
 - [ ] Bulk governance operations across many systems at once
 - [ ] Executive dashboards with posture deltas, trend storytelling, and board-ready summaries
-- [ ] Vendor governance expansion with contract lifecycle and renewal tracking
