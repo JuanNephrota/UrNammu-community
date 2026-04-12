@@ -1,26 +1,51 @@
 import Link from "next/link";
-import { Building2 } from "lucide-react";
+import { Building2, FileCheck, Globe2, ShieldCheck } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { VendorProfileEditor } from "@/components/oversight/vendor-profile-editor";
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function contractBadgeVariant(status: string) {
+  if (status === "ACTIVE") return "success";
+  if (status === "IN_REVIEW") return "warning";
+  if (status === "EXPIRED" || status === "TERMINATED") return "critical";
+  return "outline";
+}
+
+function reviewBadgeVariant(status: string) {
+  if (status === "APPROVED") return "success";
+  if (status === "CONDITIONAL" || status === "IN_PROGRESS") return "warning";
+  if (status === "REJECTED") return "critical";
+  return "outline";
+}
 
 export default async function VendorGovernancePage() {
-  const systems = await prisma.aISystem.findMany({
-    where: { vendor: { not: null } },
-    include: {
-      alerts: { where: { status: "OPEN" } },
-      governanceIncidents: { where: { status: "OPEN" } },
-      governanceExceptions: { where: { status: "ACTIVE", expiresAt: { gte: new Date() } } },
-    },
-  });
+  const [systems, vendorProfiles] = await Promise.all([
+    prisma.aISystem.findMany({
+      where: { vendor: { not: null } },
+      include: {
+        alerts: { where: { status: "OPEN" } },
+        governanceIncidents: { where: { status: "OPEN" } },
+        governanceExceptions: { where: { status: "ACTIVE", expiresAt: { gte: new Date() } } },
+      },
+    }),
+    prisma.vendorProfile.findMany({
+      orderBy: { vendor: "asc" },
+    }),
+  ]);
 
   const discoveredByVendor = await prisma.discoveredAITool.groupBy({
     by: ["vendor"],
     _count: true,
     where: { vendor: { not: null } },
   });
-
   const vendorMap = new Map<string, {
     systems: number;
     openAlerts: number;
@@ -28,24 +53,108 @@ export default async function VendorGovernancePage() {
     exceptions: number;
     highRisk: number;
     discovered: number;
+    approvedUseCases: string[];
+    liveUseCases: string[];
+    unapprovedUseCases: string[];
+    subprocessors: string[];
+    dataResidency: string[];
+    contractStatus: string;
+    contractOwner: string | null;
+    contractRenewalDate: Date | null;
+    securityReviewStatus: string;
+    notes: string | null;
   }>();
 
   for (const system of systems) {
     const key = system.vendor ?? "Unknown";
-    const current = vendorMap.get(key) ?? { systems: 0, openAlerts: 0, incidents: 0, exceptions: 0, highRisk: 0, discovered: 0 };
+    const current = vendorMap.get(key) ?? {
+      systems: 0,
+      openAlerts: 0,
+      incidents: 0,
+      exceptions: 0,
+      highRisk: 0,
+      discovered: 0,
+      approvedUseCases: [],
+      liveUseCases: [],
+      unapprovedUseCases: [],
+      subprocessors: [],
+      dataResidency: [],
+      contractStatus: "UNKNOWN",
+      contractOwner: null,
+      contractRenewalDate: null,
+      securityReviewStatus: "NOT_REVIEWED",
+      notes: null,
+    };
     current.systems += 1;
     current.openAlerts += system.alerts.length;
     current.incidents += system.governanceIncidents.length;
     current.exceptions += system.governanceExceptions.length;
     current.highRisk += ["CRITICAL", "HIGH"].includes(system.riskLevel) ? 1 : 0;
+    if (system.useCase?.trim()) {
+      current.liveUseCases = Array.from(new Set([...current.liveUseCases, system.useCase.trim()]));
+    }
     vendorMap.set(key, current);
   }
 
   for (const row of discoveredByVendor) {
     if (!row.vendor) continue;
-    const current = vendorMap.get(row.vendor) ?? { systems: 0, openAlerts: 0, incidents: 0, exceptions: 0, highRisk: 0, discovered: 0 };
+    const current = vendorMap.get(row.vendor) ?? {
+      systems: 0,
+      openAlerts: 0,
+      incidents: 0,
+      exceptions: 0,
+      highRisk: 0,
+      discovered: 0,
+      approvedUseCases: [],
+      liveUseCases: [],
+      unapprovedUseCases: [],
+      subprocessors: [],
+      dataResidency: [],
+      contractStatus: "UNKNOWN",
+      contractOwner: null,
+      contractRenewalDate: null,
+      securityReviewStatus: "NOT_REVIEWED",
+      notes: null,
+    };
     current.discovered = row._count;
     vendorMap.set(row.vendor, current);
+  }
+
+  for (const profile of vendorProfiles) {
+    const current = vendorMap.get(profile.vendor) ?? {
+      systems: 0,
+      openAlerts: 0,
+      incidents: 0,
+      exceptions: 0,
+      highRisk: 0,
+      discovered: 0,
+      approvedUseCases: [],
+      liveUseCases: [],
+      unapprovedUseCases: [],
+      subprocessors: [],
+      dataResidency: [],
+      contractStatus: "UNKNOWN",
+      contractOwner: null,
+      contractRenewalDate: null,
+      securityReviewStatus: "NOT_REVIEWED",
+      notes: null,
+    };
+    current.approvedUseCases = asStringArray(profile.approvedUseCases);
+    current.subprocessors = asStringArray(profile.subprocessors);
+    current.dataResidency = asStringArray(profile.dataResidency);
+    current.contractStatus = profile.contractStatus;
+    current.contractOwner = profile.contractOwner;
+    current.contractRenewalDate = profile.contractRenewalDate;
+    current.securityReviewStatus = profile.securityReviewStatus;
+    current.notes = profile.notes;
+    current.unapprovedUseCases = current.liveUseCases.filter(
+      (useCase) =>
+        current.approvedUseCases.length > 0 &&
+        !current.approvedUseCases.some(
+          (approved) => approved.toLowerCase() === useCase.toLowerCase()
+        )
+    );
+    vendorMap.set(profile.vendor, current);
   }
 
   const vendors = [...vendorMap.entries()].sort((a, b) => b[1].systems - a[1].systems);
@@ -75,19 +184,117 @@ export default async function VendorGovernancePage() {
             <div className="space-y-3">
               {vendors.map(([vendor, stats]) => (
                 <div key={vendor} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-[var(--text-primary)]">{vendor}</p>
-                      <p className="text-xs text-[var(--text-muted)]">
-                        {stats.systems} governed systems · {stats.discovered} shadow AI discoveries
-                      </p>
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">{vendor}</p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {stats.systems} governed systems · {stats.discovered} shadow AI discoveries
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant={stats.highRisk > 0 ? "warning" : "success"}>{stats.highRisk} high risk</Badge>
+                        <Badge variant={stats.openAlerts > 0 ? "critical" : "outline"}>{stats.openAlerts} open alerts</Badge>
+                        <Badge variant={stats.incidents > 0 ? "critical" : "outline"}>{stats.incidents} incidents</Badge>
+                        <Badge variant={stats.exceptions > 0 ? "warning" : "outline"}>{stats.exceptions} exceptions</Badge>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant={stats.highRisk > 0 ? "warning" : "success"}>{stats.highRisk} high risk</Badge>
-                      <Badge variant={stats.openAlerts > 0 ? "critical" : "outline"}>{stats.openAlerts} open alerts</Badge>
-                      <Badge variant={stats.incidents > 0 ? "critical" : "outline"}>{stats.incidents} incidents</Badge>
-                      <Badge variant={stats.exceptions > 0 ? "warning" : "outline"}>{stats.exceptions} exceptions</Badge>
+
+                    <div className="grid gap-4 xl:grid-cols-3">
+                      <div className="rounded-lg border border-[var(--border-subtle)] p-3">
+                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                          <FileCheck className="h-4 w-4 text-[var(--accent)]" />
+                          Contract Posture
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge variant={contractBadgeVariant(stats.contractStatus)}>
+                            {stats.contractStatus.replace(/_/g, " ")}
+                          </Badge>
+                          <Badge variant={reviewBadgeVariant(stats.securityReviewStatus)}>
+                            {stats.securityReviewStatus.replace(/_/g, " ")}
+                          </Badge>
+                        </div>
+                        <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
+                          <p>Owner: {stats.contractOwner ?? "—"}</p>
+                          <p>
+                            Renewal:{" "}
+                            {stats.contractRenewalDate
+                              ? stats.contractRenewalDate.toLocaleDateString()
+                              : "—"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-[var(--border-subtle)] p-3">
+                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                          <Globe2 className="h-4 w-4 text-[var(--accent)]" />
+                          Data Residency & Subprocessors
+                        </div>
+                        <div className="mt-3 space-y-3 text-xs text-[var(--text-muted)]">
+                          <div>
+                            <p className="font-medium text-[var(--text-primary)]">Residency</p>
+                            <p>{stats.dataResidency.length > 0 ? stats.dataResidency.join(", ") : "Not documented"}</p>
+                          </div>
+                          <div>
+                            <p className="font-medium text-[var(--text-primary)]">Subprocessors</p>
+                            <p>{stats.subprocessors.length > 0 ? stats.subprocessors.join(", ") : "Not documented"}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-[var(--border-subtle)] p-3">
+                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                          <ShieldCheck className="h-4 w-4 text-[var(--accent)]" />
+                          Approved Use Cases
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {stats.approvedUseCases.length > 0 ? (
+                            stats.approvedUseCases.map((useCase) => (
+                              <Badge key={useCase} variant="outline">{useCase}</Badge>
+                            ))
+                          ) : (
+                            <span className="text-xs text-[var(--text-muted)]">No approved use cases documented</span>
+                          )}
+                        </div>
+                        <div className="mt-3 text-xs text-[var(--text-muted)]">
+                          <p>Live use cases: {stats.liveUseCases.length}</p>
+                          <p className={stats.unapprovedUseCases.length > 0 ? "text-[var(--warning)]" : ""}>
+                            Unapproved live use cases: {stats.unapprovedUseCases.length}
+                          </p>
+                        </div>
+                      </div>
                     </div>
+
+                    {stats.unapprovedUseCases.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--warning)]">
+                          Unapproved Use Cases
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {stats.unapprovedUseCases.map((useCase) => (
+                            <Badge key={useCase} variant="warning">{useCase}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {stats.notes && (
+                      <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-sm text-[var(--text-secondary)]">
+                        {stats.notes}
+                      </div>
+                    )}
+
+                    <VendorProfileEditor
+                      vendor={vendor}
+                      contractStatus={stats.contractStatus}
+                      contractOwner={stats.contractOwner}
+                      contractRenewalDate={stats.contractRenewalDate?.toISOString() ?? null}
+                      securityReviewStatus={stats.securityReviewStatus}
+                      dataResidency={stats.dataResidency}
+                      approvedUseCases={stats.approvedUseCases}
+                      subprocessors={stats.subprocessors}
+                      notes={stats.notes}
+                    />
                   </div>
                 </div>
               ))}

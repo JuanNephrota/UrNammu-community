@@ -29,10 +29,20 @@ export default function NewPolicyPage() {
       content: formData.get("content") as string,
       rules: normalizePolicyRules({
         allowedVendors: formData.get("allowedVendors") as string,
+        blockedVendors: formData.get("blockedVendors") as string,
         blockedDataSensitivities: formData.getAll("blockedDataSensitivities") as string[],
+        maxDataSensitivity: formData.get("maxDataSensitivity") as string,
         requiredStages: formData.getAll("requiredStages") as string[],
         maxReviewIntervalDays: Number(formData.get("maxReviewIntervalDays") || 0),
         minimumRiskLevel: formData.get("minimumRiskLevel") as string,
+        allowedDepartments: formData.get("allowedDepartments") as string,
+        blockedDepartments: formData.get("blockedDepartments") as string,
+        allowedModelPatterns: formData.get("allowedModelPatterns") as string,
+        blockedModelPatterns: formData.get("blockedModelPatterns") as string,
+        allowedStatuses: formData.getAll("allowedStatuses") as string[],
+        enforcement: formData.get("enforcement") as string,
+        allowException: formData.get("allowException") === "on",
+        recommendedComplianceStatus: formData.get("recommendedComplianceStatus") as string,
       }),
       status: formData.get("status") as string,
     };
@@ -111,6 +121,11 @@ export default function NewPolicyPage() {
               <p className="text-xs text-[var(--text-muted)]">Comma-separated approved vendors for this policy.</p>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="blockedVendors">Blocked Vendors</Label>
+              <Input id="blockedVendors" name="blockedVendors" placeholder="Unapproved Vendor, Personal Tool" />
+              <p className="text-xs text-[var(--text-muted)]">Comma-separated vendors that should be blocked by this policy.</p>
+            </div>
+            <div className="space-y-2">
               <Label>Blocked Data Sensitivities</Label>
               <div className="grid gap-2 sm:grid-cols-2">
                 {["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"].map((value) => (
@@ -122,12 +137,54 @@ export default function NewPolicyPage() {
               </div>
             </div>
             <div className="space-y-2">
+              <Label>Maximum Data Sensitivity</Label>
+              <select name="maxDataSensitivity" defaultValue="" className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                <option value="">No maximum</option>
+                <option value="PUBLIC">Public</option>
+                <option value="INTERNAL">Internal</option>
+                <option value="CONFIDENTIAL">Confidential</option>
+                <option value="RESTRICTED">Restricted</option>
+              </select>
+            </div>
+            <div className="space-y-2">
               <Label>Required Governance Stages</Label>
               <div className="grid gap-2 sm:grid-cols-2">
                 {["OWNER", "SECURITY", "LEGAL", "COMPLIANCE"].map((value) => (
                   <label key={value} className="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-2 text-sm">
                     <input type="checkbox" name="requiredStages" value={value} />
                     <span>{value}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="allowedDepartments">Allowed Departments</Label>
+                <Input id="allowedDepartments" name="allowedDepartments" placeholder="Engineering, Legal" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="blockedDepartments">Blocked Departments</Label>
+                <Input id="blockedDepartments" name="blockedDepartments" placeholder="Interns, Vendors" />
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="allowedModelPatterns">Allowed Model Patterns</Label>
+                <Input id="allowedModelPatterns" name="allowedModelPatterns" placeholder="gpt-4, claude-sonnet" />
+                <p className="text-xs text-[var(--text-muted)]">Comma-separated substrings matched against the system model type.</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="blockedModelPatterns">Blocked Model Patterns</Label>
+                <Input id="blockedModelPatterns" name="blockedModelPatterns" placeholder="preview, beta" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Allowed System Statuses</Label>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {["DRAFT", "UNDER_REVIEW", "APPROVED", "DEPLOYED", "DEPRECATED", "RETIRED"].map((value) => (
+                  <label key={value} className="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-2 text-sm">
+                    <input type="checkbox" name="allowedStatuses" value={value} />
+                    <span>{value.replace(/_/g, " ")}</span>
                   </label>
                 ))}
               </div>
@@ -147,6 +204,29 @@ export default function NewPolicyPage() {
                   <option value="HIGH">High</option>
                   <option value="CRITICAL">Critical</option>
                 </select>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Enforcement</Label>
+                <select name="enforcement" defaultValue="BLOCK" className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                  <option value="BLOCK">Blocking</option>
+                  <option value="ADVISORY">Advisory</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Recommended Compliance Status</Label>
+                <select name="recommendedComplianceStatus" defaultValue="NON_COMPLIANT" className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                  <option value="NON_COMPLIANT">Non-Compliant</option>
+                  <option value="PARTIALLY_COMPLIANT">Partially Compliant</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label className="opacity-0">Exceptions</Label>
+                <label className="flex h-9 items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 text-sm text-[var(--text-primary)]">
+                  <input type="checkbox" name="allowException" />
+                  <span>Allow active governance exceptions to waive blocking findings</span>
+                </label>
               </div>
             </div>
           </CardContent>

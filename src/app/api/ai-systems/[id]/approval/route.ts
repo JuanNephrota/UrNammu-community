@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
 
 const approvalSchema = z.object({
   decision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVOKED"]),
@@ -28,10 +29,20 @@ export async function POST(
       where: { id },
       include: {
         riskAssessments: { select: { id: true } },
-        policyAssignments: { select: { id: true, complianceStatus: true } },
+        policyAssignments: {
+          select: {
+            id: true,
+            complianceStatus: true,
+            policy: { select: { id: true, name: true, rules: true } },
+          },
+        },
         governanceReviews: {
           orderBy: { createdAt: "desc" },
           select: { stage: true, approved: true },
+        },
+        governanceExceptions: {
+          where: { status: "ACTIVE" },
+          select: { id: true, expiresAt: true },
         },
       },
     });
@@ -52,19 +63,49 @@ export async function POST(
         latestStageDecisions.set(review.stage, review.approved);
       }
     }
+    const activeExceptionCount = system.governanceExceptions.filter(
+      (exception) => new Date(exception.expiresAt).getTime() >= Date.now()
+    ).length;
+    const ruleEvaluations = system.policyAssignments.map((assignment) => ({
+      assignment,
+      evaluation: evaluatePolicyRules(parsePolicyRules(assignment.policy.rules), {
+        vendor: system.vendor,
+        department: system.department,
+        status: system.status,
+        modelType: system.modelType,
+        dataSensitivity: system.dataSensitivity,
+        reviewIntervalDays: system.reviewIntervalDays,
+        riskLevel: system.riskLevel,
+        requireOwnerApproval: system.requireOwnerApproval,
+        requireSecurityApproval: system.requireSecurityApproval,
+        requireLegalApproval: system.requireLegalApproval,
+        requireComplianceApproval: system.requireComplianceApproval,
+        activeExceptionCount,
+      }),
+    }));
+
     const governanceReady =
       system.riskAssessments.length > 0 &&
       system.policyAssignments.length > 0 &&
-      system.policyAssignments.every((assignment) => assignment.complianceStatus === "COMPLIANT") &&
+      ruleEvaluations.every(({ assignment, evaluation }) =>
+        evaluation.blockingViolations.length === 0 &&
+        assignment.complianceStatus !== "NOT_ASSESSED" &&
+        assignment.complianceStatus !== "NON_COMPLIANT"
+      ) &&
       requiredStages.every((stage) => latestStageDecisions.get(stage) === true) &&
       !!system.nextReviewDate &&
       new Date(system.nextReviewDate).getTime() >= Date.now();
 
     if (parsed.data.decision === "APPROVED" && !governanceReady) {
+      const firstBlockingAssignment = ruleEvaluations.find(
+        ({ evaluation }) => evaluation.blockingViolations.length > 0
+      );
       return NextResponse.json(
         {
           error:
-            "This system still has open governance work. Complete risk and compliance review before approving it.",
+            firstBlockingAssignment
+              ? `Policy ${firstBlockingAssignment.assignment.policy.name} still has blocking rule violations: ${firstBlockingAssignment.evaluation.blockingViolations[0]}`
+              : "This system still has open governance work. Complete risk and compliance review before approving it.",
         },
         { status: 400 }
       );

@@ -3,12 +3,18 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateTime } from "@/lib/utils";
+import {
+  buildCostLookup,
+  buildTelemetryActivityRows,
+  getBucketIdentityKey,
+  getTelemetryAttributionLabel,
+} from "@/lib/oversight-telemetry";
 
 export default async function UsageLogsPage() {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const [usageBuckets, costBuckets, recentLogs, syncRuns] = await Promise.all([
+  const [usageBuckets, costBuckets, syncRuns] = await Promise.all([
     prisma.usageBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
@@ -19,11 +25,6 @@ export default async function UsageLogsPage() {
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       take: 300,
     }),
-    prisma.aPIUsageLog.findMany({
-      take: 30,
-      orderBy: { createdAt: "desc" },
-      include: { user: { select: { name: true, email: true } } },
-    }),
     prisma.providerSyncRun.findMany({
       where: { syncType: "telemetry" },
       orderBy: { startedAt: "desc" },
@@ -31,12 +32,7 @@ export default async function UsageLogsPage() {
     }),
   ]);
 
-  const costMap = new Map(
-    costBuckets.map((bucket) => [
-      `${bucket.provider}:${bucket.bucketStart.toISOString()}:${bucket.dimensionKey}`,
-      bucket.amount,
-    ])
-  );
+  const costMap = buildCostLookup(costBuckets);
 
   const modelSummary = new Map<
     string,
@@ -48,10 +44,7 @@ export default async function UsageLogsPage() {
   >();
 
   for (const bucket of usageBuckets) {
-    const bucketCost =
-      costMap.get(
-        `${bucket.provider}:${bucket.bucketStart.toISOString()}:${bucket.dimensionKey}`
-      ) ?? 0;
+    const bucketCost = costMap.get(getBucketIdentityKey(bucket)) ?? 0;
 
     const modelKey = `${bucket.provider}:${bucket.model ?? "unknown"}`;
     const modelItem = modelSummary.get(modelKey) ?? {
@@ -66,13 +59,7 @@ export default async function UsageLogsPage() {
     modelItem.requests += bucket.requestCount ?? 0;
     modelSummary.set(modelKey, modelItem);
 
-    const projectLabel =
-      bucket.projectName ??
-      bucket.actorName ??
-      bucket.apiKeyName ??
-      bucket.projectExternalId ??
-      bucket.actorExternalId ??
-      "Unattributed usage";
+    const projectLabel = getTelemetryAttributionLabel(bucket);
     const projectItem = projectSummary.get(projectLabel) ?? {
       label: projectLabel,
       tokens: 0,
@@ -99,31 +86,14 @@ export default async function UsageLogsPage() {
   );
   const totalCost = costBuckets.reduce((sum, bucket) => sum + bucket.amount, 0);
 
-  const tableRows = usageBuckets.slice(0, 60).map((bucket) => ({
-    id: bucket.id,
-    date: bucket.bucketStart,
-    provider: bucket.provider,
-    model: bucket.model ?? "—",
-    project:
-      bucket.projectName ??
-      bucket.actorName ??
-      bucket.apiKeyName ??
-      bucket.projectExternalId ??
-      bucket.actorExternalId ??
-      "—",
-    requests: bucket.requestCount ?? 0,
-    tokens: bucket.totalTokens,
-    cost:
-      costMap.get(
-        `${bucket.provider}:${bucket.bucketStart.toISOString()}:${bucket.dimensionKey}`
-      ) ?? 0,
-  }));
+  const tableRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
+  const recentTelemetry = buildTelemetryActivityRows(usageBuckets, costMap, 30);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Usage Telemetry"
-        description="Normalized provider-admin telemetry with supplemental request logs for drill-down"
+        description="Normalized provider-admin telemetry for usage, cost, and attribution drill-down"
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -206,7 +176,7 @@ export default async function UsageLogsPage() {
                           {row.model}
                         </td>
                         <td className="px-3 py-3 text-[var(--text-secondary)]">
-                          {row.project}
+                          {row.attribution}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums">
                           {row.requests.toLocaleString()}
@@ -301,35 +271,37 @@ export default async function UsageLogsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Supplemental Request Logs</CardTitle>
+          <CardTitle>Recent Telemetry Activity</CardTitle>
         </CardHeader>
         <CardContent>
-          {recentLogs.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">No supplemental logs yet.</p>
+          {recentTelemetry.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">No recent telemetry activity yet.</p>
           ) : (
             <div className="space-y-3">
-              {recentLogs.map((log) => (
+              {recentTelemetry.map((row) => (
                 <div
-                  key={log.id}
+                  key={row.id}
                   className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border-subtle)] p-3"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <Badge variant={log.flagged ? "critical" : "info"} className="capitalize">
-                        {log.provider}
+                      <Badge variant="info" className="capitalize">
+                        {row.provider}
                       </Badge>
                       <span className="font-mono text-xs text-[var(--text-secondary)]">
-                        {log.model ?? "—"}
+                        {row.model}
                       </span>
                     </div>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      {log.user?.name ?? log.user?.email ?? "System"} · {log.totalTokens.toLocaleString()} tokens · ${log.cost.toFixed(4)}
+                      {row.attribution} · {row.tokens.toLocaleString()} tokens · ${row.cost.toFixed(4)}
                     </p>
                   </div>
                   <div className="text-right">
-                    {log.flagged && <Badge variant="critical">Flagged</Badge>}
                     <p className="mt-1 text-xs text-[var(--text-faint)]">
-                      {formatDateTime(log.createdAt)}
+                      {formatDateTime(row.date)}
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      {row.requests.toLocaleString()} requests
                     </p>
                   </div>
                 </div>

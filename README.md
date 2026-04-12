@@ -5,6 +5,8 @@ AI Gov is an internal AI governance platform for admin and compliance teams. It 
 - AI system and agent inventory
 - Shadow AI discovery from Google Workspace, Microsoft 365, and DNS/proxy CSV imports
 - Risk assessments and policy mapping
+- Governance workflows with staged approvals, exceptions, evidence, and incidents
+- Vendor governance with contract, residency, subprocessors, and approved use-case tracking
 - Oversight telemetry from provider admin APIs
 
 The app is built with Next.js 16, React 19, Prisma, PostgreSQL, and NextAuth.
@@ -148,7 +150,7 @@ Phase 2 introduces a normalized telemetry foundation alongside the legacy `APIUs
 - `ProviderProject`: discovered provider-side projects/workspaces
 - `ProviderActor`: discovered provider-side users/members
 
-The current admin sync route still backfills derived `APIUsageLog` rows for dashboard compatibility, but normalized telemetry is now the source of truth for future oversight work.
+The current admin sync route still backfills derived `APIUsageLog` rows for compatibility, but the main oversight views now read normalized telemetry from `UsageBucket` and `CostBucket`.
 
 ## Admin Integrations
 
@@ -174,7 +176,7 @@ Configure in `Settings > Provider Admin APIs` with an Anthropic admin key.
 
 ### Google Workspace
 
-Used for shadow AI discovery from authorized OAuth apps.
+Used for shadow AI discovery from Google Workspace OAuth activity.
 
 Required settings:
 
@@ -182,6 +184,13 @@ Required settings:
 - Google admin email
 
 Configure in `Settings > Shadow AI`.
+
+Recent improvements:
+
+- richer app matching using names, scopes, and extracted domains
+- confidence scoring and match reasons in discovery notes
+- repeat-activity heuristics such as first seen, last seen, event count, and active days
+- low-confidence AI candidates surfaced in debug output for admin review
 
 ### Microsoft 365
 
@@ -194,6 +203,13 @@ Required settings:
 - Microsoft client secret
 
 Configure in `Settings > Shadow AI`.
+
+Recent improvements:
+
+- richer Microsoft Graph signals from delegated grants, service principals, verified publishers, tags, and app role assignments
+- weighted vendor matching across names, publishers, domains, scopes, and app IDs
+- usage heuristics based on delegated principals and assignment counts
+- discovery notes that explain match confidence and observed signals
 
 ## Background Scheduling
 
@@ -238,22 +254,22 @@ npm run db:reset
 
 ## Current Implementation Notes
 
-- Oversight pages still read legacy `APIUsageLog` data in some places.
 - Admin sync now persists normalized telemetry for OpenAI and Anthropic.
-- A future UI pass should migrate oversight reporting to `UsageBucket` and `CostBucket` directly.
+- Main oversight views now use normalized `UsageBucket` and `CostBucket` data.
+- Policy rules support richer conditions, advisory vs blocking enforcement, and exception-aware evaluation.
+- Vendor governance includes editable vendor profiles with contract posture, security review status, data residency, subprocessors, and approved use cases.
+- Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
 
 ## TODO / Roadmap
 
 ### 1. Must-have Governance
 
-- Expand policy rules beyond the current MVP to cover richer conditions, actions, and exception-aware enforcement
 - Add renewal automation for governance reviews, approvals, and exception expirations
 - Add ownership escalation when systems become overdue, unowned, or blocked in approval stages
 - Add workflow notifications for approvals, renewals, drift, incidents, and overdue reviews
 
 ### 2. Must-have Oversight
 
-- Migrate remaining oversight views from legacy `APIUsageLog` reads to normalized `UsageBucket` and `CostBucket` data
 - Expand audit-ready reporting into board, auditor, and regulator-focused export formats
 - Add evidence quality scoring for stale, weak, or missing governance artifacts
 - Add workflow notifications and dashboards for open incidents, drift alerts, and remediation progress
@@ -264,6 +280,5 @@ npm run db:reset
 - Renewal automation with batched review campaigns and reminder workflows
 - Exception lifecycle management with renewal requests and expiration handling
 - Bulk governance operations across many systems at once
-- Deeper vendor governance with contracts, subprocessors, data residency, and approved use-case tracking
 - Expand executive dashboards with posture deltas, trend storytelling, and board-ready summaries
-- Improve Microsoft 365 Shadow AI discovery with richer Graph signals, usage heuristics, and vendor matching coverage
+- Add low-confidence review queues and promotion workflows for discovered Google and Microsoft Shadow AI candidates

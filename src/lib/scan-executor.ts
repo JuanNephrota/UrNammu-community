@@ -78,8 +78,8 @@ export async function executeScan(
             data: {
               userCount: discovery.userCount,
               notes: existing.notes
-                ? `${existing.notes}\nUpdated by scan: ${discovery.userCount} users detected.`
-                : `Scan detected ${discovery.userCount} users.`,
+                ? `${existing.notes}\nUpdated by scan: ${discovery.userCount} users detected.${discovery.notes ? ` ${discovery.notes}` : ""}`
+                : `Scan detected ${discovery.userCount} users.${discovery.notes ? ` ${discovery.notes}` : ""}`,
             },
           });
           updatedTools++;
@@ -96,8 +96,8 @@ export async function executeScan(
             status: "DISCOVERED",
             notes:
               provider === "google_workspace"
-                ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.`
-                : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.`,
+                ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`
+                : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`,
           },
         });
 

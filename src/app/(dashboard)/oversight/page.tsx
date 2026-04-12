@@ -10,6 +10,11 @@ import { formatDateTime } from "@/lib/utils";
 import { UsageChart } from "@/components/dashboard/usage-chart";
 import { OrgDataPanel } from "@/components/dashboard/org-data-panel";
 import { OversightActionQueue } from "@/components/dashboard/governance-action-queue";
+import {
+  buildCostLookup,
+  buildTelemetryActivityRows,
+  getTelemetryAttributionLabel,
+} from "@/lib/oversight-telemetry";
 
 export default async function OversightPage() {
   const now = new Date();
@@ -19,9 +24,8 @@ export default async function OversightPage() {
 
   const [
     totalUsageBuckets,
-    flaggedCount,
     providerStats,
-    recentLogs,
+    recentUsageBuckets,
     dailyUsage,
     costBuckets,
     syncRuns,
@@ -30,16 +34,15 @@ export default async function OversightPage() {
     openIncidents,
   ] = await Promise.all([
     prisma.usageBucket.count(),
-    prisma.aPIUsageLog.count({ where: { flagged: true } }),
     prisma.usageBucket.groupBy({
       by: ["provider"],
       _sum: { totalTokens: true },
       _count: true,
     }),
-    prisma.aPIUsageLog.findMany({
-      take: 10,
-      orderBy: { createdAt: "desc" },
-      include: { user: { select: { name: true } } },
+    prisma.usageBucket.findMany({
+      where: { bucketStart: { gte: thirtyDaysAgo } },
+      take: 120,
+      orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
     }),
     prisma.$queryRaw<{ date: string; tokens: number; cost: number }[]>`
       SELECT
@@ -81,8 +84,17 @@ export default async function OversightPage() {
     acc[bucket.provider] = (acc[bucket.provider] ?? 0) + bucket.amount;
     return acc;
   }, {});
+  const costLookup = buildCostLookup(costBuckets);
+  const recentActivity = buildTelemetryActivityRows(
+    recentUsageBuckets,
+    costLookup,
+    10
+  );
   const totalCost = costBuckets.reduce((s, bucket) => s + bucket.amount, 0);
   const totalTokens = providerStats.reduce((s, p) => s + (p._sum.totalTokens ?? 0), 0);
+  const trackedEntities = new Set(
+    recentUsageBuckets.map((bucket) => getTelemetryAttributionLabel(bucket))
+  ).size;
   const latestSuccessByProvider = syncRuns.reduce<Record<string, Date | null>>((acc, run) => {
     if (run.status === "SUCCEEDED" && !acc[run.provider]) acc[run.provider] = run.completedAt;
     return acc;
@@ -124,7 +136,13 @@ export default async function OversightPage() {
         <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" />
         <StatCard title="Total Tokens" value={totalTokens.toLocaleString()} iconName="Eye" variant="default" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" />
-        <StatCard title="Flagged" value={flaggedCount} iconName="AlertTriangle" variant={flaggedCount > 0 ? "danger" : "success"} />
+        <StatCard
+          title="Tracked Entities"
+          value={trackedEntities}
+          description="Recent projects, actors, or API keys"
+          iconName="Database"
+          variant={trackedEntities > 0 ? "success" : "default"}
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -270,26 +288,27 @@ export default async function OversightPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Supplemental Request Logs</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Recent Telemetry Activity</CardTitle></CardHeader>
         <CardContent>
-          {recentLogs.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">No supplemental proxy or manual logs yet.</p>
+          {recentActivity.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">No recent telemetry activity yet.</p>
           ) : (
             <div className="space-y-2">
-              {recentLogs.map((log) => (
-                <div key={log.id} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+              {recentActivity.map((row) => (
+                <div key={row.id} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
                   <div className="flex items-center gap-3">
-                    <Badge variant={log.flagged ? "critical" : "info"} className="capitalize">
-                      {log.provider}
+                    <Badge variant="info" className="capitalize">
+                      {row.provider}
                     </Badge>
                     <div>
-                      <p className="text-sm">{log.user?.name ?? "System"} &middot; {log.model ?? "—"}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{log.totalTokens} tokens &middot; ${log.cost.toFixed(4)}</p>
+                      <p className="text-sm">{row.attribution} &middot; {row.model}</p>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        {row.tokens.toLocaleString()} tokens &middot; ${row.cost.toFixed(4)} &middot; {row.requests.toLocaleString()} requests
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
-                    {log.flagged && <Badge variant="critical">Flagged</Badge>}
-                    <p className="text-xs text-[var(--text-faint)]">{formatDateTime(log.createdAt)}</p>
+                    <p className="text-xs text-[var(--text-faint)]">{formatDateTime(row.date)}</p>
                   </div>
                 </div>
               ))}

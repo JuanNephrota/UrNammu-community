@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withRole } from "@/lib/auth-guard";
 import { isGoogleWorkspaceConfigured } from "@/lib/google-workspace";
 import { getSetting, GOOGLE_SETTINGS_KEYS } from "@/lib/settings";
-import { matchAITool } from "@/lib/ai-tools-registry";
+import { matchDomain, resolveAIToolMatch } from "@/lib/ai-tools-registry";
 
 /**
  * Debug endpoint — tests Google Workspace connection and returns raw scan diagnostics.
@@ -61,7 +61,14 @@ export async function GET() {
       const items = response.data.items ?? [];
 
       // Collect all unique app names and check which match AI tools
-      const appNames = new Map<string, { count: number; matched: boolean; matchedTool: string | null }>();
+      const appNames = new Map<string, {
+        count: number;
+        matched: boolean;
+        matchedTool: string | null;
+        confidence: string | null;
+        reasons: string[];
+        candidate: boolean;
+      }>();
 
       for (const item of items) {
         const params = item.events?.[0]?.parameters ?? [];
@@ -70,16 +77,45 @@ export async function GET() {
           params.find((p) => p.name === "client_id")?.value ??
           "unknown";
         const scopes = params.find((p) => p.name === "scope")?.multiValue ?? [];
+        const joined = [appName, ...scopes].join(" ");
+        const domains = Array.from(
+          new Set(
+            Array.from(
+              joined.matchAll(/\b([a-z0-9-]+\.)+[a-z]{2,}\b/gi)
+            ).map((match) => match[0].toLowerCase().replace(/^www\./, ""))
+          )
+        );
 
         const existing = appNames.get(appName);
         if (existing) {
           existing.count++;
         } else {
-          const match = matchAITool(appName, scopes);
+          const match =
+            resolveAIToolMatch({ clientName: appName, scopes, domains }) ??
+            domains
+              .map((domain) => {
+                const tool = matchDomain(domain);
+                return tool
+                  ? {
+                      tool,
+                      confidence: "medium" as const,
+                      score: 7,
+                      reasons: [`domain matched "${domain}"`],
+                    }
+                  : null;
+              })
+              .find(Boolean) ??
+            null;
+          const candidate =
+            !match &&
+            /(ai|gpt|copilot|claude|gemini|llm|openai|anthropic|mistral|cursor)/i.test(joined);
           appNames.set(appName, {
             count: 1,
             matched: !!match,
-            matchedTool: match?.toolName ?? null,
+            matchedTool: match?.tool.toolName ?? null,
+            confidence: match?.confidence ?? (candidate ? "low" : null),
+            reasons: match?.reasons ?? (candidate ? ["heuristic AI keyword match"] : []),
+            candidate,
           });
         }
       }
@@ -90,7 +126,8 @@ export async function GET() {
         .sort((a, b) => b.count - a.count);
 
       const aiMatches = sortedApps.filter((a) => a.matched);
-      const nonAiApps = sortedApps.filter((a) => !a.matched);
+      const candidateApps = sortedApps.filter((a) => !a.matched && a.candidate);
+      const nonAiApps = sortedApps.filter((a) => !a.matched && !a.candidate);
 
       return NextResponse.json({
         configured: true,
@@ -101,6 +138,7 @@ export async function GET() {
         uniqueApps: sortedApps.length,
         aiToolsMatched: aiMatches.length,
         aiMatches,
+        lowConfidenceCandidates: candidateApps.slice(0, 20),
         topNonAiApps: nonAiApps.slice(0, 20),
         hasMorePages: !!response.data.nextPageToken,
       });

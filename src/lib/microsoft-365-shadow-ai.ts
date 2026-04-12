@@ -1,4 +1,4 @@
-import { matchAITool } from "./ai-tools-registry";
+import { matchDomain, resolveAIToolMatch } from "./ai-tools-registry";
 import { getSetting, MICROSOFT_SHADOW_AI_SETTINGS_KEYS } from "./settings";
 import type { FullScanResult, ScanDiscovery } from "./google-workspace";
 
@@ -17,11 +17,26 @@ type MicrosoftOauthGrant = {
 
 type MicrosoftServicePrincipal = {
   id?: string;
+  appId?: string;
   appDisplayName?: string;
   displayName?: string;
   homepage?: string;
   publisherName?: string;
   servicePrincipalNames?: string[];
+  tags?: string[];
+  servicePrincipalType?: string;
+  verifiedPublisher?: {
+    displayName?: string;
+    verifiedPublisherId?: string;
+    addedDateTime?: string;
+  };
+};
+
+type MicrosoftAppRoleAssignment = {
+  appRoleId?: string;
+  principalId?: string;
+  principalType?: string;
+  resourceId?: string;
 };
 
 async function getMicrosoftConfig(): Promise<MicrosoftConfig | null> {
@@ -166,6 +181,43 @@ function extractDomain(servicePrincipal: MicrosoftServicePrincipal): string | nu
   return null;
 }
 
+function extractCandidateDomains(
+  servicePrincipal: MicrosoftServicePrincipal
+): string[] {
+  const domains = new Set<string>();
+  const homepageDomain = extractDomain(servicePrincipal);
+  if (homepageDomain) domains.add(homepageDomain);
+
+  for (const candidate of servicePrincipal.servicePrincipalNames ?? []) {
+    const normalized = candidate
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split("/")[0]
+      ?.trim()
+      .toLowerCase();
+    if (normalized && normalized.includes(".")) domains.add(normalized);
+  }
+
+  return Array.from(domains);
+}
+
+function summarizeDiscoverySignals(input: {
+  consentType: string | null;
+  principalCount: number;
+  scopeCount: number;
+  assignmentCount: number;
+  matchReasons: string[];
+  confidence: string;
+}) {
+  return [
+    `Matched with ${input.confidence} confidence via ${input.matchReasons.join(", ")}.`,
+    `${input.principalCount} delegated principal(s), ${input.assignmentCount} app-role assignment(s), ${input.scopeCount} unique scope(s).`,
+    input.consentType === "AllPrincipals"
+      ? "Admin consent appears tenant-wide."
+      : "Consent appears user-scoped.",
+  ].join(" ");
+}
+
 export async function runMicrosoft365Scan(): Promise<FullScanResult> {
   const accessToken = await getMicrosoft365AccessToken();
   const grants = await graphList<MicrosoftOauthGrant>(
@@ -179,7 +231,12 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
 
   const principalMap = new Map<
     string,
-    { scopes: string[]; principals: Set<string>; consentType: string | null }
+    {
+      scopes: string[];
+      principals: Set<string>;
+      consentType: string | null;
+      grantCount: number;
+    }
   >();
 
   for (const grant of grants) {
@@ -188,6 +245,7 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
       scopes: [],
       principals: new Set<string>(),
       consentType: grant.consentType ?? null,
+      grantCount: 0,
     };
 
     const scopes = (grant.scope ?? "")
@@ -199,6 +257,7 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
       if (!scoped.scopes.includes(scope)) scoped.scopes.push(scope);
     }
     if (grant.principalId) scoped.principals.add(grant.principalId);
+    scoped.grantCount += 1;
     principalMap.set(grant.clientId, scoped);
   }
 
@@ -207,9 +266,14 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
   for (const clientId of uniqueClientIds.slice(0, 50)) {
     try {
       const servicePrincipal = await graphGet<MicrosoftServicePrincipal>(
-        `/servicePrincipals/${clientId}?$select=id,appDisplayName,displayName,homepage,publisherName,servicePrincipalNames`,
+        `/servicePrincipals/${clientId}?$select=id,appId,appDisplayName,displayName,homepage,publisherName,servicePrincipalNames,tags,servicePrincipalType,verifiedPublisher`,
         accessToken
       );
+      const appRoleAssignments = await graphList<MicrosoftAppRoleAssignment>(
+        `/servicePrincipals/${clientId}/appRoleAssignedTo?$top=50&$select=appRoleId,principalId,principalType,resourceId`,
+        accessToken,
+        50
+      ).catch(() => []);
 
       const metadata = principalMap.get(clientId);
       const displayName =
@@ -217,28 +281,75 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
         servicePrincipal.displayName ??
         servicePrincipal.publisherName ??
         "";
+      const candidateDomains = extractCandidateDomains(servicePrincipal);
       const servicePrincipalHints = [
         displayName,
         servicePrincipal.homepage ?? "",
+        servicePrincipal.publisherName ?? "",
+        servicePrincipal.verifiedPublisher?.displayName ?? "",
+        servicePrincipal.servicePrincipalType ?? "",
+        ...(servicePrincipal.tags ?? []),
         ...(servicePrincipal.servicePrincipalNames ?? []),
       ]
         .filter(Boolean)
         .join(" ");
 
-      const match = matchAITool(
-        servicePrincipalHints,
-        metadata?.scopes ?? []
+      const resolvedMatch =
+        resolveAIToolMatch({
+          clientName: servicePrincipalHints,
+          scopes: metadata?.scopes ?? [],
+          publisherName:
+            servicePrincipal.verifiedPublisher?.displayName ??
+            servicePrincipal.publisherName ??
+            null,
+          domains: candidateDomains,
+          appIds: [servicePrincipal.appId ?? "", servicePrincipal.id ?? ""],
+          additionalText: servicePrincipal.tags ?? [],
+        }) ??
+        candidateDomains
+          .map((domain) => {
+            const tool = matchDomain(domain);
+            return tool
+              ? {
+                  tool,
+                  confidence: "medium" as const,
+                  score: 7,
+                  reasons: [`domain matched "${domain}"`],
+                }
+              : null;
+          })
+          .find(Boolean) ??
+        null;
+
+      if (!resolvedMatch) continue;
+
+      const assignmentPrincipals = new Set(
+        appRoleAssignments
+          .map((assignment) => assignment.principalId)
+          .filter(Boolean)
       );
-      if (!match) continue;
+      const observedUsers = Math.max(
+        metadata?.principals.size ?? 0,
+        assignmentPrincipals.size
+      );
+      const userCount =
+        observedUsers ||
+        (metadata?.consentType === "AllPrincipals" ? 3 : 1);
 
       discoveries.push({
-        toolName: match.toolName,
-        vendor: match.vendor,
-        domain: extractDomain(servicePrincipal) ?? match.domains[0],
+        toolName: resolvedMatch.tool.toolName,
+        vendor: resolvedMatch.tool.vendor,
+        domain: candidateDomains[0] ?? resolvedMatch.tool.domains[0],
         userEmails: [],
-        userCount:
-          metadata?.principals.size ||
-          (metadata?.consentType === "AllPrincipals" ? 1 : 0),
+        userCount,
+        notes: summarizeDiscoverySignals({
+          consentType: metadata?.consentType ?? null,
+          principalCount: metadata?.principals.size ?? 0,
+          scopeCount: metadata?.scopes.length ?? 0,
+          assignmentCount: assignmentPrincipals.size,
+          matchReasons: resolvedMatch.reasons,
+          confidence: resolvedMatch.confidence,
+        }),
       });
     } catch {
       // Skip individual service principals that fail lookup or are unavailable.
@@ -251,6 +362,11 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
     const existing = deduped.get(key);
     if (existing) {
       existing.userCount = Math.max(existing.userCount, discovery.userCount);
+      if (discovery.notes && !existing.notes?.includes(discovery.notes)) {
+        existing.notes = existing.notes
+          ? `${existing.notes}\n${discovery.notes}`
+          : discovery.notes;
+      }
       continue;
     }
     deduped.set(key, discovery);

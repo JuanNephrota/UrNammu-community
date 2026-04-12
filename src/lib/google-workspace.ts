@@ -1,6 +1,10 @@
 import { google } from "googleapis";
 import { JWT } from "google-auth-library";
-import { matchAITool } from "./ai-tools-registry";
+import {
+  matchDomain,
+  resolveAIToolMatch,
+  type AIToolMatchResult,
+} from "./ai-tools-registry";
 import { getSetting, GOOGLE_SETTINGS_KEYS } from "./settings";
 
 export interface ScanDiscovery {
@@ -9,6 +13,7 @@ export interface ScanDiscovery {
   domain: string;
   userEmails: string[];
   userCount: number;
+  notes?: string;
 }
 
 export interface FullScanResult {
@@ -16,6 +21,8 @@ export interface FullScanResult {
   totalEventsScanned: number;
   aiToolsFound: number;
 }
+
+type MatchConfidence = "high" | "medium" | "low";
 
 /**
  * Check if Google Workspace scanning is configured.
@@ -94,7 +101,6 @@ export async function scanTokenActivity(
     const response = await service.activities.list({
       userKey: "all",
       applicationName: "token",
-      eventName: "authorize",
       startTime: startTime.toISOString(),
       maxResults: 500,
       pageToken,
@@ -106,6 +112,7 @@ export async function scanTokenActivity(
 
     for (const item of items) {
       const params = item.events?.[0]?.parameters ?? [];
+      const eventName = item.events?.[0]?.name ?? "unknown";
       const appName =
         params.find((p) => p.name === "app_name")?.value ??
         params.find((p) => p.name === "client_id")?.value ??
@@ -114,17 +121,45 @@ export async function scanTokenActivity(
         .find((p) => p.name === "scope")
         ?.multiValue ?? [];
 
-      if (appName) {
-        // Early match — only keep events that match known AI tools
-        const match = matchAITool(appName, scopes);
-        if (match) {
-          events.push({
-            appName,
-            scopes,
-            userEmail: item.actor?.email ?? "unknown",
-            timestamp: item.id?.time ?? new Date().toISOString(),
-          });
-        }
+      const candidateDomains = extractDomainsFromGoogleSignal(appName, scopes);
+      const resolvedMatch =
+        resolveAIToolMatch({
+          clientName: appName,
+          scopes,
+          domains: candidateDomains,
+          additionalText: [eventName],
+        }) ??
+        candidateDomains
+          .map((domain) => {
+            const tool = matchDomain(domain);
+            return tool
+              ? {
+                  tool,
+                  confidence: "medium" as const,
+                  score: 7,
+                  reasons: [`domain matched "${domain}"`],
+                }
+              : null;
+          })
+          .find(Boolean) ??
+        null;
+
+      const candidate =
+        resolvedMatch ??
+        (isLikelyAICandidate(appName, scopes, candidateDomains)
+          ? buildLowConfidenceCandidate(appName, candidateDomains, scopes)
+          : null);
+
+      if (candidate) {
+        events.push({
+          appName,
+          scopes,
+          userEmail: item.actor?.email ?? "unknown",
+          timestamp: item.id?.time ?? new Date().toISOString(),
+          eventName,
+          match: candidate,
+          candidateDomains,
+        });
       }
     }
 
@@ -139,6 +174,9 @@ interface TokenEvent {
   scopes: string[];
   userEmail: string;
   timestamp: string;
+  eventName: string;
+  match: AIToolMatchResult;
+  candidateDomains: string[];
 }
 
 /**
@@ -157,7 +195,13 @@ export async function scanUserTokens(
   for (const token of tokens) {
     const displayText = token.displayText ?? "";
     const scopes = token.scopes ?? [];
-    const match = matchAITool(displayText, scopes);
+    const candidateDomains = extractDomainsFromGoogleSignal(displayText, scopes);
+    const match =
+      resolveAIToolMatch({
+        clientName: displayText,
+        scopes,
+        domains: candidateDomains,
+      })?.tool ?? null;
 
     if (match) {
       results.push({
@@ -179,38 +223,173 @@ export async function runFullScan(
 ): Promise<FullScanResult> {
   const { events, totalScanned } = await scanTokenActivity(lookbackDays);
 
-  // Events are already filtered to known AI tools — just aggregate
-  const discoveryMap = new Map<string, ScanDiscovery>();
+  const discoveryMap = new Map<
+    string,
+    ScanDiscovery & {
+      firstSeen: string;
+      lastSeen: string;
+      eventCount: number;
+      activeDays: Set<string>;
+      confidence: MatchConfidence;
+      reasons: string[];
+      lowConfidenceCandidate: boolean;
+    }
+  >();
 
   for (const event of events) {
-    // Re-match to get tool metadata (events are pre-filtered so this always matches)
-    const match = matchAITool(event.appName, event.scopes);
-    if (!match) continue;
-
-    const key = `${match.toolName}::${match.domains[0]}`;
+    const match = event.match;
+    const domain =
+      event.candidateDomains[0] ?? match.tool.domains[0] ?? "unknown";
+    const key = `${match.tool.toolName}::${domain}`;
     const existing = discoveryMap.get(key);
+    const eventDay = new Date(event.timestamp).toISOString().slice(0, 10);
 
     if (existing) {
       if (!existing.userEmails.includes(event.userEmail)) {
         existing.userEmails.push(event.userEmail);
         existing.userCount = existing.userEmails.length;
       }
+      existing.lastSeen =
+        new Date(event.timestamp).getTime() > new Date(existing.lastSeen).getTime()
+          ? event.timestamp
+          : existing.lastSeen;
+      existing.firstSeen =
+        new Date(event.timestamp).getTime() < new Date(existing.firstSeen).getTime()
+          ? event.timestamp
+          : existing.firstSeen;
+      existing.eventCount += 1;
+      existing.activeDays.add(eventDay);
+      existing.confidence =
+        confidenceRank(match.confidence) > confidenceRank(existing.confidence)
+          ? match.confidence
+          : existing.confidence;
+      existing.reasons = Array.from(new Set([...existing.reasons, ...match.reasons]));
     } else {
       discoveryMap.set(key, {
-        toolName: match.toolName,
-        vendor: match.vendor,
-        domain: match.domains[0],
+        toolName: match.tool.toolName,
+        vendor: match.tool.vendor,
+        domain,
         userEmails: [event.userEmail],
         userCount: 1,
+        firstSeen: event.timestamp,
+        lastSeen: event.timestamp,
+        eventCount: 1,
+        activeDays: new Set([eventDay]),
+        confidence: match.confidence,
+        reasons: match.reasons,
+        lowConfidenceCandidate: match.confidence === "low",
       });
     }
   }
 
-  const discoveries = Array.from(discoveryMap.values());
+  const discoveries = Array.from(discoveryMap.values()).map((discovery) => ({
+    toolName: discovery.toolName,
+    vendor: discovery.vendor,
+    domain: discovery.domain,
+    userEmails: discovery.userEmails,
+    userCount: discovery.userCount,
+    notes: buildGoogleDiscoveryNotes({
+      confidence: discovery.confidence,
+      reasons: discovery.reasons,
+      firstSeen: discovery.firstSeen,
+      lastSeen: discovery.lastSeen,
+      eventCount: discovery.eventCount,
+      activeDays: discovery.activeDays.size,
+      lowConfidenceCandidate: discovery.lowConfidenceCandidate,
+    }),
+  }));
 
   return {
     discoveries,
     totalEventsScanned: totalScanned,
     aiToolsFound: discoveries.length,
   };
+}
+
+function extractDomainsFromGoogleSignal(
+  appName: string,
+  scopes: string[]
+): string[] {
+  const domains = new Set<string>();
+  const text = [appName, ...scopes].join(" ");
+  const domainPattern = /\b([a-z0-9-]+\.)+[a-z]{2,}\b/gi;
+
+  for (const match of text.matchAll(domainPattern)) {
+    const candidate = match[0]?.toLowerCase().replace(/^www\./, "");
+    if (candidate && !candidate.endsWith("googleapis.com")) {
+      domains.add(candidate);
+    }
+  }
+
+  return Array.from(domains);
+}
+
+function isLikelyAICandidate(
+  appName: string,
+  scopes: string[],
+  domains: string[]
+) {
+  const combined = [appName, ...scopes, ...domains].join(" ").toLowerCase();
+  const aiKeywords = [
+    "ai",
+    "gpt",
+    "copilot",
+    "claude",
+    "gemini",
+    "llm",
+    "anthropic",
+    "openai",
+    "mistral",
+    "perplexity",
+    "cursor",
+  ];
+
+  if (domains.some((domain) => domain.endsWith(".ai"))) return true;
+  return aiKeywords.some((keyword) => combined.includes(keyword));
+}
+
+function buildLowConfidenceCandidate(
+  appName: string,
+  domains: string[],
+  scopes: string[]
+): AIToolMatchResult {
+  const normalizedName = appName.trim() || domains[0] || "Unclassified AI App";
+  const domain = domains[0] ?? "unknown.ai";
+  return {
+    tool: {
+      toolName: normalizedName,
+      vendor: "Needs Review",
+      domains: [domain],
+      clientNamePatterns: [normalizedName.toLowerCase()],
+    },
+    confidence: "low",
+    score: 3,
+    reasons: [
+      `heuristic AI signal from ${domains.some((item) => item.endsWith(".ai")) ? ".ai domain" : "app/scopes keywords"}`,
+      scopes.length > 0 ? "OAuth scopes present" : "raw app name only",
+    ],
+  };
+}
+
+function confidenceRank(value: MatchConfidence) {
+  return value === "high" ? 3 : value === "medium" ? 2 : 1;
+}
+
+function buildGoogleDiscoveryNotes(input: {
+  confidence: MatchConfidence;
+  reasons: string[];
+  firstSeen: string;
+  lastSeen: string;
+  eventCount: number;
+  activeDays: number;
+  lowConfidenceCandidate: boolean;
+}) {
+  return [
+    input.lowConfidenceCandidate
+      ? "Low-confidence Google OAuth candidate."
+      : `Matched with ${input.confidence} confidence.`,
+    `Signals: ${input.reasons.join(", ")}.`,
+    `Observed ${input.eventCount} token event(s) across ${input.activeDays} day(s).`,
+    `First seen ${new Date(input.firstSeen).toLocaleDateString()} · Last seen ${new Date(input.lastSeen).toLocaleDateString()}.`,
+  ].join(" ");
 }

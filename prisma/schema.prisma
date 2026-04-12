@@ -116,6 +116,22 @@ enum GovernanceExceptionStatus {
   REVOKED
 }
 
+enum VendorContractStatus {
+  UNKNOWN
+  IN_REVIEW
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
+
+enum VendorReviewStatus {
+  NOT_REVIEWED
+  IN_PROGRESS
+  APPROVED
+  CONDITIONAL
+  REJECTED
+}
+
 // ─── Auth (NextAuth) ────────────────────────────────────
 
 model Account {
@@ -293,6 +309,23 @@ model AppSetting {
   value     String   @db.Text
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
+}
+
+model VendorProfile {
+  id                    String               @id @default(cuid())
+  vendor                String               @unique
+  contractStatus        VendorContractStatus @default(UNKNOWN)
+  contractOwner         String?
+  contractRenewalDate   DateTime?
+  securityReviewStatus  VendorReviewStatus   @default(NOT_REVIEWED)
+  dataResidency         Json?
+  approvedUseCases      Json?
+  subprocessors         Json?
+  notes                 String?              @db.Text
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([vendor])
 }
 
 model IngestionRun {

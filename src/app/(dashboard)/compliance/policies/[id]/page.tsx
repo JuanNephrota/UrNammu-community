@@ -28,6 +28,9 @@ export default async function PolicyDetailPage({
               id: true,
               name: true,
               vendor: true,
+              department: true,
+              status: true,
+              modelType: true,
               dataSensitivity: true,
               reviewIntervalDays: true,
               riskLevel: true,
@@ -35,6 +38,10 @@ export default async function PolicyDetailPage({
               requireSecurityApproval: true,
               requireLegalApproval: true,
               requireComplianceApproval: true,
+              governanceExceptions: {
+                where: { status: "ACTIVE" },
+                select: { id: true, expiresAt: true },
+              },
             },
           },
         },
@@ -73,17 +80,47 @@ export default async function PolicyDetailPage({
               {policyRules.allowedVendors?.length ? (
                 <p><span className="font-medium text-[var(--text-primary)]">Allowed vendors:</span> {policyRules.allowedVendors.join(", ")}</p>
               ) : null}
+              {policyRules.blockedVendors?.length ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Blocked vendors:</span> {policyRules.blockedVendors.join(", ")}</p>
+              ) : null}
               {policyRules.blockedDataSensitivities?.length ? (
                 <p><span className="font-medium text-[var(--text-primary)]">Blocked data sensitivities:</span> {policyRules.blockedDataSensitivities.join(", ")}</p>
               ) : null}
+              {policyRules.maxDataSensitivity ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Maximum data sensitivity:</span> {policyRules.maxDataSensitivity}</p>
+              ) : null}
               {policyRules.requiredStages?.length ? (
                 <p><span className="font-medium text-[var(--text-primary)]">Required stages:</span> {policyRules.requiredStages.join(", ")}</p>
+              ) : null}
+              {policyRules.allowedDepartments?.length ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Allowed departments:</span> {policyRules.allowedDepartments.join(", ")}</p>
+              ) : null}
+              {policyRules.blockedDepartments?.length ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Blocked departments:</span> {policyRules.blockedDepartments.join(", ")}</p>
+              ) : null}
+              {policyRules.allowedModelPatterns?.length ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Allowed model patterns:</span> {policyRules.allowedModelPatterns.join(", ")}</p>
+              ) : null}
+              {policyRules.blockedModelPatterns?.length ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Blocked model patterns:</span> {policyRules.blockedModelPatterns.join(", ")}</p>
+              ) : null}
+              {policyRules.allowedStatuses?.length ? (
+                <p><span className="font-medium text-[var(--text-primary)]">Allowed statuses:</span> {policyRules.allowedStatuses.join(", ")}</p>
               ) : null}
               {policyRules.maxReviewIntervalDays ? (
                 <p><span className="font-medium text-[var(--text-primary)]">Max review interval:</span> {policyRules.maxReviewIntervalDays} days</p>
               ) : null}
               {policyRules.minimumRiskLevel ? (
                 <p><span className="font-medium text-[var(--text-primary)]">Minimum risk level:</span> {policyRules.minimumRiskLevel}</p>
+              ) : null}
+              {policyRules.actions ? (
+                <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                  <p><span className="font-medium text-[var(--text-primary)]">Enforcement:</span> {policyRules.actions.enforcement ?? "BLOCK"}</p>
+                  <p><span className="font-medium text-[var(--text-primary)]">Exception waiver:</span> {policyRules.actions.allowException ? "Allowed" : "Not allowed"}</p>
+                  {policyRules.actions.recommendedComplianceStatus ? (
+                    <p><span className="font-medium text-[var(--text-primary)]">Violation status:</span> {policyRules.actions.recommendedComplianceStatus}</p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           )}
@@ -106,7 +143,13 @@ export default async function PolicyDetailPage({
             <div className="space-y-3">
               {policy.assignments.map((a) => (
                 (() => {
-                  const ruleEvaluation = evaluatePolicyRules(policyRules, a.aiSystem);
+                  const activeExceptionCount = a.aiSystem.governanceExceptions.filter(
+                    (exception) => new Date(exception.expiresAt).getTime() >= Date.now()
+                  ).length;
+                  const ruleEvaluation = evaluatePolicyRules(policyRules, {
+                    ...a.aiSystem,
+                    activeExceptionCount,
+                  });
                   return (
                 <div
                   key={a.id}
@@ -142,7 +185,10 @@ export default async function PolicyDetailPage({
                     status={a.complianceStatus}
                     evidence={a.evidence}
                   />
-                  {(ruleEvaluation.violations.length > 0 || ruleEvaluation.recommendations.length > 0) && (
+                  {(ruleEvaluation.violations.length > 0 ||
+                    ruleEvaluation.waivedViolations.length > 0 ||
+                    ruleEvaluation.advisories.length > 0 ||
+                    ruleEvaluation.recommendations.length > 0) && (
                     <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                         Rule Evaluation
@@ -154,6 +200,22 @@ export default async function PolicyDetailPage({
                           ))}
                         </div>
                       )}
+                      {ruleEvaluation.waivedViolations.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {ruleEvaluation.waivedViolations.map((violation) => (
+                            <p key={violation} className="text-sm text-[var(--warning)]">
+                              Waived by active exception: {violation}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {ruleEvaluation.advisories.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {ruleEvaluation.advisories.map((advisory) => (
+                            <p key={advisory} className="text-sm text-[var(--warning)]">{advisory}</p>
+                          ))}
+                        </div>
+                      )}
                       {ruleEvaluation.recommendations.length > 0 && (
                         <div className="mt-2 space-y-1">
                           {ruleEvaluation.recommendations.map((recommendation) => (
@@ -161,6 +223,9 @@ export default async function PolicyDetailPage({
                           ))}
                         </div>
                       )}
+                      <p className="mt-2 text-xs text-[var(--text-faint)]">
+                        Recommended compliance status: {ruleEvaluation.recommendedComplianceStatus}
+                      </p>
                     </div>
                   )}
                 </div>
