@@ -10,9 +10,15 @@ import { DimensionDistributionChart } from "@/components/dashboard/dimension-dis
 import { RiskTierTrendChart } from "@/components/dashboard/risk-tier-trend-chart";
 import { Badge, riskBadgeVariant } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import {
+  getApprovedStages,
+  getRequiredStages,
+  getRiskControlGaps,
+  type RiskScores,
+} from "@/lib/risk-center";
 
 export default async function RiskCenterPage() {
-  const [assessments, systemRisks, recentAssessments, allAssessments] = await Promise.all([
+  const [assessments, systemRisks, recentAssessments, allAssessments, reassessmentAlerts, systemsForControlGaps] = await Promise.all([
     // Get latest assessment per system for heat map
     prisma.$queryRaw<
       {
@@ -52,6 +58,64 @@ export default async function RiskCenterPage() {
     prisma.riskAssessment.findMany({
       orderBy: { createdAt: "asc" },
       select: { aiSystemId: true, overallScore: true, createdAt: true },
+    }),
+    prisma.alert.findMany({
+      where: {
+        source: "risk_reassessment",
+        status: { in: ["OPEN", "ACKNOWLEDGED"] },
+        aiSystemId: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        aiSystem: {
+          select: {
+            id: true,
+            name: true,
+            department: true,
+          },
+        },
+      },
+      take: 8,
+    }),
+    prisma.aISystem.findMany({
+      include: {
+        riskAssessments: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+        policyAssignments: {
+          select: {
+            complianceStatus: true,
+          },
+        },
+        governanceReviews: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            stage: true,
+            approved: true,
+          },
+        },
+        approvals: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            decision: true,
+          },
+        },
+        governanceIncidents: {
+          where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+          select: {
+            id: true,
+          },
+        },
+        _count: {
+          select: {
+            evidenceArtifacts: true,
+          },
+        },
+      },
+      take: 20,
+      orderBy: { updatedAt: "desc" },
     }),
   ]);
 
@@ -124,6 +188,62 @@ export default async function RiskCenterPage() {
     riskTierTrend.push(buildTierSnapshot(lastDate, latestTierBySystem.values()));
   }
 
+  const controlGapQueue = systemsForControlGaps.reduce<
+    Array<{
+      id: string;
+      name: string;
+      department: string;
+      gaps: ReturnType<typeof getRiskControlGaps>;
+    }>
+  >((acc, system) => {
+      const latestAssessment = system.riskAssessments[0];
+      if (!latestAssessment) return acc;
+
+      const scores: RiskScores = {
+        biasScore: latestAssessment.biasScore,
+        securityScore: latestAssessment.securityScore,
+        privacyScore: latestAssessment.privacyScore,
+        fairnessScore: latestAssessment.fairnessScore,
+        performanceScore: latestAssessment.performanceScore,
+        transparencyScore: latestAssessment.transparencyScore,
+      };
+
+      const gaps = getRiskControlGaps({
+        system: {
+          id: system.id,
+          name: system.name,
+          department: system.department,
+          vendor: system.vendor,
+          modelType: system.modelType,
+          useCase: system.useCase,
+          dataInputs: system.dataInputs,
+          dataOutputs: system.dataOutputs,
+          dataSensitivity: system.dataSensitivity,
+          reviewIntervalDays: system.reviewIntervalDays,
+        },
+        scores,
+        policyAssignments: system.policyAssignments,
+        evidenceArtifactCount: system._count.evidenceArtifacts,
+        requiredStages: getRequiredStages(system),
+        approvedStages: getApprovedStages(system.governanceReviews),
+        latestApprovalDecision: system.approvals[0]?.decision ?? null,
+        openIncidentCount: system.governanceIncidents.length,
+      });
+
+      if (gaps.length === 0) return acc;
+
+      acc.push({
+        id: system.id,
+        name: system.name,
+        department: system.department,
+        gaps,
+      });
+
+      return acc;
+    }, [])
+    .sort((a, b) => b.gaps.length - a.gaps.length)
+    .slice(0, 6);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -170,6 +290,94 @@ export default async function RiskCenterPage() {
           </CardHeader>
           <CardContent>
             <RiskTierTrendChart data={riskTierTrend} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Reassessment Queue</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {reassessmentAlerts.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No systems are currently flagged for reassessment due to drift.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {reassessmentAlerts.map((alert) => (
+                  <Link
+                    key={alert.id}
+                    href={alert.aiSystemId ? `/registry/${alert.aiSystemId}` : "/alerts"}
+                    className="block rounded-md border border-[var(--border-subtle)] p-3 hover:bg-[var(--bg-hover)]"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--text-primary)]">
+                          {alert.aiSystem?.name ?? "Unlinked system"}
+                        </p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {alert.aiSystem?.department ?? "Unknown department"} · {formatDate(alert.createdAt)}
+                        </p>
+                      </div>
+                      <Badge variant={riskBadgeVariant(alert.severity)}>
+                        {alert.severity}
+                      </Badge>
+                    </div>
+                    {alert.description && (
+                      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                        {alert.description}
+                      </p>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Control Gap Queue</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {controlGapQueue.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No obvious control gaps are currently surfaced from the latest saved assessments.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {controlGapQueue.map((system) => (
+                  <Link
+                    key={system.id}
+                    href={`/registry/${system.id}`}
+                    className="block rounded-md border border-[var(--border-subtle)] p-3 hover:bg-[var(--bg-hover)]"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--text-primary)]">
+                          {system.name}
+                        </p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {system.department} · {system.gaps.length} gap{system.gaps.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <Badge variant={system.gaps.some((gap) => gap.tone === "critical") ? "critical" : "warning"}>
+                        {system.gaps.some((gap) => gap.tone === "critical") ? "Needs action" : "Follow up"}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {system.gaps.slice(0, 2).map((gap) => (
+                        <p key={gap.key} className="text-sm text-[var(--text-secondary)]">
+                          {gap.title}
+                        </p>
+                      ))}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

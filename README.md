@@ -1,6 +1,6 @@
-# AI Gov
+# Nammu
 
-AI Gov is an internal AI governance platform for admin and compliance teams. It combines:
+Nammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
 - AI system and agent inventory
 - Shadow AI discovery from Google Workspace, Microsoft 365, and DNS/proxy CSV imports
@@ -262,23 +262,57 @@ npm run db:reset
 
 ## TODO / Roadmap
 
-### 1. Must-have Governance
+### Governance
 
-- Add renewal automation for governance reviews, approvals, and exception expirations
-- Add ownership escalation when systems become overdue, unowned, or blocked in approval stages
-- Add workflow notifications for approvals, renewals, drift, incidents, and overdue reviews
+- [x] Policy enforcement with rule conditions, advisory vs blocking modes, and exception-aware evaluation
+- [x] Approval workflows with staged signoff across owners, security, legal, and compliance
+- [x] Exception management with expiry, approver, rationale, and renewal controls
+- [x] AI-powered compliance assessment against policies and framework requirements
+- [ ] Renewal automation for governance reviews, approvals, and exception expirations
+- [ ] Ownership escalation when systems become overdue, unowned, or blocked
+- [ ] Workflow notifications for approvals, renewals, drift, incidents, and overdue reviews
 
-### 2. Must-have Oversight
+### Oversight
 
-- Expand audit-ready reporting into board, auditor, and regulator-focused export formats
-- Add evidence quality scoring for stale, weak, or missing governance artifacts
-- Add workflow notifications and dashboards for open incidents, drift alerts, and remediation progress
+- [x] Anthropic Admin API integration (usage, cost, API keys, members)
+- [x] OpenAI Admin API integration (usage, costs, assistant discovery)
+- [x] Claude Code Analytics API integration (per-user sessions, LOC, commits, PRs, tool acceptance)
+- [x] Normalized telemetry with UsageBucket / CostBucket models
+- [ ] Audit-ready reporting in board, auditor, and regulator-focused export formats
+- [ ] Evidence quality scoring for stale, weak, or missing governance artifacts
+- [ ] Dashboards for open incidents, drift alerts, and remediation progress
 
-### 3. Strategic Differentiators
+### Risk
 
-- Automated governance recommendations with next-best actions per system
-- Renewal automation with batched review campaigns and reminder workflows
-- Exception lifecycle management with renewal requests and expiration handling
-- Bulk governance operations across many systems at once
-- Expand executive dashboards with posture deltas, trend storytelling, and board-ready summaries
-- Add low-confidence review queues and promotion workflows for discovered Google and Microsoft Shadow AI candidates
+- [x] Multi-dimensional risk assessments with AI-assisted scoring
+- [x] Risk heat map with clickable system links
+- [x] Dimension distribution chart (systems per risk bucket per dimension)
+- [x] Risk tier trend chart (organization risk posture over time)
+- [x] Dynamic assessments with a live recommended risk tier and explanation
+- [x] Control-gap detection tied to policies, evidence, and approvals
+- [x] Risk drift and reassessment triggers for materially changed systems
+- [ ] Radar charts for per-system risk profile comparison
+- [ ] Risk trend line charts per system over assessment history
+- [ ] Assessment templates by use case (copilot, vendor AI SaaS, autonomous agent, customer-facing AI)
+- [ ] Dynamic question sets that branch by data sensitivity, autonomy, and user impact
+- [ ] Residual-risk tracking alongside inherent risk
+- [ ] Portfolio views by department, vendor, owner, and use case
+- [ ] Scoring calibration controls for compliance admins
+- [ ] Reviewer guidance with examples for low, medium, and high scoring
+- [ ] Mandatory mitigation plans for high-risk findings
+- [ ] Assessment reuse from prior systems or previous reviews
+
+### Shadow AI
+
+- [x] Google Workspace OAuth discovery with confidence scoring
+- [x] Microsoft 365 delegated-app discovery via Microsoft Graph
+- [x] DNS/proxy log import (CSV/TXT/JSON)
+- [ ] Low-confidence review queues and promotion workflows
+- [ ] Shadow AI to approved-system conversion workflow
+
+### Strategic
+
+- [ ] Automated governance recommendations with next-best actions per system
+- [ ] Bulk governance operations across many systems at once
+- [ ] Executive dashboards with posture deltas, trend storytelling, and board-ready summaries
+- [ ] Vendor governance expansion with contract lifecycle and renewal tracking

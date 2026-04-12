@@ -14,6 +14,7 @@ import { formatDate } from "@/lib/utils";
 import { isDemoModeEnabled } from "@/lib/demo-mode";
 import { ExecutivePostureChart } from "@/components/dashboard/executive-posture-chart";
 import { SegmentRiskHeatmap } from "@/components/dashboard/segment-risk-heatmap";
+import { getSystemGovernanceRecommendations } from "@/lib/governance-recommendations";
 
 export default async function DashboardPage() {
   const demoMode = isDemoModeEnabled();
@@ -36,6 +37,7 @@ export default async function DashboardPage() {
     systemsWithScores,
     approvedSystems,
     unresolvedDiscoveries,
+    recommendationCandidates,
   ] = await Promise.all([
     prisma.aISystem.count(),
     prisma.aIAgent.count(),
@@ -166,6 +168,37 @@ export default async function DashboardPage() {
       where: { status: { in: ["DISCOVERED", "UNDER_REVIEW"] } },
       select: { detectedAt: true },
       orderBy: { detectedAt: "asc" },
+    }),
+    prisma.aISystem.findMany({
+      take: 10,
+      orderBy: [{ updatedAt: "desc" }],
+      include: {
+        policyAssignments: {
+          select: {
+            id: true,
+            complianceStatus: true,
+            policy: { select: { id: true, name: true, rules: true } },
+          },
+        },
+        approvals: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { decision: true },
+        },
+        governanceReviews: {
+          orderBy: { createdAt: "desc" },
+          select: { stage: true, approved: true },
+        },
+        governanceExceptions: {
+          select: { status: true, expiresAt: true },
+        },
+        governanceIncidents: {
+          select: { id: true, title: true, status: true },
+        },
+        _count: {
+          select: { riskAssessments: true },
+        },
+      },
     }),
   ]);
 
@@ -309,6 +342,48 @@ export default async function DashboardPage() {
       tone: activeGovernanceExceptions > 0 ? "info" : "success",
     },
   ] as const;
+
+  const topRecommendations = recommendationCandidates
+    .map((system) => {
+      const summary = getSystemGovernanceRecommendations({
+        id: system.id,
+        status: system.status,
+        riskLevel: system.riskLevel,
+        vendor: system.vendor,
+        department: system.department,
+        modelType: system.modelType,
+        dataSensitivity: system.dataSensitivity,
+        reviewIntervalDays: system.reviewIntervalDays,
+        nextReviewDate: system.nextReviewDate,
+        requireOwnerApproval: system.requireOwnerApproval,
+        requireSecurityApproval: system.requireSecurityApproval,
+        requireLegalApproval: system.requireLegalApproval,
+        requireComplianceApproval: system.requireComplianceApproval,
+        riskAssessmentsCount: system._count.riskAssessments,
+        latestApprovalDecision: system.approvals[0]?.decision ?? null,
+        policyAssignments: system.policyAssignments,
+        governanceReviews: system.governanceReviews,
+        governanceExceptions: system.governanceExceptions,
+        governanceIncidents: system.governanceIncidents,
+      });
+
+      return {
+        id: system.id,
+        name: system.name,
+        department: system.department,
+        recommendation: summary.primary,
+      };
+    })
+    .filter(
+      (system): system is {
+        id: string;
+        name: string;
+        department: string;
+        recommendation: NonNullable<ReturnType<typeof getSystemGovernanceRecommendations>["primary"]>;
+      } => system.recommendation !== null
+    )
+    .sort((a, b) => b.recommendation.priority - a.recommendation.priority)
+    .slice(0, 5);
 
   return (
     <div className="space-y-8">
@@ -512,6 +587,61 @@ export default async function DashboardPage() {
         <SegmentRiskHeatmap title="Risk by Vendor" rows={vendorRiskRows} />
         <SegmentRiskHeatmap title="Risk by Data Sensitivity" rows={sensitivityRiskRows} />
       </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-[var(--accent)]" />
+            Automated Governance Recommendations
+          </CardTitle>
+          <Link href="/registry" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">
+            Registry <ArrowRight className="h-3 w-3" />
+          </Link>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {topRecommendations.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No recommendation-heavy systems right now. Governance work is caught up enough to stay in monitoring mode.
+            </p>
+          ) : (
+            topRecommendations.map((system) => (
+              <Link
+                key={system.id}
+                href={`/registry/${system.id}`}
+                className="flex items-start justify-between gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 transition-all hover:bg-[var(--bg-hover)]"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-medium text-[var(--text-primary)]">
+                      {system.name}
+                    </p>
+                    <Badge
+                      variant={
+                        system.recommendation.tone === "critical"
+                          ? "critical"
+                          : system.recommendation.tone === "warning"
+                            ? "warning"
+                            : system.recommendation.tone === "success"
+                              ? "success"
+                              : "info"
+                      }
+                    >
+                      {system.department}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-[var(--text-primary)]">
+                    {system.recommendation.title}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    {system.recommendation.detail}
+                  </p>
+                </div>
+                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-faint)]" />
+              </Link>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       <GovernanceActionQueue
         items={governanceItems.filter((item) => item.count > 0)}

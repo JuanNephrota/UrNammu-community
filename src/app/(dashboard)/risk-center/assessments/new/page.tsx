@@ -4,7 +4,52 @@ import { RiskAssessmentForm } from "@/components/forms/risk-assessment-form";
 
 export default async function NewAssessmentPage() {
   const systems = await prisma.aISystem.findMany({
-    select: { id: true, name: true, description: true, useCase: true, vendor: true, modelType: true, dataInputs: true, dataOutputs: true, dataSensitivity: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      department: true,
+      useCase: true,
+      vendor: true,
+      modelType: true,
+      dataInputs: true,
+      dataOutputs: true,
+      dataSensitivity: true,
+      reviewIntervalDays: true,
+      requireOwnerApproval: true,
+      requireSecurityApproval: true,
+      requireLegalApproval: true,
+      requireComplianceApproval: true,
+      policyAssignments: {
+        select: {
+          complianceStatus: true,
+        },
+      },
+      governanceReviews: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          stage: true,
+          approved: true,
+        },
+      },
+      approvals: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          decision: true,
+        },
+      },
+      governanceIncidents: {
+        where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+        select: { id: true },
+      },
+      _count: {
+        select: {
+          evidenceArtifacts: true,
+          riskAssessments: true,
+        },
+      },
+    },
     orderBy: { name: "asc" },
   });
 

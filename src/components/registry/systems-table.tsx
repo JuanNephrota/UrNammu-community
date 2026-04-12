@@ -25,6 +25,8 @@ type SystemRow = {
   createdAt: string | Date;
   owner: { id: string; name: string | null };
   _count: { agents: number; riskAssessments: number };
+  topRecommendation: string;
+  topRecommendationTone: "critical" | "warning" | "success" | "info";
 };
 
 const columns: ColumnDef<SystemRow>[] = [
@@ -79,6 +81,15 @@ const columns: ColumnDef<SystemRow>[] = [
     header: "Agents",
     cell: ({ row }) => (
       <span className="tabular-nums">{row.original._count.agents}</span>
+    ),
+  },
+  {
+    accessorKey: "topRecommendation",
+    header: "Next Best Action",
+    cell: ({ row }) => (
+      <Badge variant={row.original.topRecommendationTone}>
+        {row.original.topRecommendation}
+      </Badge>
     ),
   },
   {

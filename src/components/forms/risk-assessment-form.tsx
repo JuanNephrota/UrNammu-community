@@ -6,18 +6,48 @@ import { ChevronDown, ChevronUp, MessageSquare, Sparkles, Loader2 } from "lucide
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Badge, riskBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  getRecommendedRiskTier,
+  getRiskAssessmentPrompts,
+  getRiskControlGaps,
+  getRequiredStages,
+  getApprovedStages,
+  type RiskScores,
+} from "@/lib/risk-center";
 
 interface SystemDetail {
   id: string;
   name: string;
+  department: string;
   description?: string | null;
   useCase?: string | null;
   vendor?: string | null;
   modelType?: string | null;
   dataInputs?: string | null;
   dataOutputs?: string | null;
-  dataSensitivity?: string | null;
+  dataSensitivity: "PUBLIC" | "INTERNAL" | "CONFIDENTIAL" | "RESTRICTED";
+  reviewIntervalDays: number;
+  requireOwnerApproval: boolean;
+  requireSecurityApproval: boolean;
+  requireLegalApproval: boolean;
+  requireComplianceApproval: boolean;
+  policyAssignments: Array<{
+    complianceStatus: "COMPLIANT" | "PARTIALLY_COMPLIANT" | "NON_COMPLIANT" | "NOT_ASSESSED";
+  }>;
+  governanceReviews: Array<{
+    stage: "OWNER" | "SECURITY" | "LEGAL" | "COMPLIANCE";
+    approved: boolean;
+  }>;
+  approvals: Array<{
+    decision: "APPROVED" | "CHANGES_REQUESTED" | "REVOKED";
+  }>;
+  governanceIncidents: Array<{ id: string }>;
+  _count: {
+    evidenceArtifacts: number;
+    riskAssessments: number;
+  };
 }
 
 interface RiskAssessmentFormProps {
@@ -120,6 +150,25 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
 
   const overall = Object.values(scores).reduce((a, b) => a + b, 0) / 6;
   const selectedSystem = systems.find((s) => s.id === selectedSystemId);
+  const typedScores = scores as RiskScores;
+  const assessmentPrompts = selectedSystem
+    ? getRiskAssessmentPrompts(selectedSystem)
+    : [];
+  const recommendedTier = selectedSystem
+    ? getRecommendedRiskTier({ system: selectedSystem, scores: typedScores })
+    : null;
+  const controlGaps = selectedSystem
+    ? getRiskControlGaps({
+        system: selectedSystem,
+        scores: typedScores,
+        policyAssignments: selectedSystem.policyAssignments,
+        evidenceArtifactCount: selectedSystem._count.evidenceArtifacts,
+        requiredStages: getRequiredStages(selectedSystem),
+        approvedStages: getApprovedStages(selectedSystem.governanceReviews),
+        latestApprovalDecision: selectedSystem.approvals[0]?.decision ?? null,
+        openIncidentCount: selectedSystem.governanceIncidents.length,
+      })
+    : [];
 
   async function handleGenerateAI() {
     if (!selectedSystem) {
@@ -303,8 +352,135 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
               </p>
             </div>
           )}
+
+          {selectedSystem && (
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Current Posture
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{selectedSystem.dataSensitivity}</Badge>
+                  <Badge variant="info">{selectedSystem.department}</Badge>
+                  <Badge variant="outline">
+                    {selectedSystem._count.riskAssessments} prior assessments
+                  </Badge>
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Evidence
+                </p>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  {selectedSystem._count.evidenceArtifacts} artifact
+                  {selectedSystem._count.evidenceArtifacts === 1 ? "" : "s"} on file
+                </p>
+              </div>
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Approval State
+                </p>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  {selectedSystem.approvals[0]?.decision
+                    ? selectedSystem.approvals[0].decision.replace(/_/g, " ")
+                    : "No formal decision yet"}
+                </p>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {selectedSystem && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Assessment Focus</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {assessmentPrompts.map((prompt) => (
+                <div
+                  key={prompt}
+                  className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2"
+                >
+                  <p className="text-sm text-[var(--text-secondary)]">{prompt}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          {recommendedTier && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Recommended Risk Tier</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Badge variant={riskBadgeVariant(recommendedTier.recommendedRiskLevel)}>
+                    {recommendedTier.recommendedRiskLevel}
+                  </Badge>
+                  <div className="text-right">
+                    <p className="text-xs text-[var(--text-faint)]">Adjusted score</p>
+                    <p className="text-lg font-bold tabular-nums text-[var(--text-primary)]">
+                      {recommendedTier.adjustedScore.toFixed(1)}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Baseline score: {recommendedTier.baseScore.toFixed(1)}
+                </p>
+                <div className="space-y-2">
+                  {recommendedTier.reasons.slice(0, 4).map((reason) => (
+                    <p key={reason} className="text-sm text-[var(--text-secondary)]">
+                      {reason}
+                    </p>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Control Gaps</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {controlGaps.length === 0 ? (
+                <p className="text-sm text-[var(--text-secondary)]">
+                  No obvious policy, evidence, or approval gaps detected from the current system record.
+                </p>
+              ) : (
+                controlGaps.map((gap) => (
+                  <div
+                    key={gap.key}
+                    className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={
+                          gap.tone === "critical"
+                            ? "critical"
+                            : gap.tone === "warning"
+                              ? "warning"
+                              : "info"
+                        }
+                      >
+                        {gap.tone}
+                      </Badge>
+                      <p className="text-sm font-medium text-[var(--text-primary)]">
+                        {gap.title}
+                      </p>
+                    </div>
+                    <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                      {gap.detail}
+                    </p>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <Card>
         <CardHeader>

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withAuth, withRole } from "@/lib/auth-guard";
 import { updateAISystemSchema } from "@/lib/validations/ai-system";
 import { createAuditLog } from "@/lib/audit";
+import { getRiskReassessmentDrift } from "@/lib/risk-center";
 
 export async function GET(
   _req: NextRequest,
@@ -72,7 +73,16 @@ export async function PUT(
       );
     }
 
-    const existing = await prisma.aISystem.findUnique({ where: { id } });
+    const existing = await prisma.aISystem.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            riskAssessments: true,
+          },
+        },
+      },
+    });
     if (!existing) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
@@ -147,6 +157,43 @@ export async function PUT(
           aiSystemId: existing.id,
         },
       });
+    }
+
+    const reassessmentDrift = getRiskReassessmentDrift({
+      before: existing,
+      after: parsed.data,
+      hasAssessments: existing._count.riskAssessments > 0,
+    });
+
+    if (reassessmentDrift.requiresReassessment) {
+      const existingOpenReassessmentAlert = await prisma.alert.findFirst({
+        where: {
+          aiSystemId: existing.id,
+          source: "risk_reassessment",
+          status: { in: ["OPEN", "ACKNOWLEDGED"] },
+        },
+      });
+
+      if (existingOpenReassessmentAlert) {
+        await prisma.alert.update({
+          where: { id: existingOpenReassessmentAlert.id },
+          data: {
+            title: reassessmentDrift.title,
+            description: reassessmentDrift.description,
+            severity: reassessmentDrift.severity,
+          },
+        });
+      } else {
+        await prisma.alert.create({
+          data: {
+            title: reassessmentDrift.title,
+            description: reassessmentDrift.description,
+            severity: reassessmentDrift.severity,
+            source: "risk_reassessment",
+            aiSystemId: existing.id,
+          },
+        });
+      }
     }
 
     return NextResponse.json(system);

@@ -8,13 +8,17 @@ import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/bad
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDate } from "@/lib/utils";
-import { getSystemWorkflowSummary } from "@/lib/governance-workflow";
+import {
+  getRequiredStages,
+  getSystemGovernanceRecommendations,
+} from "@/lib/governance-recommendations";
 import { AssignPolicyDialog } from "@/components/compliance/assign-policy-dialog";
 import { ApprovalDecisionCard } from "@/components/registry/approval-decision-card";
 import { GovernanceStageReviewCard } from "@/components/registry/governance-stage-review-card";
 import { GovernanceExceptionsCard } from "@/components/registry/governance-exceptions-card";
 import { EvidenceArtifactsCard } from "@/components/registry/evidence-artifacts-card";
 import { GovernanceIncidentsCard } from "@/components/registry/governance-incidents-card";
+import { GovernanceRecommendationsCard } from "@/components/registry/governance-recommendations-card";
 import {
   ComplianceStatusEditor,
   ComplianceEvidence,
@@ -74,7 +78,9 @@ export default async function SystemDetailPage({
         },
       },
       policyAssignments: {
-        include: { policy: { select: { id: true, name: true, framework: true } } },
+        include: {
+          policy: { select: { id: true, name: true, framework: true, rules: true } },
+        },
       },
       auditLogs: {
         orderBy: { createdAt: "desc" },
@@ -92,15 +98,6 @@ export default async function SystemDetailPage({
     take: 5,
   });
   const now = new Date();
-  const activeExceptionCount = system.governanceExceptions.filter(
-    (exception) => exception.status === "ACTIVE" && new Date(exception.expiresAt).getTime() >= now.getTime()
-  ).length;
-  const latestStageApprovals = new Map<string, boolean>();
-  for (const review of system.governanceReviews) {
-    if (!latestStageApprovals.has(review.stage)) {
-      latestStageApprovals.set(review.stage, review.approved);
-    }
-  }
   const exceptionSummaries = system.governanceExceptions.map((exception) => ({
     ...exception,
     status:
@@ -108,37 +105,48 @@ export default async function SystemDetailPage({
         ? "EXPIRED"
         : exception.status,
   }));
-
-  const workflow = getSystemWorkflowSummary({
+  const { workflow, recommendations } = getSystemGovernanceRecommendations({
     id: system.id,
     status: system.status,
-    riskAssessmentsCount: system.riskAssessments.length,
-    policyAssignmentsCount: system.policyAssignments.length,
-    notAssessedAssignments: system.policyAssignments.filter((assignment) => assignment.complianceStatus === "NOT_ASSESSED").length,
-    nonCompliantAssignments: system.policyAssignments.filter((assignment) => assignment.complianceStatus === "NON_COMPLIANT").length,
-    partialAssignments: system.policyAssignments.filter((assignment) => assignment.complianceStatus === "PARTIALLY_COMPLIANT").length,
-    latestApprovalDecision: system.approvals[0]?.decision ?? null,
+    riskLevel: system.riskLevel,
+    vendor: system.vendor,
+    department: system.department,
+    modelType: system.modelType,
+    dataSensitivity: system.dataSensitivity,
+    reviewIntervalDays: system.reviewIntervalDays,
     nextReviewDate: system.nextReviewDate,
-    activeExceptionCount,
-    requiredStages: [
-      ...(system.requireOwnerApproval ? ["OWNER" as const] : []),
-      ...(system.requireSecurityApproval ? ["SECURITY" as const] : []),
-      ...(system.requireLegalApproval ? ["LEGAL" as const] : []),
-      ...(system.requireComplianceApproval ? ["COMPLIANCE" as const] : []),
-    ],
-    approvedStages: Array.from(
-      [...latestStageApprovals.entries()]
-        .filter(([, approved]) => approved)
-        .map(([stage]) => stage as "OWNER" | "SECURITY" | "LEGAL" | "COMPLIANCE")
-    ),
+    requireOwnerApproval: system.requireOwnerApproval,
+    requireSecurityApproval: system.requireSecurityApproval,
+    requireLegalApproval: system.requireLegalApproval,
+    requireComplianceApproval: system.requireComplianceApproval,
+    riskAssessmentsCount: system.riskAssessments.length,
+    latestApprovalDecision: system.approvals[0]?.decision ?? null,
+    policyAssignments: system.policyAssignments.map((assignment) => ({
+      id: assignment.id,
+      complianceStatus: assignment.complianceStatus,
+      policy: {
+        id: assignment.policy.id,
+        name: assignment.policy.name,
+        rules: assignment.policy.rules,
+      },
+    })),
+    governanceReviews: system.governanceReviews.map((review) => ({
+      stage: review.stage,
+      approved: review.approved,
+    })),
+    governanceExceptions: system.governanceExceptions.map((exception) => ({
+      status: exception.status,
+      expiresAt: exception.expiresAt,
+    })),
+    governanceIncidents: system.governanceIncidents.map((incident) => ({
+      id: incident.id,
+      title: incident.title,
+      status: incident.status,
+    })),
+    linkedDiscoveriesCount: linkedDiscoveries.length,
   });
   const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
-  const requiredStages = [
-    ...(system.requireOwnerApproval ? ["OWNER" as const] : []),
-    ...(system.requireSecurityApproval ? ["SECURITY" as const] : []),
-    ...(system.requireLegalApproval ? ["LEGAL" as const] : []),
-    ...(system.requireComplianceApproval ? ["COMPLIANCE" as const] : []),
-  ];
+  const requiredStages = getRequiredStages(system);
 
   return (
     <div className="space-y-6">
@@ -250,6 +258,7 @@ export default async function SystemDetailPage({
               systemId={system.id}
               incidents={system.governanceIncidents}
             />
+            <GovernanceRecommendationsCard recommendations={recommendations.slice(0, 6)} />
             <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
