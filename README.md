@@ -264,33 +264,33 @@ npm run db:reset
 
 ### Governance
 
-- [x] Policy enforcement with rule conditions, advisory vs blocking modes, and exception-aware evaluation
-- [x] Approval workflows with staged signoff across owners, security, legal, and compliance
-- [x] Exception management with expiry, approver, rationale, and renewal controls
-- [x] AI-powered compliance assessment against policies and framework requirements
 - [ ] Renewal automation for governance reviews, approvals, and exception expirations
 - [ ] Ownership escalation when systems become overdue, unowned, or blocked
 - [ ] Workflow notifications for approvals, renewals, drift, incidents, and overdue reviews
 
 ### Oversight
 
-- [x] Anthropic Admin API integration (usage, cost, API keys, members)
-- [x] OpenAI Admin API integration (usage, costs, assistant discovery)
-- [x] Claude Code Analytics API integration (per-user sessions, LOC, commits, PRs, tool acceptance)
-- [x] Normalized telemetry with UsageBucket / CostBucket models
+- [ ] Usage attribution remediation — surface unattributed usage and link to projects/systems
+- [ ] Per-system telemetry attribution for governed systems
+- [ ] Time range picker and provider/model/project filters on usage pages
+- [ ] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
+- [ ] Spend governance with budgets, thresholds, burn pacing, and top cost drivers
+- [ ] Anomaly detection with configurable thresholds per provider, model, and project
+- [ ] Investigation workflows tied to alerts and incidents with owner, notes, and resolution tracking
+- [ ] Oversight recommendations with next-best actions for spend spikes, model shifts, and new projects
+- [ ] Model drift and change tracking across provider/model families
+- [ ] Data exposure monitoring for restricted-data patterns where provider visibility allows
+- [ ] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
+- [ ] Remediation status dashboards for alerts, incidents, and corrective actions
+- [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)
+- [ ] Vendor risk scoring combining contract health, security review, incidents, and high-risk systems
+- [ ] CSV/PDF export of usage logs and scheduled spend summary reports
 - [ ] Audit-ready reporting in board, auditor, and regulator-focused export formats
 - [ ] Evidence quality scoring for stale, weak, or missing governance artifacts
 - [ ] Dashboards for open incidents, drift alerts, and remediation progress
 
 ### Risk
 
-- [x] Multi-dimensional risk assessments with AI-assisted scoring
-- [x] Risk heat map with clickable system links
-- [x] Dimension distribution chart (systems per risk bucket per dimension)
-- [x] Risk tier trend chart (organization risk posture over time)
-- [x] Dynamic assessments with a live recommended risk tier and explanation
-- [x] Control-gap detection tied to policies, evidence, and approvals
-- [x] Risk drift and reassessment triggers for materially changed systems
 - [ ] Radar charts for per-system risk profile comparison
 - [ ] Risk trend line charts per system over assessment history
 - [ ] Assessment templates by use case (copilot, vendor AI SaaS, autonomous agent, customer-facing AI)
@@ -304,15 +304,11 @@ npm run db:reset
 
 ### Shadow AI
 
-- [x] Google Workspace OAuth discovery with confidence scoring
-- [x] Microsoft 365 delegated-app discovery via Microsoft Graph
-- [x] DNS/proxy log import (CSV/TXT/JSON)
 - [ ] Low-confidence review queues and promotion workflows
 - [ ] Shadow AI to approved-system conversion workflow
 
 ### Strategic
 
-- [ ] Automated governance recommendations with next-best actions per system
 - [ ] Bulk governance operations across many systems at once
 - [ ] Executive dashboards with posture deltas, trend storytelling, and board-ready summaries
 - [ ] Vendor governance expansion with contract lifecycle and renewal tracking

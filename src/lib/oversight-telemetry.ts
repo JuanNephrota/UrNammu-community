@@ -32,8 +32,12 @@ export function buildCostLookup(costBuckets: CostBucket[]): Map<string, number> 
   );
 }
 
-export function getTelemetryAttributionLabel(bucket: UsageBucket): string {
+export function getTelemetryAttributionLabel(
+  bucket: UsageBucket,
+  linkedSystemName?: string | null,
+): string {
   return (
+    linkedSystemName ??
     bucket.projectName ??
     bucket.actorName ??
     bucket.apiKeyName ??
@@ -43,8 +47,23 @@ export function getTelemetryAttributionLabel(bucket: UsageBucket): string {
   );
 }
 
+export function isUnattributed(bucket: UsageBucket): boolean {
+  return (
+    !bucket.aiSystemId &&
+    !bucket.projectName &&
+    !bucket.actorName &&
+    !bucket.apiKeyName &&
+    !bucket.projectExternalId &&
+    !bucket.actorExternalId
+  );
+}
+
+type BucketWithSystem = UsageBucket & {
+  aiSystem?: { id: string; name: string } | null;
+};
+
 export function buildTelemetryActivityRows(
-  usageBuckets: UsageBucket[],
+  usageBuckets: BucketWithSystem[],
   costLookup: Map<string, number>,
   take?: number
 ): TelemetryActivityRow[] {
@@ -53,7 +72,7 @@ export function buildTelemetryActivityRows(
     date: bucket.bucketStart,
     provider: bucket.provider,
     model: bucket.model ?? "—",
-    attribution: getTelemetryAttributionLabel(bucket),
+    attribution: getTelemetryAttributionLabel(bucket, bucket.aiSystem?.name),
     requests: bucket.requestCount ?? 0,
     tokens: bucket.totalTokens,
     cost: costLookup.get(getBucketIdentityKey(bucket)) ?? 0,

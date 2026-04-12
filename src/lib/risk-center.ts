@@ -1,6 +1,7 @@
 import type {
   AlertStatus,
   ApprovalDecision,
+  AutonomyLevel,
   ComplianceStatus,
   DataSensitivity,
   GovernanceReviewStage,
@@ -28,6 +29,27 @@ export type RiskSystemContext = {
   dataOutputs?: string | null;
   dataSensitivity: DataSensitivity;
   reviewIntervalDays?: number;
+};
+
+export type AgentRiskInput = {
+  id: string;
+  name: string;
+  autonomyLevel: AutonomyLevel;
+  humanReviewRequired: boolean;
+  humanReviewTriggers?: unknown;
+  connectedSystems?: unknown;
+  riskLevel: RiskLevel;
+  status?: string;
+  aiSystemId?: string | null;
+};
+
+export type AgentRiskSummary = {
+  id: string;
+  name: string;
+  overlayScore: number;
+  recommendedRiskLevel: RiskLevel;
+  reviewNeeded: boolean;
+  concerns: string[];
 };
 
 export function getRequiredStages(input: {
@@ -70,6 +92,7 @@ export type RiskControlGap = {
 type ControlGapInput = {
   system: RiskSystemContext;
   scores: RiskScores;
+  agents?: AgentRiskInput[];
   policyAssignments: Array<{ complianceStatus: ComplianceStatus }>;
   evidenceArtifactCount: number;
   requiredStages: GovernanceReviewStage[];
@@ -100,6 +123,14 @@ const governanceStageLabels: Record<GovernanceReviewStage, string> = {
   COMPLIANCE: "Compliance",
 };
 
+const autonomyOverlayScore: Record<AutonomyLevel, number> = {
+  MANUAL: 0,
+  HUMAN_IN_THE_LOOP: 6,
+  HUMAN_ON_THE_LOOP: 12,
+  SUPERVISED: 18,
+  FULL_AUTONOMY: 28,
+};
+
 function includesAny(value: string | null | undefined, patterns: string[]) {
   if (!value) return false;
   const lower = value.toLowerCase();
@@ -110,6 +141,92 @@ export function averageRiskScore(scores: RiskScores) {
   return Object.values(scores).reduce((sum, value) => sum + value, 0) / 6;
 }
 
+function riskLevelRank(level: RiskLevel) {
+  if (level === "CRITICAL") return 4;
+  if (level === "HIGH") return 3;
+  if (level === "MEDIUM") return 2;
+  if (level === "LOW") return 1;
+  return 0;
+}
+
+function getConnectedSystemCount(input: unknown) {
+  return Array.isArray(input) ? input.filter((item) => typeof item === "string" && item.trim()).length : 0;
+}
+
+function getTriggerCount(input: unknown) {
+  return Array.isArray(input) ? input.length : 0;
+}
+
+export function getAgentRiskSummary(agent: AgentRiskInput, parentRiskLevel?: RiskLevel): AgentRiskSummary {
+  let overlayScore = autonomyOverlayScore[agent.autonomyLevel];
+  const concerns: string[] = [];
+
+  if (agent.autonomyLevel === "FULL_AUTONOMY") {
+    concerns.push("Runs with full autonomy, which increases execution and oversight risk.");
+  } else if (agent.autonomyLevel === "SUPERVISED") {
+    concerns.push("Operates in supervised mode and still needs explicit oversight around higher-risk actions.");
+  } else if (agent.autonomyLevel === "HUMAN_ON_THE_LOOP") {
+    concerns.push("Relies on human-on-the-loop oversight, so escalation and intervention paths should be clear.");
+  }
+
+  if (!agent.humanReviewRequired && autonomyOverlayScore[agent.autonomyLevel] >= 12) {
+    overlayScore += 12;
+    concerns.push("Autonomy is elevated without required human review.");
+  }
+
+  const connectedSystemCount = getConnectedSystemCount(agent.connectedSystems);
+  if (connectedSystemCount >= 3) {
+    overlayScore += 8;
+    concerns.push(`Touches ${connectedSystemCount} connected systems, which expands operational blast radius.`);
+  } else if (connectedSystemCount > 0) {
+    overlayScore += 4;
+    concerns.push(`Connected to ${connectedSystemCount} downstream system${connectedSystemCount === 1 ? "" : "s"}.`);
+  }
+
+  if (agent.humanReviewRequired && getTriggerCount(agent.humanReviewTriggers) === 0) {
+    overlayScore += 6;
+    concerns.push("Human review is required, but no review triggers are documented.");
+  }
+
+  if (!agent.aiSystemId) {
+    overlayScore += 10;
+    concerns.push("Not linked to a parent AI system, so governance ownership is less clear.");
+  }
+
+  if (parentRiskLevel && riskLevelRank(agent.riskLevel) > riskLevelRank(parentRiskLevel)) {
+    overlayScore += 8;
+    concerns.push(`Agent risk level (${agent.riskLevel}) exceeds the parent system's current tier (${parentRiskLevel}).`);
+  }
+
+  const normalizedScore = Math.min(100, overlayScore);
+  return {
+    id: agent.id,
+    name: agent.name,
+    overlayScore: normalizedScore,
+    recommendedRiskLevel: scoreToRiskLevel(normalizedScore + 40),
+    reviewNeeded:
+      normalizedScore >= 18 ||
+      (!agent.humanReviewRequired && autonomyOverlayScore[agent.autonomyLevel] >= 12) ||
+      !agent.aiSystemId,
+    concerns,
+  };
+}
+
+export function getSystemAgentOverlay(
+  agents: AgentRiskInput[] | undefined,
+  parentRiskLevel?: RiskLevel
+) {
+  const summaries = (agents ?? []).map((agent) => getAgentRiskSummary(agent, parentRiskLevel));
+  const maxOverlayScore = summaries.reduce((max, summary) => Math.max(max, summary.overlayScore), 0);
+  const reviewNeededCount = summaries.filter((summary) => summary.reviewNeeded).length;
+
+  return {
+    summaries,
+    maxOverlayScore,
+    reviewNeededCount,
+  };
+}
+
 export function scoreToRiskLevel(score: number): RiskLevel {
   if (score >= 80) return "CRITICAL";
   if (score >= 60) return "HIGH";
@@ -118,7 +235,7 @@ export function scoreToRiskLevel(score: number): RiskLevel {
   return "MINIMAL";
 }
 
-export function getRiskAssessmentPrompts(system: RiskSystemContext) {
+export function getRiskAssessmentPrompts(system: RiskSystemContext, agents?: AgentRiskInput[]) {
   const prompts = new Set<string>();
 
   if (system.dataSensitivity === "CONFIDENTIAL" || system.dataSensitivity === "RESTRICTED") {
@@ -154,6 +271,11 @@ export function getRiskAssessmentPrompts(system: RiskSystemContext) {
     prompts.add("Assess performance, failure modes, and escalation paths for agentic or semi-autonomous behavior.");
   }
 
+  const agentOverlay = getSystemAgentOverlay(agents);
+  if (agentOverlay.reviewNeededCount > 0) {
+    prompts.add("Review linked agents for autonomy level, human review coverage, escalation triggers, and downstream system access.");
+  }
+
   if (system.vendor || system.modelType) {
     prompts.add("Confirm vendor and model dependency risks, including model drift, service changes, and fallback behavior.");
   }
@@ -182,6 +304,7 @@ export function getRiskAssessmentPrompts(system: RiskSystemContext) {
 export function getRecommendedRiskTier(input: {
   system: RiskSystemContext;
   scores: RiskScores;
+  agents?: AgentRiskInput[];
 }) {
   const baseScore = averageRiskScore(input.scores);
   let adjustedScore = baseScore;
@@ -236,6 +359,21 @@ export function getRecommendedRiskTier(input: {
     reasons.push("Third-party vendor dependency adds external model and service-change risk.");
   }
 
+  const agentOverlay = getSystemAgentOverlay(input.agents);
+  if (agentOverlay.maxOverlayScore >= 24) {
+    adjustedScore += 10;
+    reasons.push("Linked agents add substantial autonomy or operational blast-radius risk.");
+  } else if (agentOverlay.maxOverlayScore >= 12) {
+    adjustedScore += 5;
+    reasons.push("Linked agents add moderate autonomy and control-surface risk.");
+  }
+
+  if (agentOverlay.reviewNeededCount > 0) {
+    reasons.push(
+      `${agentOverlay.reviewNeededCount} linked agent${agentOverlay.reviewNeededCount === 1 ? "" : "s"} should receive dedicated agent-level review.`
+    );
+  }
+
   adjustedScore = Math.min(100, Math.round(adjustedScore * 10) / 10);
   const recommendedRiskLevel = scoreToRiskLevel(adjustedScore);
 
@@ -256,7 +394,9 @@ export function getRiskControlGaps(input: ControlGapInput): RiskControlGap[] {
   const recommendedTier = getRecommendedRiskTier({
     system: input.system,
     scores: input.scores,
+    agents: input.agents,
   });
+  const agentOverlay = getSystemAgentOverlay(input.agents, recommendedTier.recommendedRiskLevel);
 
   const notAssessedAssignments = input.policyAssignments.filter(
     (assignment) => assignment.complianceStatus === "NOT_ASSESSED"
@@ -361,6 +501,19 @@ export function getRiskControlGaps(input: ControlGapInput): RiskControlGap[] {
         "The recommended tier suggests a shorter review interval so changes and incidents are reassessed more quickly.",
       tone: "info",
       href: `/registry/${input.system.id}`,
+    });
+  }
+
+  if (agentOverlay.reviewNeededCount > 0) {
+    gaps.push({
+      key: "agent-review",
+      title: "Review linked agents with elevated autonomy",
+      detail:
+        agentOverlay.reviewNeededCount === 1
+          ? "One linked agent has autonomy or oversight signals that merit dedicated review."
+          : `${agentOverlay.reviewNeededCount} linked agents have autonomy or oversight signals that merit dedicated review.`,
+      tone: agentOverlay.maxOverlayScore >= 24 ? "warning" : "info",
+      href: `/registry/${input.system.id}?tab=agents`,
     });
   }
 

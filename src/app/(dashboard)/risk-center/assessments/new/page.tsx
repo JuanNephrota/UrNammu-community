@@ -43,6 +43,19 @@ export default async function NewAssessmentPage() {
         where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
         select: { id: true },
       },
+      agents: {
+        select: {
+          id: true,
+          name: true,
+          autonomyLevel: true,
+          humanReviewRequired: true,
+          humanReviewTriggers: true,
+          connectedSystems: true,
+          riskLevel: true,
+          status: true,
+          aiSystemId: true,
+        },
+      },
       _count: {
         select: {
           evidenceArtifacts: true,

@@ -9,6 +9,7 @@ import {
   getBucketIdentityKey,
   getTelemetryAttributionLabel,
 } from "@/lib/oversight-telemetry";
+import { LinkUsageDialog } from "@/components/oversight/link-usage-dialog";
 
 export default async function UsageLogsPage() {
   const now = new Date();
@@ -19,6 +20,7 @@ export default async function UsageLogsPage() {
       where: { bucketStart: { gte: thirtyDaysAgo } },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       take: 300,
+      include: { aiSystem: { select: { id: true, name: true } } },
     }),
     prisma.costBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
@@ -59,7 +61,7 @@ export default async function UsageLogsPage() {
     modelItem.requests += bucket.requestCount ?? 0;
     modelSummary.set(modelKey, modelItem);
 
-    const projectLabel = getTelemetryAttributionLabel(bucket);
+    const projectLabel = getTelemetryAttributionLabel(bucket, bucket.aiSystem?.name);
     const projectItem = projectSummary.get(projectLabel) ?? {
       label: projectLabel,
       tokens: 0,
@@ -88,6 +90,30 @@ export default async function UsageLogsPage() {
 
   const tableRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
   const recentTelemetry = buildTelemetryActivityRows(usageBuckets, costMap, 30);
+
+  // Group unattributed buckets (no aiSystemId) by label+provider+model for remediation
+  const unattributedGroups = new Map<
+    string,
+    { label: string; provider: string; model: string; tokens: number; bucketIds: string[] }
+  >();
+  for (const bucket of usageBuckets) {
+    if (bucket.aiSystemId) continue;
+    const label = getTelemetryAttributionLabel(bucket);
+    const groupKey = `${label}::${bucket.provider}::${bucket.model ?? "unknown"}`;
+    const existing = unattributedGroups.get(groupKey) ?? {
+      label,
+      provider: bucket.provider,
+      model: bucket.model ?? "unknown",
+      tokens: 0,
+      bucketIds: [],
+    };
+    existing.tokens += bucket.totalTokens;
+    existing.bucketIds.push(bucket.id);
+    unattributedGroups.set(groupKey, existing);
+  }
+  const unattributedList = [...unattributedGroups.values()]
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, 20);
 
   return (
     <div className="space-y-6">
@@ -138,6 +164,54 @@ export default async function UsageLogsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {unattributedList.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Unattributed Usage ({unattributedList.reduce((s, g) => s + g.bucketIds.length, 0)} buckets)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-[var(--text-muted)] mb-4">
+              These usage buckets are not linked to a registered AI system. Link them to track usage against governed systems.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)]">
+                    <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Attribution</th>
+                    <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Provider</th>
+                    <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Model</th>
+                    <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Tokens</th>
+                    <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Buckets</th>
+                    <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unattributedList.map((group, i) => (
+                    <tr key={i} className="border-b border-[var(--border-subtle)]">
+                      <td className="px-3 py-3 text-[var(--text-secondary)]">{group.label}</td>
+                      <td className="px-3 py-3">
+                        <Badge variant="info" className="capitalize">{group.provider}</Badge>
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-[var(--text-secondary)]">{group.model}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{group.tokens.toLocaleString()}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{group.bucketIds.length}</td>
+                      <td className="px-3 py-3 text-right">
+                        <LinkUsageDialog
+                          bucketIds={group.bucketIds}
+                          label={group.label}
+                          bucketCount={group.bucketIds.length}
+                          tokenCount={group.tokens}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">

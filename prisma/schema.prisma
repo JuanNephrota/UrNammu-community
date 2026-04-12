@@ -234,6 +234,7 @@ model AISystem {
   alerts             Alert[]
   agents             AIAgent[]
   auditLogs          AuditLog[]       @relation("SystemAuditLogs")
+  usageBuckets       UsageBucket[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -407,11 +408,14 @@ model UsageBucket {
   metadata         Json?
   syncRun          ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
   syncRunId        String
+  aiSystem         AISystem?       @relation(fields: [aiSystemId], references: [id], onDelete: SetNull)
+  aiSystemId       String?
   createdAt        DateTime        @default(now())
 
   @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
   @@index([provider, bucketStart, granularity])
   @@index([syncRunId])
+  @@index([aiSystemId])
 }
 
 model CostBucket {

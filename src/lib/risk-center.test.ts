@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  getAgentRiskSummary,
   getRecommendedRiskTier,
   getRiskControlGaps,
   getRiskReassessmentDrift,
@@ -44,6 +45,17 @@ test("control gaps surface missing policy, evidence, and approval work", () => {
       reviewIntervalDays: 365,
     },
     scores: baselineScores,
+    agents: [
+      {
+        id: "agent_1",
+        name: "Drafting Agent",
+        autonomyLevel: "SUPERVISED",
+        humanReviewRequired: false,
+        connectedSystems: ["CRM", "Ticketing", "Docs"],
+        riskLevel: "HIGH",
+        aiSystemId: "sys_2",
+      },
+    ],
     policyAssignments: [],
     evidenceArtifactCount: 0,
     requiredStages: ["OWNER", "SECURITY", "COMPLIANCE"],
@@ -56,6 +68,7 @@ test("control gaps surface missing policy, evidence, and approval work", () => {
   assert.equal(gaps.some((gap) => gap.key === "evidence-missing"), true);
   assert.equal(gaps.some((gap) => gap.key === "stage-signoff"), true);
   assert.equal(gaps.some((gap) => gap.key === "open-incidents"), true);
+  assert.equal(gaps.some((gap) => gap.key === "agent-review"), true);
 });
 
 test("risk drift recommends reassessment for scope changes on assessed systems", () => {
@@ -80,4 +93,23 @@ test("risk drift recommends reassessment for scope changes on assessed systems",
   assert.equal(drift.requiresReassessment, true);
   assert.equal(drift.severity, "HIGH");
   assert.match(drift.description, /Risk-sensitive fields changed/i);
+});
+
+test("agent summaries flag elevated autonomy without human review", () => {
+  const summary = getAgentRiskSummary(
+    {
+      id: "agent_2",
+      name: "Autonomous Support Agent",
+      autonomyLevel: "FULL_AUTONOMY",
+      humanReviewRequired: false,
+      connectedSystems: ["CRM", "Billing", "Email"],
+      riskLevel: "HIGH",
+      aiSystemId: "sys_3",
+    },
+    "MEDIUM"
+  );
+
+  assert.equal(summary.reviewNeeded, true);
+  assert.equal(summary.recommendedRiskLevel, "CRITICAL");
+  assert.match(summary.concerns.join(" "), /full autonomy/i);
 });

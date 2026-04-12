@@ -11,14 +11,16 @@ import { RiskTierTrendChart } from "@/components/dashboard/risk-tier-trend-chart
 import { Badge, riskBadgeVariant } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import {
+  getAgentRiskSummary,
   getApprovedStages,
   getRequiredStages,
   getRiskControlGaps,
+  getSystemAgentOverlay,
   type RiskScores,
 } from "@/lib/risk-center";
 
 export default async function RiskCenterPage() {
-  const [assessments, systemRisks, recentAssessments, allAssessments, reassessmentAlerts, systemsForControlGaps] = await Promise.all([
+  const [assessments, systemRisks, recentAssessments, allAssessments, reassessmentAlerts, systemsForControlGaps, agents] = await Promise.all([
     // Get latest assessment per system for heat map
     prisma.$queryRaw<
       {
@@ -108,6 +110,19 @@ export default async function RiskCenterPage() {
             id: true,
           },
         },
+        agents: {
+          select: {
+            id: true,
+            name: true,
+            autonomyLevel: true,
+            humanReviewRequired: true,
+            humanReviewTriggers: true,
+            connectedSystems: true,
+            riskLevel: true,
+            status: true,
+            aiSystemId: true,
+          },
+        },
         _count: {
           select: {
             evidenceArtifacts: true,
@@ -116,6 +131,19 @@ export default async function RiskCenterPage() {
       },
       take: 20,
       orderBy: { updatedAt: "desc" },
+    }),
+    prisma.aIAgent.findMany({
+      include: {
+        aiSystem: {
+          select: {
+            id: true,
+            name: true,
+            riskLevel: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 30,
     }),
   ]);
 
@@ -222,6 +250,7 @@ export default async function RiskCenterPage() {
           reviewIntervalDays: system.reviewIntervalDays,
         },
         scores,
+        agents: system.agents,
         policyAssignments: system.policyAssignments,
         evidenceArtifactCount: system._count.evidenceArtifacts,
         requiredStages: getRequiredStages(system),
@@ -244,6 +273,19 @@ export default async function RiskCenterPage() {
     .sort((a, b) => b.gaps.length - a.gaps.length)
     .slice(0, 6);
 
+  const agentRiskSummaries = agents
+    .map((agent) => ({
+      agent,
+      summary: getAgentRiskSummary(agent, agent.aiSystem?.riskLevel),
+    }))
+    .sort((a, b) => b.summary.overlayScore - a.summary.overlayScore);
+
+  const agentsNeedingReview = agentRiskSummaries.filter(({ summary }) => summary.reviewNeeded);
+  const linkedAgentReviewCount = systemsForControlGaps.reduce(
+    (sum, system) => sum + getSystemAgentOverlay(system.agents, system.riskLevel).reviewNeededCount,
+    0
+  );
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -263,6 +305,12 @@ export default async function RiskCenterPage() {
         <StatCard title="Medium" value={riskCounts.MEDIUM ?? 0} iconName="ShieldAlert" variant="default" />
         <StatCard title="Low" value={riskCounts.LOW ?? 0} iconName="ShieldAlert" variant="success" />
         <StatCard title="Minimal" value={riskCounts.MINIMAL ?? 0} iconName="ShieldAlert" variant="info" />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard title="Registered Agents" value={agents.length} iconName="Bot" variant="info" />
+        <StatCard title="Agents Needing Review" value={agentsNeedingReview.length} iconName="Bot" variant={agentsNeedingReview.length > 0 ? "warning" : "success"} />
+        <StatCard title="Linked Agent Review Signals" value={linkedAgentReviewCount} iconName="ShieldAlert" variant={linkedAgentReviewCount > 0 ? "warning" : "success"} />
       </div>
 
       <Card>
@@ -381,6 +429,53 @@ export default async function RiskCenterPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Agent Review Queue</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {agentsNeedingReview.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No agents are currently surfacing elevated autonomy or oversight review needs.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {agentsNeedingReview.slice(0, 8).map(({ agent, summary }) => (
+                <Link
+                  key={agent.id}
+                  href={`/agents/${agent.id}`}
+                  className="block rounded-md border border-[var(--border-subtle)] p-3 hover:bg-[var(--bg-hover)]"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--text-primary)]">
+                        {agent.name}
+                      </p>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        {agent.aiSystem?.name ?? "Unlinked agent"} · {agent.autonomyLevel.replace(/_/g, " ")}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={riskBadgeVariant(summary.recommendedRiskLevel)}>
+                        {summary.recommendedRiskLevel}
+                      </Badge>
+                      <Badge variant="warning">Review</Badge>
+                    </div>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {summary.concerns.slice(0, 2).map((concern) => (
+                      <p key={concern} className="text-sm text-[var(--text-secondary)]">
+                        {concern}
+                      </p>
+                    ))}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

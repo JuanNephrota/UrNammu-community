@@ -9,11 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Badge, riskBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  getAgentRiskSummary,
   getRecommendedRiskTier,
   getRiskAssessmentPrompts,
   getRiskControlGaps,
   getRequiredStages,
   getApprovedStages,
+  getSystemAgentOverlay,
   type RiskScores,
 } from "@/lib/risk-center";
 
@@ -44,6 +46,17 @@ interface SystemDetail {
     decision: "APPROVED" | "CHANGES_REQUESTED" | "REVOKED";
   }>;
   governanceIncidents: Array<{ id: string }>;
+  agents: Array<{
+    id: string;
+    name: string;
+    autonomyLevel: "FULL_AUTONOMY" | "SUPERVISED" | "HUMAN_IN_THE_LOOP" | "HUMAN_ON_THE_LOOP" | "MANUAL";
+    humanReviewRequired: boolean;
+    humanReviewTriggers?: unknown;
+    connectedSystems?: unknown;
+    riskLevel: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "MINIMAL";
+    status?: string;
+    aiSystemId?: string | null;
+  }>;
   _count: {
     evidenceArtifacts: number;
     riskAssessments: number;
@@ -152,15 +165,16 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
   const selectedSystem = systems.find((s) => s.id === selectedSystemId);
   const typedScores = scores as RiskScores;
   const assessmentPrompts = selectedSystem
-    ? getRiskAssessmentPrompts(selectedSystem)
+    ? getRiskAssessmentPrompts(selectedSystem, selectedSystem.agents)
     : [];
   const recommendedTier = selectedSystem
-    ? getRecommendedRiskTier({ system: selectedSystem, scores: typedScores })
+    ? getRecommendedRiskTier({ system: selectedSystem, scores: typedScores, agents: selectedSystem.agents })
     : null;
   const controlGaps = selectedSystem
     ? getRiskControlGaps({
         system: selectedSystem,
         scores: typedScores,
+        agents: selectedSystem.agents,
         policyAssignments: selectedSystem.policyAssignments,
         evidenceArtifactCount: selectedSystem._count.evidenceArtifacts,
         requiredStages: getRequiredStages(selectedSystem),
@@ -169,6 +183,9 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
         openIncidentCount: selectedSystem.governanceIncidents.length,
       })
     : [];
+  const agentOverlay = selectedSystem
+    ? getSystemAgentOverlay(selectedSystem.agents, recommendedTier?.recommendedRiskLevel)
+    : { summaries: [], maxOverlayScore: 0, reviewNeededCount: 0 };
 
   async function handleGenerateAI() {
     if (!selectedSystem) {
@@ -386,6 +403,18 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
                     : "No formal decision yet"}
                 </p>
               </div>
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Linked Agents
+                </p>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  {selectedSystem.agents.length} linked agent
+                  {selectedSystem.agents.length === 1 ? "" : "s"}
+                  {agentOverlay.reviewNeededCount > 0
+                    ? ` · ${agentOverlay.reviewNeededCount} need dedicated review`
+                    : ""}
+                </p>
+              </div>
             </div>
           )}
         </CardContent>
@@ -480,6 +509,57 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {selectedSystem && selectedSystem.agents.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Agent Risk Overlay</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={agentOverlay.maxOverlayScore >= 24 ? "warning" : "info"}>
+                Max overlay {agentOverlay.maxOverlayScore}
+              </Badge>
+              <Badge variant="outline">
+                {agentOverlay.reviewNeededCount} need dedicated review
+              </Badge>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {selectedSystem.agents.map((agent) => {
+                const summary = getAgentRiskSummary(agent, recommendedTier?.recommendedRiskLevel);
+                return (
+                  <div
+                    key={agent.id}
+                    className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--text-primary)]">{agent.name}</p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {agent.autonomyLevel.replace(/_/g, " ")}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={riskBadgeVariant(summary.recommendedRiskLevel)}>
+                          {summary.recommendedRiskLevel}
+                        </Badge>
+                        {summary.reviewNeeded && <Badge variant="warning">Review</Badge>}
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-1">
+                      {summary.concerns.slice(0, 2).map((concern) => (
+                        <p key={concern} className="text-sm text-[var(--text-secondary)]">
+                          {concern}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Card>
