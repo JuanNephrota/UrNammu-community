@@ -7,7 +7,9 @@ import { formatDateTime } from "@/lib/utils";
 import { InvestigationEditor } from "@/components/oversight/investigation-editor";
 
 export default async function OversightInvestigationsPage() {
-  const investigations = await prisma.investigation.findMany({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prismaAny = prisma as any;
+  const investigations = await prismaAny.investigation.findMany({
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     include: {
       ownerUser: { select: { name: true, email: true } },
@@ -18,7 +20,7 @@ export default async function OversightInvestigationsPage() {
     take: 100,
   });
 
-  const openCount = investigations.filter((item) => item.status !== "RESOLVED").length;
+  const openCount = investigations.filter((item: { status: string }) => item.status !== "RESOLVED").length;
 
   return (
     <div className="space-y-6">
@@ -35,7 +37,19 @@ export default async function OversightInvestigationsPage() {
           {investigations.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">No investigations yet.</p>
           ) : (
-            investigations.map((investigation) => (
+            investigations.map((investigation: {
+              id: string;
+              title: string;
+              status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+              updatedAt: Date;
+              summary: string | null;
+              notes: string | null;
+              resolutionSummary: string | null;
+              ownerUser?: { name: string | null; email: string | null } | null;
+              aiSystem?: { id: string; name: string } | null;
+              alert?: { id: string; title: string; severity: string } | null;
+              governanceIncident?: { id: string; title: string; severity: string } | null;
+            }) => (
               <div
                 key={investigation.id}
                 className="rounded-xl border border-[var(--border-subtle)] p-4"

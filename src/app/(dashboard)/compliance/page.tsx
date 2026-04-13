@@ -52,10 +52,42 @@ export default async function CompliancePage() {
       </PageHeader>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="Compliant" value={statusCounts.COMPLIANT ?? 0} iconName="FileCheck" variant="success" />
-        <StatCard title="Partial" value={statusCounts.PARTIALLY_COMPLIANT ?? 0} iconName="FileCheck" variant="warning" />
-        <StatCard title="Non-Compliant" value={statusCounts.NON_COMPLIANT ?? 0} iconName="FileCheck" variant="danger" />
-        <StatCard title="Not Assessed" value={statusCounts.NOT_ASSESSED ?? 0} iconName="FileCheck" variant="default" />
+        <Link href="/compliance/services?status=COMPLIANT" className="block">
+          <StatCard
+            title="Compliant"
+            value={statusCounts.COMPLIANT ?? 0}
+            description="View matching services"
+            iconName="FileCheck"
+            variant="success"
+          />
+        </Link>
+        <Link href="/compliance/services?status=PARTIALLY_COMPLIANT" className="block">
+          <StatCard
+            title="Partial"
+            value={statusCounts.PARTIALLY_COMPLIANT ?? 0}
+            description="View matching services"
+            iconName="FileCheck"
+            variant="warning"
+          />
+        </Link>
+        <Link href="/compliance/services?status=NON_COMPLIANT" className="block">
+          <StatCard
+            title="Non-Compliant"
+            value={statusCounts.NON_COMPLIANT ?? 0}
+            description="View matching services"
+            iconName="FileCheck"
+            variant="danger"
+          />
+        </Link>
+        <Link href="/compliance/services?status=NOT_ASSESSED" className="block">
+          <StatCard
+            title="Not Assessed"
+            value={statusCounts.NOT_ASSESSED ?? 0}
+            description="View matching services"
+            iconName="FileCheck"
+            variant="default"
+          />
+        </Link>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

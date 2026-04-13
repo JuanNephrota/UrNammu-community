@@ -258,8 +258,10 @@ npm run db:reset
 
 - Admin sync now persists normalized telemetry for OpenAI and Anthropic.
 - Main oversight views now use normalized `UsageBucket` and `CostBucket` data.
-- Oversight now includes metadata-driven restricted-data exposure monitoring and governed-system telemetry attribution.
+- Oversight now includes metadata-driven restricted-data exposure monitoring, governed-system telemetry attribution, investigation workflows, spend budgets, top cost drivers, baseline anomaly detection, model drift tracking, and recommendation queues.
+- Workflow notifications now surface approvals, expiring exceptions, drift, incidents, overdue reviews, and active investigations in the main app shell.
 - Policy rules support richer conditions, advisory vs blocking enforcement, and exception-aware evaluation.
+- AI compliance analysis now regenerates structured per-policy compliance issues that can be rerun and tracked individually.
 - Vendor governance includes editable vendor profiles with contract posture, lifecycle tracking, renewal queues, security review status, data residency, subprocessors, approved use cases, and composite vendor risk scoring.
 - Risk Center includes recommended tiers, control-gap detection, agent-aware overlays, branching contextual questions, and use-case templates.
 - Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
@@ -270,18 +272,12 @@ npm run db:reset
 
 - [ ] Renewal automation for governance reviews, approvals, and exception expirations
 - [ ] Ownership escalation when systems become overdue, unowned, or blocked
-- [ ] Workflow notifications for approvals, renewals, drift, incidents, and overdue reviews
 
 ### Oversight
 
-- [ ] Per-system telemetry attribution for governed systems
+- [ ] Admin-configurable anomaly thresholds and time windows
 - [ ] Time range picker and provider/model/project filters on usage pages
 - [ ] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
-- [ ] Spend governance with budgets, thresholds, burn pacing, and top cost drivers
-- [ ] Anomaly detection with configurable thresholds per provider, model, and project
-- [ ] Investigation workflows tied to alerts and incidents with owner, notes, and resolution tracking
-- [ ] Oversight recommendations with next-best actions for spend spikes, model shifts, and new projects
-- [ ] Model drift and change tracking across provider/model families
 - [ ] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
 - [ ] Remediation status dashboards for alerts, incidents, and corrective actions
 - [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)

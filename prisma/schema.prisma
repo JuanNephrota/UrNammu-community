@@ -282,7 +282,8 @@ model AIAgent {
   status              AISystemStatus @default(DRAFT)
   department          String?
 
-  auditLogs AuditLog[] @relation("AgentAuditLogs")
+  auditLogs   AuditLog[]        @relation("AgentAuditLogs")
+  riskReviews AgentRiskReview[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -544,6 +545,24 @@ model RiskAssessmentIssue {
   @@index([riskAssessmentId, status, createdAt])
 }
 
+model AgentRiskReview {
+  id                   String     @id @default(cuid())
+  agent                AIAgent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId              String
+  recommendedRiskLevel RiskLevel
+  reviewNeeded         Boolean    @default(false)
+  summary              String     @db.Text
+  concerns             Json       @default("[]")
+  recommendations      Json       @default("[]")
+  scores               Json
+  generatedBy          String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentId, createdAt])
+}
+
 // ─── API Usage Monitoring ───────────────────────────────
 
 model APIUsageLog {
@@ -592,11 +611,30 @@ model PolicyAssignment {
   evidence         String?          @db.Text
   assessedAt       DateTime?
   nextReviewDate   DateTime?
+  issues           ComplianceIssue[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([policyId, aiSystemId])
+}
+
+model ComplianceIssue {
+  id                 String           @id @default(cuid())
+  policyAssignment   PolicyAssignment @relation(fields: [policyAssignmentId], references: [id], onDelete: Cascade)
+  policyAssignmentId String
+  requirement        String
+  title              String
+  detail             String           @db.Text
+  remediation        String?          @db.Text
+  severity           RiskLevel        @default(MEDIUM)
+  status             RiskIssueStatus  @default(OPEN)
+  source             String           @default("ai_assessment")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([policyAssignmentId, status, createdAt])
 }
 
 model ComplianceMapping {

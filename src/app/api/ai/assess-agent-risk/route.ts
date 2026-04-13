@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { withRole } from "@/lib/auth-guard";
 import { generateAIResponse } from "@/lib/ai-provider";
+import { prisma } from "@/lib/prisma";
+import { createAuditLog } from "@/lib/audit";
 import { z } from "zod";
 
 const requestSchema = z.object({
+  agentId: z.string().min(1),
   name: z.string(),
   description: z.string().nullish().transform((v) => v ?? "No description provided"),
   autonomyLevel: z.string(),
@@ -40,7 +44,7 @@ const responseSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async () => {
+  return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async (session) => {
     const body = await req.json();
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) {
@@ -48,6 +52,7 @@ export async function POST(req: NextRequest) {
     }
 
     const {
+      agentId,
       name,
       description,
       autonomyLevel,
@@ -61,6 +66,14 @@ export async function POST(req: NextRequest) {
     } = parsed.data;
 
     try {
+      const agent = await prisma.aIAgent.findUnique({
+        where: { id: agentId },
+        select: { id: true, aiSystemId: true },
+      });
+      if (!agent) {
+        return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+      }
+
       const text = await generateAIResponse(
         "You are an AI governance analyst evaluating operational agent risk. Always respond with valid JSON only, with concise and practical governance language.",
         `Analyze this AI agent and provide an agent-specific governance risk review.
@@ -110,7 +123,39 @@ Respond ONLY with valid JSON in this exact format:
       if (!jsonMatch) throw new Error("No JSON found in AI response");
       const raw = JSON.parse(jsonMatch[0]);
       const result = responseSchema.parse(raw);
-      return NextResponse.json(result);
+
+      const review = await prisma.agentRiskReview.create({
+        data: {
+          agentId: agent.id,
+          recommendedRiskLevel: result.recommendedRiskLevel,
+          reviewNeeded: result.reviewNeeded,
+          summary: result.summary,
+          concerns: result.concerns as Prisma.InputJsonValue,
+          recommendations: result.recommendations as Prisma.InputJsonValue,
+          scores: result.scores as Prisma.InputJsonValue,
+          generatedBy: session.user.name ?? session.user.email ?? "Unknown",
+        },
+      });
+
+      await createAuditLog({
+        userId: session.user.userId,
+        action: "CREATE",
+        entityType: "AgentRiskReview",
+        entityId: review.id,
+        aiSystemId: agent.aiSystemId ?? undefined,
+        agentId: agent.id,
+        changes: {
+          recommendedRiskLevel: review.recommendedRiskLevel,
+          reviewNeeded: review.reviewNeeded,
+        },
+      });
+
+      return NextResponse.json({
+        ...result,
+        id: review.id,
+        createdAt: review.createdAt,
+        generatedBy: review.generatedBy,
+      });
     } catch (err) {
       return NextResponse.json(
         { error: err instanceof Error ? err.message : "AI agent risk assessment failed" },

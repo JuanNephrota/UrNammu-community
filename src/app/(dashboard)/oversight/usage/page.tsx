@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import {
+  buildModelDriftFindings,
+  buildTelemetryAnomalies,
   buildCostLookup,
   buildDataExposureFindings,
   buildTelemetryActivityRows,
@@ -22,7 +24,7 @@ export default async function UsageLogsPage() {
       where: { bucketStart: { gte: thirtyDaysAgo } },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       take: 300,
-      include: { aiSystem: { select: { id: true, name: true, dataSensitivity: true } } },
+      include: { aiSystem: { select: { id: true, name: true, vendor: true, modelType: true, department: true, status: true, riskLevel: true, dataSensitivity: true } } },
     }),
     prisma.costBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
@@ -92,6 +94,11 @@ export default async function UsageLogsPage() {
 
   const tableRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
   const recentTelemetry = buildTelemetryActivityRows(usageBuckets, costMap, 30);
+  const telemetryAnomalies = buildTelemetryAnomalies(usageBuckets, costMap, {
+    now,
+    take: 12,
+  });
+  const modelDriftFindings = buildModelDriftFindings(usageBuckets, costMap, 12);
   const exposureFindings = buildDataExposureFindings(usageBuckets, costMap, 20);
   const exposureSummary = summarizeDataExposureFindings(exposureFindings);
 
@@ -126,7 +133,7 @@ export default async function UsageLogsPage() {
         description="Normalized provider-admin telemetry for usage, cost, and attribution drill-down"
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
@@ -134,6 +141,28 @@ export default async function UsageLogsPage() {
             </p>
             <p className="mt-2 text-3xl font-semibold">{usageBuckets.length}</p>
             <p className="mt-1 text-sm text-[var(--text-muted)]">Last 30 days</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+              Anomalies
+            </p>
+            <p className="mt-2 text-3xl font-semibold">{telemetryAnomalies.length}</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Provider, model, or project spikes
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+              Model Drift
+            </p>
+            <p className="mt-2 text-3xl font-semibold">{modelDriftFindings.length}</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Governed systems with provider/model mismatch
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -179,6 +208,103 @@ export default async function UsageLogsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Telemetry Anomalies</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {telemetryAnomalies.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No usage or cost spikes exceeded the current baseline thresholds.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {telemetryAnomalies.map((anomaly) => (
+                <div
+                  key={anomaly.id}
+                  className="rounded-lg border border-[var(--border-subtle)] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            anomaly.severity === "critical"
+                              ? "critical"
+                              : anomaly.severity === "warning"
+                                ? "warning"
+                                : "info"
+                          }
+                        >
+                          {anomaly.scope.toUpperCase()}
+                        </Badge>
+                        <p className="text-sm font-medium">{anomaly.label}</p>
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        {anomaly.reasons.join(" ")}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs text-[var(--text-faint)]">
+                      <p>{anomaly.recentTokens.toLocaleString()} recent tokens</p>
+                      <p>${anomaly.recentCost.toFixed(4)} recent cost</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Model Drift Tracking</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {modelDriftFindings.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No governed systems show provider or model-family drift in recent telemetry.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {modelDriftFindings.map((finding) => (
+                <div
+                  key={finding.id}
+                  className="rounded-lg border border-[var(--border-subtle)] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            finding.severity === "critical"
+                              ? "critical"
+                              : finding.severity === "warning"
+                                ? "warning"
+                                : "info"
+                          }
+                        >
+                          DRIFT
+                        </Badge>
+                        <p className="text-sm font-medium">{finding.systemName}</p>
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        {finding.reasons.join(" ")}
+                      </p>
+                      <p className="mt-2 text-xs text-[var(--text-faint)]">
+                        Expected: {finding.expectedVendor ?? "Unknown vendor"} / {finding.expectedModelType ?? "Unknown model"} ·
+                        Observed: {finding.observedProviders.join(", ")} / {finding.observedModels.join(", ")}
+                      </p>
+                    </div>
+                    <p className="text-xs text-[var(--text-faint)]">{formatDateTime(finding.lastSeen)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

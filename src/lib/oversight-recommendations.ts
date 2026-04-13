@@ -22,6 +22,8 @@ export function getOversightRecommendations(input: {
   openInvestigations: number;
   unattributedCoverageGapPct: number;
   driftAlerts: number;
+  anomalyCount: number;
+  modelDriftCount: number;
   budgetSummaries: SpendBudgetSummary[];
   recentAlerts: Array<{ severity: AlertSeverity; title: string }>;
 }) {
@@ -61,6 +63,17 @@ export function getOversightRecommendations(input: {
     });
   }
 
+  if (input.anomalyCount > 0) {
+    pushUnique(recommendations, {
+      key: "usage-anomalies",
+      title: "Investigate telemetry anomalies",
+      detail: `${input.anomalyCount} usage or cost anomal${input.anomalyCount === 1 ? "y needs" : "ies need"} review against recent baselines.`,
+      href: "/oversight/usage",
+      tone: input.anomalyCount >= 3 ? "critical" : "warning",
+      priority: 88,
+    });
+  }
+
   if (input.unattributedCoverageGapPct >= 30) {
     pushUnique(recommendations, {
       key: "attribution-gap",
@@ -93,6 +106,17 @@ export function getOversightRecommendations(input: {
       href: "/alerts",
       tone: "warning",
       priority: 70,
+    });
+  }
+
+  if (input.modelDriftCount > 0) {
+    pushUnique(recommendations, {
+      key: "model-drift",
+      title: "Review governed-system model drift",
+      detail: `${input.modelDriftCount} governed system${input.modelDriftCount === 1 ? "" : "s"} show provider or model drift from expected posture.`,
+      href: "/oversight",
+      tone: input.modelDriftCount >= 3 ? "critical" : "warning",
+      priority: 72,
     });
   }
 

@@ -30,9 +30,11 @@ type Props = {
     vendor?: string | null;
     modelType?: string | null;
   } | null;
+  initialReview?: AIReview | null;
 };
 
 type AIReview = {
+  id?: string;
   recommendedRiskLevel: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   reviewNeeded: boolean;
   summary: string;
@@ -44,6 +46,8 @@ type AIReview = {
     blastRadius: number;
     changeRisk: number;
   };
+  createdAt?: string;
+  generatedBy?: string;
 };
 
 function asStringArray(value: unknown): string[] {
@@ -52,10 +56,10 @@ function asStringArray(value: unknown): string[] {
     : [];
 }
 
-export function AgentAIRiskCard({ agent, parentSystem }: Props) {
+export function AgentAIRiskCard({ agent, parentSystem, initialReview = null }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [review, setReview] = useState<AIReview | null>(null);
+  const [review, setReview] = useState<AIReview | null>(initialReview);
 
   const heuristic = getAgentRiskSummary(
     {
@@ -80,6 +84,7 @@ export function AgentAIRiskCard({ agent, parentSystem }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          agentId: agent.id,
           name: agent.name,
           description: agent.description,
           autonomyLevel: agent.autonomyLevel,
@@ -155,6 +160,13 @@ export function AgentAIRiskCard({ agent, parentSystem }: Props) {
               </Badge>
               {review.reviewNeeded && <Badge variant="warning">Review needed</Badge>}
             </div>
+
+            {(review.createdAt || review.generatedBy) && (
+              <p className="text-xs text-[var(--text-muted)]">
+                Saved {review.createdAt ? new Date(review.createdAt).toLocaleString() : "recently"}
+                {review.generatedBy ? ` by ${review.generatedBy}` : ""}
+              </p>
+            )}
 
             <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
               {review.summary}

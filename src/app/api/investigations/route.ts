@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { withAuth, withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
@@ -13,9 +14,38 @@ const createSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+type InvestigationListItem = Prisma.InvestigationGetPayload<{
+  include: {
+    ownerUser: { select: { id: true; name: true; email: true } };
+    aiSystem: { select: { id: true; name: true } };
+    alert: { select: { id: true; title: true; severity: true } };
+    governanceIncident: { select: { id: true; title: true; severity: true } };
+  };
+}>;
+
+type InvestigationRecord = {
+  id: string;
+  aiSystemId: string | null;
+};
+
+type InvestigationRouteClient = {
+  investigation: {
+    findMany: (
+      args: Prisma.InvestigationFindManyArgs
+    ) => Promise<InvestigationListItem[]>;
+    findUnique: (
+      args: Prisma.InvestigationFindUniqueArgs
+    ) => Promise<InvestigationRecord | null>;
+    create: (
+      args: Prisma.InvestigationCreateArgs
+    ) => Promise<InvestigationRecord>;
+  };
+};
+
 export async function GET() {
   return withAuth(async () => {
-    const investigations = await prisma.investigation.findMany({
+    const prismaClient = prisma as unknown as InvestigationRouteClient;
+    const investigations = await prismaClient.investigation.findMany({
       orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
       include: {
         ownerUser: { select: { id: true, name: true, email: true } },
@@ -31,26 +61,27 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async (session) => {
+    const prismaClient = prisma as unknown as InvestigationRouteClient;
     const parsed = createSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "Validation failed" }, { status: 400 });
     }
 
     if (parsed.data.alertId) {
-      const existing = await prisma.investigation.findUnique({
+      const existing = await prismaClient.investigation.findUnique({
         where: { alertId: parsed.data.alertId },
       });
       if (existing) return NextResponse.json(existing);
     }
 
     if (parsed.data.governanceIncidentId) {
-      const existing = await prisma.investigation.findUnique({
+      const existing = await prismaClient.investigation.findUnique({
         where: { governanceIncidentId: parsed.data.governanceIncidentId },
       });
       if (existing) return NextResponse.json(existing);
     }
 
-    const investigation = await prisma.investigation.create({
+    const investigation = await prismaClient.investigation.create({
       data: {
         title: parsed.data.title,
         summary: parsed.data.summary || null,

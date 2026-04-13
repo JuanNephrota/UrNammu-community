@@ -557,11 +557,29 @@ export default function ShadowAIPage() {
                         )}
                         {tool.linkedSystemId && (
                           <Button size="sm" variant="ghost" asChild>
-                            <a href={`/registry/${tool.linkedSystemId}`}>View System</a>
+                            <Link href={`/registry/${tool.linkedSystemId}`}>View System</Link>
                           </Button>
                         )}
                       </div>
-                      <Badge variant={statusBadgeVariant(tool.status)}>{tool.status}</Badge>
+                      <div className="flex items-center gap-2">
+                        {!tool.linkedSystemId && tool.status === "APPROVED" && (
+                          <>
+                            <Button size="sm" variant="outline" asChild>
+                              <Link href={`/registry/new?discoveredToolId=${tool.id}`}>
+                                Convert to Governed System
+                              </Link>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleAction(tool.id, "register_and_assess")}
+                            >
+                              <Shield className="mr-1 h-3 w-3" /> Register & Assess
+                            </Button>
+                          </>
+                        )}
+                        <Badge variant={statusBadgeVariant(tool.status)}>{tool.status}</Badge>
+                      </div>
                     </div>
                   ))}
                 </div>

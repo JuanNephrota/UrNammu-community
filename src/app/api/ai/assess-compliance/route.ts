@@ -3,6 +3,7 @@ import { withRole } from "@/lib/auth-guard";
 import { generateAIResponse } from "@/lib/ai-provider";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
+import { buildComplianceIssues } from "@/lib/compliance-issues";
 import { z } from "zod";
 
 const requestSchema = z.object({
@@ -118,7 +119,13 @@ Respond ONLY with valid JSON in this exact format:
 
       const evidence = `[AI Assessment] ${result.evidence ?? "Assessment completed."}${gapsSummary}`;
 
-      await prisma.policyAssignment.upsert({
+      const issues = buildComplianceIssues({
+        complianceStatus,
+        gaps: result.gaps,
+        evidence: result.evidence ?? null,
+      });
+
+      const assignment = await prisma.policyAssignment.upsert({
         where: {
           policyId_aiSystemId: { policyId, aiSystemId },
         },
@@ -126,6 +133,20 @@ Respond ONLY with valid JSON in this exact format:
           complianceStatus,
           evidence,
           assessedAt: new Date(),
+          issues: {
+            deleteMany: {
+              source: "ai_assessment",
+            },
+            create: issues.map((issue) => ({
+              requirement: issue.requirement,
+              title: issue.title,
+              detail: issue.detail,
+              remediation: issue.remediation ?? null,
+              severity: issue.severity,
+              status: issue.status ?? "OPEN",
+              source: issue.source ?? "ai_assessment",
+            })),
+          },
         },
         create: {
           policyId,
@@ -133,6 +154,22 @@ Respond ONLY with valid JSON in this exact format:
           complianceStatus,
           evidence,
           assessedAt: new Date(),
+          issues: {
+            create: issues.map((issue) => ({
+              requirement: issue.requirement,
+              title: issue.title,
+              detail: issue.detail,
+              remediation: issue.remediation ?? null,
+              severity: issue.severity,
+              status: issue.status ?? "OPEN",
+              source: issue.source ?? "ai_assessment",
+            })),
+          },
+        },
+        include: {
+          issues: {
+            orderBy: [{ status: "asc" }, { severity: "desc" }, { createdAt: "asc" }],
+          },
         },
       });
 
@@ -146,6 +183,7 @@ Respond ONLY with valid JSON in this exact format:
           aiSystemId,
           complianceStatus,
           gapsCount: result.gaps?.length ?? 0,
+          issuesCount: assignment.issues.length,
         },
       });
 
@@ -153,6 +191,7 @@ Respond ONLY with valid JSON in this exact format:
         complianceStatus,
         evidence,
         gaps: result.gaps ?? [],
+        issues: assignment.issues,
       });
     } catch (err) {
       return NextResponse.json(

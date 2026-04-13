@@ -17,15 +17,19 @@ export function buildWorkflowNotifications(input: {
   investigations: Array<{ id: string; title: string; updatedAt: Date }>;
 }) {
   const items: WorkflowNotification[] = [
-    ...input.recentApprovals.map((approval) => ({
-      id: `approval-${approval.id}`,
-      title: `${approval.systemName} approval updated`,
-      detail: `Decision recorded: ${approval.decision.replace(/_/g, " ").toLowerCase()}.`,
-      href: "/dashboard",
-      category: "approval" as const,
-      createdAt: approval.createdAt,
-      tone: approval.decision === "APPROVED" ? "info" : "warning",
-    })),
+    ...input.recentApprovals.map((approval) => {
+      const tone: WorkflowNotification["tone"] =
+        approval.decision === "APPROVED" ? "info" : "warning";
+      return {
+        id: `approval-${approval.id}`,
+        title: `${approval.systemName} approval updated`,
+        detail: `Decision recorded: ${approval.decision.replace(/_/g, " ").toLowerCase()}.`,
+        href: "/dashboard",
+        category: "approval" as const,
+        createdAt: approval.createdAt,
+        tone,
+      };
+    }),
     ...input.expiringExceptions.map((exception) => ({
       id: `renewal-${exception.id}`,
       title: `${exception.systemName} exception expires soon`,

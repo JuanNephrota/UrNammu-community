@@ -14,9 +14,24 @@ export default async function AlertsPage() {
     include: {
       aiSystem: { select: { id: true, name: true } },
       governanceIncident: { select: { id: true, title: true } },
-      investigation: { select: { id: true, status: true } },
     },
   });
+  // Prisma's generated wrapper types lag new delegates in this environment, so
+  // we isolate the cast here while the generated runtime client remains correct.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prismaAny = prisma as any;
+  const investigations = await prismaAny.investigation.findMany({
+    where: {
+      alertId: { in: alerts.map((alert) => alert.id) },
+    },
+    select: { id: true, alertId: true, status: true },
+  });
+  const investigationsByAlert = new Map<string, { id: string; status: string }>(
+    investigations.map((item: { id: string; alertId: string; status: string }) => [
+      item.alertId,
+      { id: item.id, status: item.status },
+    ])
+  );
 
   const openAlerts = alerts.filter((a) => a.status === "OPEN");
   const otherAlerts = alerts.filter((a) => a.status !== "OPEN");
@@ -68,7 +83,7 @@ export default async function AlertsPage() {
                       aiSystemId={alert.aiSystem?.id ?? null}
                       alertId={alert.id}
                       governanceIncidentId={alert.governanceIncident?.id ?? null}
-                      existingInvestigationId={alert.investigation?.id ?? null}
+                      existingInvestigationId={investigationsByAlert.get(alert.id)?.id ?? null}
                     />
                   </div>
                 </div>
@@ -115,8 +130,8 @@ export default async function AlertsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {alert.investigation && (
-                      <Badge variant="info">{alert.investigation.status.replace(/_/g, " ")}</Badge>
+                    {investigationsByAlert.get(alert.id) && (
+                      <Badge variant="info">{investigationsByAlert.get(alert.id)?.status.replace(/_/g, " ")}</Badge>
                     )}
                     <Badge variant={statusBadgeVariant(alert.status)}>{alert.status}</Badge>
                   </div>

@@ -54,7 +54,7 @@ export function AIAssessButton({ policyId, aiSystemId, systemName }: Props) {
         ) : (
           <Sparkles className="mr-1.5 h-3 w-3" />
         )}
-        {loading ? "Assessing..." : "Assess with AI"}
+        {loading ? "Assessing..." : "Rerun AI Analysis"}
       </Button>
       {error && (
         <p className="text-[11px] text-[var(--critical)] max-w-[200px] text-right">

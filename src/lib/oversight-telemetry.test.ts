@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildModelDriftFindings,
+  buildTelemetryAnomalies,
   buildDataExposureFindings,
   buildSystemTelemetrySummaries,
   summarizeDataExposureFindings,
@@ -207,4 +209,114 @@ test("builds per-system telemetry summaries for governed systems", () => {
   assert.equal(summaries[0]?.bucketCount, 2);
   assert.equal(summaries[0]?.tokens, 250);
   assert.equal(summaries[0]?.cost, 8);
+});
+
+test("detects provider, model, and project telemetry anomalies against a prior baseline", () => {
+  const anomalies = buildTelemetryAnomalies(
+    [
+      {
+        id: "baseline-openai",
+        provider: "openai",
+        bucketStart: new Date("2026-04-01T00:00:00Z"),
+        bucketEnd: new Date("2026-04-02T00:00:00Z"),
+        granularity: "day",
+        dimensionKey: "one",
+        model: "gpt-4o",
+        projectName: "support-agent",
+        projectExternalId: "proj_support",
+        actorName: null,
+        actorExternalId: null,
+        apiKeyName: null,
+        apiKeyExternalId: null,
+        inputTokens: 400,
+        outputTokens: 100,
+        totalTokens: 500,
+        requestCount: 5,
+        metadata: null,
+        syncRunId: "sync-1",
+        aiSystemId: null,
+        createdAt: new Date("2026-04-01T01:00:00Z"),
+      },
+      {
+        id: "recent-openai",
+        provider: "openai",
+        bucketStart: new Date("2026-04-10T00:00:00Z"),
+        bucketEnd: new Date("2026-04-11T00:00:00Z"),
+        granularity: "day",
+        dimensionKey: "two",
+        model: "gpt-4o",
+        projectName: "support-agent",
+        projectExternalId: "proj_support",
+        actorName: null,
+        actorExternalId: null,
+        apiKeyName: null,
+        apiKeyExternalId: null,
+        inputTokens: 3800,
+        outputTokens: 1200,
+        totalTokens: 5000,
+        requestCount: 40,
+        metadata: null,
+        syncRunId: "sync-2",
+        aiSystemId: null,
+        createdAt: new Date("2026-04-10T01:00:00Z"),
+      },
+    ],
+    new Map([
+      ["openai:2026-04-01T00:00:00.000Z:2026-04-02T00:00:00.000Z:day:one", 2],
+      ["openai:2026-04-10T00:00:00.000Z:2026-04-11T00:00:00.000Z:day:two", 16],
+    ]),
+    { now: new Date("2026-04-12T00:00:00Z") }
+  );
+
+  assert.equal(anomalies.some((anomaly) => anomaly.scope === "provider"), true);
+  assert.equal(anomalies.some((anomaly) => anomaly.scope === "model"), true);
+  assert.equal(anomalies.some((anomaly) => anomaly.scope === "project"), true);
+});
+
+test("detects governed-system model drift from expected vendor and model family", () => {
+  const findings = buildModelDriftFindings(
+    [
+      {
+        id: "bucket-drift",
+        provider: "anthropic",
+        bucketStart: new Date("2026-04-11T00:00:00Z"),
+        bucketEnd: new Date("2026-04-12T00:00:00Z"),
+        granularity: "day",
+        dimensionKey: "drift",
+        model: "claude-sonnet-4",
+        projectName: "payroll-assistant",
+        projectExternalId: "proj_payroll",
+        actorName: null,
+        actorExternalId: null,
+        apiKeyName: null,
+        apiKeyExternalId: null,
+        inputTokens: 200,
+        outputTokens: 50,
+        totalTokens: 250,
+        requestCount: 3,
+        metadata: null,
+        syncRunId: "sync-3",
+        aiSystemId: "sys-1",
+        createdAt: new Date("2026-04-11T01:00:00Z"),
+        aiSystem: {
+          id: "sys-1",
+          name: "Payroll Copilot",
+          vendor: "OpenAI",
+          modelType: "gpt-4o",
+          department: "Finance",
+          status: "DEPLOYED",
+          riskLevel: "HIGH",
+          dataSensitivity: "RESTRICTED",
+        },
+      },
+    ],
+    new Map([
+      ["anthropic:2026-04-11T00:00:00.000Z:2026-04-12T00:00:00.000Z:day:drift", 4],
+    ])
+  );
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.severity, "critical");
+  assert.match(findings[0]?.reasons.join(" "), /dominant provider/i);
+  assert.match(findings[0]?.reasons.join(" "), /dominant model/i);
 });

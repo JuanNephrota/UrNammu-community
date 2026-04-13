@@ -29,6 +29,8 @@ import {
   ComplianceEvidence,
 } from "@/components/compliance/compliance-status-editor";
 import { RiskAssessmentIssueStatusEditor } from "@/components/registry/risk-assessment-issue-status-editor";
+import { AIAssessButton } from "@/components/compliance/ai-assess-button";
+import { ComplianceIssueStatusEditor } from "@/components/compliance/compliance-issue-status-editor";
 
 export default async function SystemDetailPage({
   params,
@@ -93,6 +95,9 @@ export default async function SystemDetailPage({
       },
       policyAssignments: {
         include: {
+          issues: {
+            orderBy: [{ status: "asc" }, { severity: "desc" }, { createdAt: "asc" }],
+          },
           policy: { select: { id: true, name: true, framework: true, rules: true } },
         },
       },
@@ -653,20 +658,70 @@ export default async function SystemDetailPage({
                             {pa.policy.framework.replace("_", " ")}
                           </p>
                         </div>
-                        <ComplianceStatusEditor
-                          assignmentId={pa.id}
-                          policyId={pa.policy.id}
-                          aiSystemId={system.id}
-                          currentStatus={pa.complianceStatus}
-                          currentEvidence={pa.evidence}
-                          systemName={system.name}
-                          policyName={pa.policy.name}
-                        />
+                        <div className="flex items-center gap-2">
+                          <AIAssessButton
+                            policyId={pa.policy.id}
+                            aiSystemId={system.id}
+                            systemName={system.name}
+                          />
+                          <ComplianceStatusEditor
+                            assignmentId={pa.id}
+                            policyId={pa.policy.id}
+                            aiSystemId={system.id}
+                            currentStatus={pa.complianceStatus}
+                            currentEvidence={pa.evidence}
+                            systemName={system.name}
+                            policyName={pa.policy.name}
+                          />
+                        </div>
                       </div>
                       <ComplianceEvidence
                         status={pa.complianceStatus}
                         evidence={pa.evidence}
                       />
+                      {pa.issues.length > 0 && (
+                        <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-2">
+                            Compliance Issues
+                          </p>
+                          <div className="space-y-2">
+                            {pa.issues.map((issue) => (
+                              <div
+                                key={issue.id}
+                                className="rounded-md border border-[var(--border-subtle)] p-3"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge variant={riskBadgeVariant(issue.severity)}>
+                                        {issue.severity}
+                                      </Badge>
+                                      <Badge variant="outline">
+                                        {issue.requirement}
+                                      </Badge>
+                                      <p className="text-xs font-medium text-[var(--text-primary)]">
+                                        {issue.title}
+                                      </p>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-relaxed text-[var(--text-secondary)]">
+                                      {issue.detail}
+                                    </p>
+                                    {issue.remediation && (
+                                      <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+                                        Recommended action: {issue.remediation}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <ComplianceIssueStatusEditor
+                                    issueId={issue.id}
+                                    currentStatus={issue.status}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

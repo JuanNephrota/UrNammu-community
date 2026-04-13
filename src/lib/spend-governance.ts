@@ -1,8 +1,6 @@
-import type { BudgetScopeType } from "@prisma/client";
-
 export type SpendBudgetSummary = {
   id: string;
-  scopeType: BudgetScopeType;
+  scopeType: "PROVIDER" | "AI_SYSTEM" | "DEPARTMENT";
   scopeKey: string;
   label: string;
   monthlyBudget: number;
@@ -20,9 +18,9 @@ export type TopCostDriver = {
 };
 
 export function summarizeSpendBudgets(input: {
-  budgets: Array<{
-    id: string;
-    scopeType: BudgetScopeType;
+    budgets: Array<{
+      id: string;
+      scopeType: "PROVIDER" | "AI_SYSTEM" | "DEPARTMENT";
     scopeKey: string;
     label: string;
     monthlyBudget: number;
@@ -42,7 +40,7 @@ export function summarizeSpendBudgets(input: {
       const currentSpend = input.spendByScope.get(scopeId) ?? 0;
       const utilizationPct = budget.monthlyBudget > 0 ? (currentSpend / budget.monthlyBudget) * 100 : 0;
       const projectedMonthEndSpend = elapsedPct > 0 ? currentSpend / elapsedPct : currentSpend;
-      const pacingStatus =
+      const pacingStatus: SpendBudgetSummary["pacingStatus"] =
         utilizationPct >= 100 || projectedMonthEndSpend >= budget.monthlyBudget
           ? "critical"
           : utilizationPct >= budget.warningThresholdPct

@@ -30,6 +30,10 @@ export default async function AgentDetailPage({
           modelType: true,
         },
       },
+      riskReviews: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
     },
   });
   if (!agent) notFound();
@@ -130,6 +134,38 @@ export default async function AgentDetailPage({
             riskLevel: agent.riskLevel,
             aiSystemId: agent.aiSystemId,
           }}
+          initialReview={
+            agent.riskReviews[0]
+              ? {
+                  id: agent.riskReviews[0].id,
+                  recommendedRiskLevel: agent.riskReviews[0].recommendedRiskLevel,
+                  reviewNeeded: agent.riskReviews[0].reviewNeeded,
+                  summary: agent.riskReviews[0].summary,
+                  concerns: Array.isArray(agent.riskReviews[0].concerns)
+                    ? (agent.riskReviews[0].concerns as string[])
+                    : [],
+                  recommendations: Array.isArray(agent.riskReviews[0].recommendations)
+                    ? (agent.riskReviews[0].recommendations as string[])
+                    : [],
+                  scores:
+                    typeof agent.riskReviews[0].scores === "object" && agent.riskReviews[0].scores
+                      ? (agent.riskReviews[0].scores as {
+                          autonomy: number;
+                          oversight: number;
+                          blastRadius: number;
+                          changeRisk: number;
+                        })
+                      : {
+                          autonomy: 0,
+                          oversight: 0,
+                          blastRadius: 0,
+                          changeRisk: 0,
+                        },
+                  createdAt: agent.riskReviews[0].createdAt.toISOString(),
+                  generatedBy: agent.riskReviews[0].generatedBy,
+                }
+              : null
+          }
           parentSystem={
             agent.aiSystem
               ? {

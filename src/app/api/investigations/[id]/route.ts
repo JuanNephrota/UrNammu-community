@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
@@ -11,24 +12,53 @@ const updateSchema = z.object({
   resolutionSummary: z.string().optional().nullable(),
 });
 
+type InvestigationDetail = Prisma.InvestigationGetPayload<{
+  include: {
+    ownerUser: { select: { id: true; name: true; email: true } };
+    aiSystem: { select: { id: true; name: true } };
+    alert: { select: { id: true; title: true } };
+    governanceIncident: { select: { id: true; title: true } };
+  };
+}>;
+
+type InvestigationExisting = {
+  id: string;
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+  notes: string | null;
+  summary: string | null;
+  resolutionSummary: string | null;
+};
+
+type InvestigationByIdClient = {
+  investigation: {
+    findUnique: (
+      args: Prisma.InvestigationFindUniqueArgs
+    ) => Promise<InvestigationExisting | null>;
+    update: (
+      args: Prisma.InvestigationUpdateArgs
+    ) => Promise<InvestigationDetail>;
+  };
+};
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async (session) => {
+    const prismaClient = prisma as unknown as InvestigationByIdClient;
     const { id } = await params;
     const parsed = updateSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "Validation failed" }, { status: 400 });
     }
 
-    const existing = await prisma.investigation.findUnique({ where: { id } });
+    const existing = await prismaClient.investigation.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: "Investigation not found" }, { status: 404 });
     }
 
     const status = parsed.data.status ?? existing.status;
-    const investigation = await prisma.investigation.update({
+    const investigation = await prismaClient.investigation.update({
       where: { id },
       data: {
         status,

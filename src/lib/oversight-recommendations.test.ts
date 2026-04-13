@@ -10,6 +10,8 @@ test("prioritizes budget and investigation recommendations", () => {
     openInvestigations: 2,
     unattributedCoverageGapPct: 42,
     driftAlerts: 1,
+    anomalyCount: 2,
+    modelDriftCount: 1,
     budgetSummaries: [
       {
         id: "b1",

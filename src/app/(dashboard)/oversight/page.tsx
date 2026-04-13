@@ -11,6 +11,8 @@ import { UsageChart } from "@/components/dashboard/usage-chart";
 import { OrgDataPanel } from "@/components/dashboard/org-data-panel";
 import { OversightActionQueue } from "@/components/dashboard/governance-action-queue";
 import {
+  buildModelDriftFindings,
+  buildTelemetryAnomalies,
   buildCostLookup,
   buildDataExposureFindings,
   buildSystemTelemetrySummaries,
@@ -23,6 +25,8 @@ import { getTopCostDrivers, summarizeSpendBudgets } from "@/lib/spend-governance
 import { getOversightRecommendations } from "@/lib/oversight-recommendations";
 
 export default async function OversightPage() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prismaAny = prisma as any;
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const recentCostWindowStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -56,6 +60,8 @@ export default async function OversightPage() {
           select: {
             id: true,
             name: true,
+            vendor: true,
+            modelType: true,
             dataSensitivity: true,
             department: true,
             status: true,
@@ -86,10 +92,10 @@ export default async function OversightPage() {
       orderBy: { startedAt: "desc" },
       take: 12,
     }),
-    prisma.spendBudget.findMany({
+    prismaAny.spendBudget.findMany({
       orderBy: [{ scopeType: "asc" }, { label: "asc" }],
     }),
-    prisma.investigation.findMany({
+    prismaAny.investigation.findMany({
       where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
       orderBy: { updatedAt: "desc" },
       take: 6,
@@ -114,7 +120,7 @@ export default async function OversightPage() {
     }),
   ]);
 
-  const costByProvider = costBuckets.reduce<Record<string, number>>((acc, bucket) => {
+  const costByProvider = costBuckets.reduce<Record<string, number>>((acc: Record<string, number>, bucket) => {
     acc[bucket.provider] = (acc[bucket.provider] ?? 0) + bucket.amount;
     return acc;
   }, {});
@@ -129,31 +135,36 @@ export default async function OversightPage() {
     costLookup,
     6
   );
+  const telemetryAnomalies = buildTelemetryAnomalies(recentUsageBuckets, costLookup, {
+    now,
+    take: 8,
+  });
+  const modelDriftFindings = buildModelDriftFindings(recentUsageBuckets, costLookup, 8);
   const exposureFindings = buildDataExposureFindings(recentUsageBuckets, costLookup, 8);
   const exposureSummary = summarizeDataExposureFindings(exposureFindings);
-  const totalCost = costBuckets.reduce((s, bucket) => s + bucket.amount, 0);
-  const totalTokens = providerStats.reduce((s, p) => s + (p._sum.totalTokens ?? 0), 0);
+  const totalCost = costBuckets.reduce((s: number, bucket) => s + bucket.amount, 0);
+  const totalTokens = providerStats.reduce((s: number, p) => s + (p._sum.totalTokens ?? 0), 0);
   const attributedTokens = recentUsageBuckets
     .filter((bucket) => bucket.aiSystemId)
-    .reduce((sum, bucket) => sum + bucket.totalTokens, 0);
+    .reduce((sum: number, bucket) => sum + bucket.totalTokens, 0);
   const attributedCoverage = totalTokens > 0 ? Math.round((attributedTokens / totalTokens) * 100) : 0;
   const trackedEntities = new Set(
     recentUsageBuckets.map((bucket) => getTelemetryAttributionLabel(bucket))
   ).size;
-  const latestSuccessByProvider = syncRuns.reduce<Record<string, Date | null>>((acc, run) => {
+  const latestSuccessByProvider = syncRuns.reduce<Record<string, Date | null>>((acc: Record<string, Date | null>, run) => {
     if (run.status === "SUCCEEDED" && !acc[run.provider]) acc[run.provider] = run.completedAt;
     return acc;
   }, {});
   const staleProviders = Object.entries(latestSuccessByProvider)
-    .filter(([, completedAt]) => !completedAt || now.getTime() - new Date(completedAt).getTime() > 24 * 60 * 60 * 1000)
+    .filter(([, completedAt]) => !completedAt || now.getTime() - new Date(completedAt as Date).getTime() > 24 * 60 * 60 * 1000)
     .map(([provider]) => provider);
 
   const recentSevenDayCost = costBuckets
     .filter((bucket) => bucket.bucketStart >= recentCostWindowStart)
-    .reduce((sum, bucket) => sum + bucket.amount, 0);
+    .reduce((sum: number, bucket) => sum + bucket.amount, 0);
   const previousSevenDayCost = costBuckets
     .filter((bucket) => bucket.bucketStart >= previousCostWindowStart && bucket.bucketStart < recentCostWindowStart)
-    .reduce((sum, bucket) => sum + bucket.amount, 0);
+    .reduce((sum: number, bucket) => sum + bucket.amount, 0);
   const spendSpike =
     previousSevenDayCost > 0 && recentSevenDayCost > previousSevenDayCost * 1.5;
 
@@ -215,6 +226,8 @@ export default async function OversightPage() {
     openInvestigations: investigations.length,
     unattributedCoverageGapPct: 100 - attributedCoverage,
     driftAlerts,
+    anomalyCount: telemetryAnomalies.length,
+    modelDriftCount: modelDriftFindings.length,
     budgetSummaries,
     recentAlerts: [],
   });
@@ -242,7 +255,7 @@ export default async function OversightPage() {
         </Link>
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-7">
         <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" />
         <StatCard title="Total Tokens" value={totalTokens.toLocaleString()} iconName="Eye" variant="default" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" />
@@ -264,6 +277,32 @@ export default async function OversightPage() {
           iconName="AlertTriangle"
           variant={exposureSummary.totalFindings > 0 ? "warning" : "success"}
         />
+        <StatCard
+          title="Anomalies"
+          value={telemetryAnomalies.length}
+          description={telemetryAnomalies.length > 0 ? telemetryAnomalies[0]?.label : "No recent spikes"}
+          iconName="TrendingUp"
+          variant={
+            telemetryAnomalies.some((finding) => finding.severity === "critical")
+              ? "danger"
+              : telemetryAnomalies.length > 0
+                ? "warning"
+                : "success"
+          }
+        />
+        <StatCard
+          title="Model Drift"
+          value={modelDriftFindings.length}
+          description={modelDriftFindings.length > 0 ? modelDriftFindings[0]?.systemName : "No model drift"}
+          iconName="GitBranch"
+          variant={
+            modelDriftFindings.some((finding) => finding.severity === "critical")
+              ? "danger"
+              : modelDriftFindings.length > 0
+                ? "warning"
+                : "success"
+          }
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -274,7 +313,7 @@ export default async function OversightPage() {
               <p className="text-sm text-[var(--text-muted)]">No usage data yet.</p>
             ) : (
               <div className="space-y-3">
-                {providerStats.map((p) => (
+                {providerStats.map((p: { provider: string; _count: number; _sum: { totalTokens: number | null } }) => (
                   <div key={p.provider} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
                     <div>
                       <p className="text-sm font-medium capitalize">{p.provider}</p>
@@ -431,6 +470,24 @@ export default async function OversightPage() {
                   tone: "critical" as const,
                 }]
               : []),
+            ...(telemetryAnomalies.length > 0
+              ? [{
+                  label: "Usage or cost anomalies detected",
+                  description: "Provider, model, or project activity spiked versus the prior baseline window.",
+                  count: telemetryAnomalies.length,
+                  href: "/oversight/usage",
+                  tone: telemetryAnomalies.some((finding) => finding.severity === "critical") ? "critical" as const : "warning" as const,
+                }]
+              : []),
+            ...(modelDriftFindings.length > 0
+              ? [{
+                  label: "Governed-system model drift",
+                  description: "Observed providers or model families differ from the governed system posture.",
+                  count: modelDriftFindings.length,
+                  href: "/oversight",
+                  tone: modelDriftFindings.some((finding) => finding.severity === "critical") ? "critical" as const : "warning" as const,
+                }]
+              : []),
             ...(exposureSummary.totalFindings > 0
               ? [{
                   label: "Restricted-data exposure signals",
@@ -561,7 +618,13 @@ export default async function OversightPage() {
                 No active investigations right now.
               </p>
             ) : (
-              investigations.map((investigation) => (
+              investigations.map((investigation: {
+                id: string;
+                title: string;
+                status: string;
+                summary: string | null;
+                ownerUser?: { name: string | null; email: string | null } | null;
+              }) => (
                 <Link
                   key={investigation.id}
                   href="/oversight/investigations"
@@ -585,6 +648,112 @@ export default async function OversightPage() {
                   )}
                 </Link>
               ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Telemetry Anomalies</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {telemetryAnomalies.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No provider, model, or project spikes exceeded the current baseline thresholds.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {telemetryAnomalies.map((anomaly) => (
+                  <div
+                    key={anomaly.id}
+                    className="rounded-lg border border-[var(--border-subtle)] p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge
+                            variant={
+                              anomaly.severity === "critical"
+                                ? "critical"
+                                : anomaly.severity === "warning"
+                                  ? "warning"
+                                  : "info"
+                            }
+                          >
+                            {anomaly.scope.toUpperCase()}
+                          </Badge>
+                          <p className="text-sm font-medium text-[var(--text-primary)]">
+                            {anomaly.label}
+                          </p>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">
+                          {anomaly.reasons.join(" ")}
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-[var(--text-faint)]">
+                        <p>{anomaly.recentTokens.toLocaleString()} recent tokens</p>
+                        <p>${anomaly.recentCost.toFixed(2)} recent cost</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Model Drift Tracking</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {modelDriftFindings.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No governed systems show provider or model-family drift in recent telemetry.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {modelDriftFindings.map((finding) => (
+                  <Link
+                    key={finding.id}
+                    href={`/registry/${finding.aiSystemId}`}
+                    className="block rounded-lg border border-[var(--border-subtle)] p-4 hover:bg-[var(--bg-hover)]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge
+                            variant={
+                              finding.severity === "critical"
+                                ? "critical"
+                                : finding.severity === "warning"
+                                  ? "warning"
+                                  : "info"
+                            }
+                          >
+                            DRIFT
+                          </Badge>
+                          <p className="text-sm font-medium text-[var(--text-primary)]">
+                            {finding.systemName}
+                          </p>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">
+                          {finding.reasons.join(" ")}
+                        </p>
+                        <p className="mt-2 text-xs text-[var(--text-faint)]">
+                          Expected: {finding.expectedVendor ?? "Unknown vendor"} / {finding.expectedModelType ?? "Unknown model"} · Observed:{" "}
+                          {finding.observedProviders.join(", ")} / {finding.observedModels.join(", ")}
+                        </p>
+                      </div>
+                      <p className="text-xs text-[var(--text-faint)]">
+                        {formatDateTime(finding.lastSeen)}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>

@@ -62,6 +62,7 @@ export function statusBadgeVariant(
     NON_COMPLIANT: "critical",
     NOT_ASSESSED: "default",
     OPEN: "critical",
+    IN_PROGRESS: "warning",
     ACKNOWLEDGED: "warning",
     RESOLVED: "success",
     DISMISSED: "outline",

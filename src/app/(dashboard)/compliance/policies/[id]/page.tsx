@@ -11,6 +11,7 @@ import {
   ComplianceEvidence,
 } from "@/components/compliance/compliance-status-editor";
 import { AIAssessButton } from "@/components/compliance/ai-assess-button";
+import { ComplianceIssueStatusEditor } from "@/components/compliance/compliance-issue-status-editor";
 
 export default async function PolicyDetailPage({
   params,
@@ -23,6 +24,9 @@ export default async function PolicyDetailPage({
     include: {
       assignments: {
         include: {
+          issues: {
+            orderBy: [{ status: "asc" }, { severity: "desc" }, { createdAt: "asc" }],
+          },
           aiSystem: {
             select: {
               id: true,
@@ -185,6 +189,49 @@ export default async function PolicyDetailPage({
                     status={a.complianceStatus}
                     evidence={a.evidence}
                   />
+                  {a.issues.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                        Compliance Issues
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {a.issues.map((issue) => (
+                          <div
+                            key={issue.id}
+                            className="rounded-md border border-[var(--border-subtle)] p-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant={statusBadgeVariant(issue.status)}>
+                                    {issue.status.replace(/_/g, " ")}
+                                  </Badge>
+                                  <Badge variant={issue.severity === "CRITICAL" ? "critical" : issue.severity === "HIGH" ? "high" : issue.severity === "MEDIUM" ? "medium" : issue.severity === "LOW" ? "low" : "minimal"}>
+                                    {issue.severity}
+                                  </Badge>
+                                  <p className="text-xs font-medium text-[var(--text-primary)]">
+                                    {issue.title}
+                                  </p>
+                                </div>
+                                <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                                  {issue.detail}
+                                </p>
+                                {issue.remediation && (
+                                  <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+                                    Recommended action: {issue.remediation}
+                                  </p>
+                                )}
+                              </div>
+                              <ComplianceIssueStatusEditor
+                                issueId={issue.id}
+                                currentStatus={issue.status}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {(ruleEvaluation.violations.length > 0 ||
                     ruleEvaluation.waivedViolations.length > 0 ||
                     ruleEvaluation.advisories.length > 0 ||
