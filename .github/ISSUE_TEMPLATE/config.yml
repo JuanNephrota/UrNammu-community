@@ -1,0 +1,16 @@
+# Forces contributors to pick a template. Blank issues are usually
+# low-signal and hide security reports that should go elsewhere.
+blank_issues_enabled: false
+
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/JuanNephrota/Nammu/security/advisories/new
+    about: >
+      Do NOT open a public issue for security vulnerabilities.
+      Use GitHub Private Vulnerability Reporting. See SECURITY.md for details.
+
+  - name: 💬 Question or discussion
+    url: https://github.com/JuanNephrota/Nammu/discussions
+    about: >
+      Have a question, idea, or want to discuss a design?
+      Open a Discussion instead of an issue.

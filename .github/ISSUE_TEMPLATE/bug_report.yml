@@ -1,0 +1,98 @@
+name: 🐞 Bug report
+description: Report a reproducible problem with the Nammu app or proxy.
+title: "bug: <short description>"
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        **If this is a security issue, stop here.** Use
+        [Private Vulnerability Reporting](https://github.com/JuanNephrota/Nammu/security/advisories/new)
+        instead — see [SECURITY.md](../../SECURITY.md).
+
+  - type: checkboxes
+    id: not-security
+    attributes:
+      label: This is not a security issue
+      options:
+        - label: I have confirmed this is not a security vulnerability. Security reports go through Private Vulnerability Reporting, not public issues.
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+      placeholder: When I click X, Y happens instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps. Include any test data or sample payloads.
+      placeholder: |
+        1. Go to …
+        2. Click …
+        3. See error …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: I expected the system to …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface is affected?
+      options:
+        - Main Next.js app (dashboard UI)
+        - Main Next.js app (API route)
+        - Vercel fallback proxy (/api/proxy/*)
+        - Azure Functions proxy (ai-proxy/)
+        - Database / Prisma migrations
+        - Background scheduler / cron
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit SHA or version
+      description: Output of `git rev-parse --short HEAD` or a tag.
+      placeholder: e.g. a1b2c3d
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS, deployment target, etc.
+      placeholder: |
+        - Node: 20.x
+        - OS: macOS 14 / Ubuntu 22.04
+        - Deployment: local dev / Vercel prod / Azure Functions
+        - Postgres: 16
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Paste relevant logs. **Redact secrets, API keys, and PII before pasting.**
+      render: shell
+    validations:
+      required: false

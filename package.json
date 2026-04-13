@@ -12,13 +12,23 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && husky",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "tsx --test 'src/**/*.test.ts'",
+    "check:secrets": "bash scripts/check-secrets.sh",
     "db:migrate": "npx prisma migrate dev",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:reset": "npx prisma migrate reset --force"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix --no-warn-ignored"
+    ],
+    "*.{js,jsx,ts,tsx,json,yml,yaml,md,env,example,sh}": [
+      "bash scripts/check-secrets.sh"
+    ]
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
@@ -66,6 +76,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
