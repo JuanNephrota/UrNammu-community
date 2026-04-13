@@ -409,7 +409,15 @@ Direct SDK calls can point at the proxy instead of the provider:
 - Claude: `https://<your-function-app>.azurewebsites.net/api/anthropic-proxy`
 - OpenAI: `https://<your-function-app>.azurewebsites.net/api/openai-proxy`
 
-Clients send their requests with an `X-Proxy-Secret: $PROXY_SECRET` header (exact header name is documented on **Settings → Proxy Setup** inside the app once deployed).
+Clients authenticate to the proxy with an `x-proxy-key: $PROXY_SECRET` header. The proxy forwards a strict allow-list of headers to Anthropic / OpenAI by default (`Content-Type`, `anthropic-version`, `anthropic-beta`, plus the org's own `x-api-key`). Other headers are dropped.
+
+**MCP passthrough.** When the request involves Model Context Protocol — detected by any of:
+
+- `mcp_servers` in the JSON body (non-empty array)
+- `anthropic-beta` containing `mcp-client*`
+- any `mcp-*` request header
+
+the Anthropic proxy additionally forwards every `mcp-*` header and the client's `Authorization` header verbatim, so remote MCP servers receive the credentials they need. The proxy still uses the org-level Anthropic key on `x-api-key` regardless. MCP passthrough is logged on the usage record's metadata so admins can see which calls used MCP and which headers were forwarded.
 
 If you want dangerous-prompt monitoring, make sure the relevant OpenAI or Anthropic traffic is routed through this proxy or the app's built-in `/api/proxy/*` routes.
 

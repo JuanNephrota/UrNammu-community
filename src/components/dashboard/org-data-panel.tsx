@@ -79,6 +79,7 @@ export function OrgDataPanel() {
         if ((result.claudeCodeCostsSynced as number) > 0) parts.push(`${result.claudeCodeCostsSynced} Claude Code cost buckets`);
         if ((result.agentsCreated as number) > 0) parts.push(`${result.agentsCreated} new agents`);
         if ((result.agentsUpdated as number) > 0) parts.push(`${result.agentsUpdated} agents updated`);
+        if ((result.skipped as string[])?.length > 0) parts.push(`Skipped (not configured): ${(result.skipped as string[]).join("; ")}`);
         if ((result.errors as string[])?.length > 0) parts.push(`Errors: ${(result.errors as string[]).join("; ")}`);
         setSyncResult(parts.length > 0 ? `Synced: ${parts.join(", ")}. Refresh the page to update stats.` : "No new data to sync.");
       } else {

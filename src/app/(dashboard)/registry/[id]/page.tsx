@@ -32,6 +32,9 @@ import { RiskAssessmentIssueStatusEditor } from "@/components/registry/risk-asse
 import { AIAssessButton } from "@/components/compliance/ai-assess-button";
 import { ComplianceIssueStatusEditor } from "@/components/compliance/compliance-issue-status-editor";
 import { SystemLifecycleActions } from "@/components/registry/system-lifecycle-actions";
+import { getApprovalBlockers } from "@/lib/approval-blockers";
+import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
+import type { GovernanceReviewStage } from "@prisma/client";
 
 export default async function SystemDetailPage({
   params,
@@ -188,6 +191,52 @@ export default async function SystemDetailPage({
   });
   const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
   const requiredStages = getRequiredStages(system);
+  const approvalBlockers = (() => {
+    const approvedStages = new Set<GovernanceReviewStage>();
+    const seenStages = new Set<GovernanceReviewStage>();
+    for (const review of system.governanceReviews) {
+      if (seenStages.has(review.stage)) continue;
+      seenStages.add(review.stage);
+      if (review.approved) approvedStages.add(review.stage);
+    }
+    return getApprovalBlockers({
+      systemId: system.id,
+      riskAssessmentsCount: system.riskAssessments.length,
+      policyAssignments: system.policyAssignments.map((assignment) => {
+        const evaluation = evaluatePolicyRules(
+          parsePolicyRules(assignment.policy.rules),
+          {
+            vendor: system.vendor,
+            department: system.department,
+            status: system.status,
+            modelType: system.modelType,
+            dataSensitivity: system.dataSensitivity,
+            reviewIntervalDays: system.reviewIntervalDays,
+            riskLevel: system.riskLevel,
+            requireOwnerApproval: system.requireOwnerApproval,
+            requireSecurityApproval: system.requireSecurityApproval,
+            requireLegalApproval: system.requireLegalApproval,
+            requireComplianceApproval: system.requireComplianceApproval,
+            activeExceptionCount: system.governanceExceptions.filter(
+              (exception) =>
+                exception.status === "ACTIVE" &&
+                new Date(exception.expiresAt).getTime() >= Date.now()
+            ).length,
+          }
+        );
+        return {
+          id: assignment.id,
+          complianceStatus: assignment.complianceStatus,
+          evidenceProvided: Boolean(assignment.evidence && assignment.evidence.trim()),
+          policy: { id: assignment.policy.id, name: assignment.policy.name },
+          blockingRuleViolations: evaluation.blockingViolations,
+        };
+      }),
+      requiredStages: requiredStages as GovernanceReviewStage[],
+      approvedStages,
+      nextReviewDate: system.nextReviewDate,
+    });
+  })();
   const costLookup = buildCostLookup(costBuckets);
   const telemetryRows = buildTelemetryActivityRows(usageBuckets, costLookup, 8);
   const telemetryProviders = new Set(usageBuckets.map((bucket) => bucket.provider));
@@ -300,6 +349,11 @@ export default async function SystemDetailPage({
               latestDecision={system.approvals[0]?.decision ?? null}
               governanceReady={governanceReady}
               approvals={system.approvals}
+              blockers={approvalBlockers.map(({ message, href, category }) => ({
+                message,
+                href,
+                category,
+              }))}
             />
             <GovernanceStageReviewCard
               systemId={system.id}

@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { matchDomain } from "./ai-tools-registry";
+import { findMatchingGovernedSystem } from "./governed-system-match";
 import { logger } from "./observability";
 import { parseCsv } from "./csv";
 
@@ -259,6 +260,14 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       continue;
     }
 
+    const governedMatch = await findMatchingGovernedSystem({
+      toolName: discovery.toolName,
+      vendor: discovery.vendor,
+      detectedDomain: discovery.domain,
+    });
+
+    const baseNotes = `Detected via DNS/proxy logs (${source}). ${discovery.totalHits} hits from ${userCount} user(s).`;
+
     const tool = await prisma.discoveredAITool.create({
       data: {
         toolName: discovery.toolName,
@@ -267,20 +276,26 @@ async function runIngestion(source: string, entries: LogEntry[]) {
         detectionSource: source,
         department,
         userCount,
-        status: "DISCOVERED",
-        notes: `Detected via DNS/proxy logs (${source}). ${discovery.totalHits} hits from ${userCount} user(s).`,
+        status: governedMatch ? "REGISTERED" : "DISCOVERED",
+        linkedSystemId: governedMatch?.id,
+        notes: governedMatch
+          ? `${baseNotes} Suppressed: matches governed system "${governedMatch.name}".`
+          : baseNotes,
       },
     });
 
-    await prisma.alert.create({
-      data: {
-        title: `Shadow AI detected: ${discovery.toolName}`,
-        description: `${discovery.toolName} (${discovery.vendor}) detected via ${source} logs. ${discovery.totalHits} requests from ${userCount} user(s).`,
-        severity: discovery.totalHits >= 50 || userCount >= 10 ? "HIGH" : "MEDIUM",
-        source: "shadow_ai",
-        relatedToolId: tool.id,
-      },
-    });
+    // Suppress the alert when this tool is already a governed AISystem.
+    if (!governedMatch) {
+      await prisma.alert.create({
+        data: {
+          title: `Shadow AI detected: ${discovery.toolName}`,
+          description: `${discovery.toolName} (${discovery.vendor}) detected via ${source} logs. ${discovery.totalHits} requests from ${userCount} user(s).`,
+          severity: discovery.totalHits >= 50 || userCount >= 10 ? "HIGH" : "MEDIUM",
+          source: "shadow_ai",
+          relatedToolId: tool.id,
+        },
+      });
+    }
 
     newTools++;
     details.push({

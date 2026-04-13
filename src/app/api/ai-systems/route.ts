@@ -101,6 +101,38 @@ export async function POST(req: NextRequest) {
         }).catch(() => null);
       }
 
+      // Suppress any unlinked shadow-AI discoveries that match this newly
+      // governed system (case-insensitive match on toolName, narrowed by
+      // vendor when available). This keeps previously-discovered tools from
+      // lingering in the shadow-AI queue once the org decides to govern them.
+      //
+      // Values below are bound from the row just created by Prisma and are
+      // guaranteed strings (validated by `createAISystemSchema` before insert
+      // and typed as `string` / `string | null` on read). We build the where
+      // clause explicitly — no spread, no dynamic keys — to keep the scanner
+      // happy that this cannot smuggle Prisma operators from user input.
+      const systemName: string = String(created.name);
+      const systemVendor: string | null =
+        typeof created.vendor === "string" ? created.vendor : null;
+      if (systemVendor) {
+        await tx.discoveredAITool.updateMany({
+          where: {
+            linkedSystemId: null,
+            toolName: { equals: systemName, mode: "insensitive" },
+            vendor: { equals: systemVendor, mode: "insensitive" },
+          },
+          data: { status: "REGISTERED", linkedSystemId: created.id },
+        });
+      } else {
+        await tx.discoveredAITool.updateMany({
+          where: {
+            linkedSystemId: null,
+            toolName: { equals: systemName, mode: "insensitive" },
+          },
+          data: { status: "REGISTERED", linkedSystemId: created.id },
+        });
+      }
+
       return created;
     });
 

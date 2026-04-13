@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AutonomyHelpTooltip } from "@/components/ui/autonomy-tooltip";
+import { HelpHint } from "@/components/help/help-hint";
 
 interface AgentFormProps {
   initialData?: {
@@ -168,7 +169,10 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Human Review Required</Label>
+            <Label className="flex items-center gap-1.5">
+              Human Review Required
+              <HelpHint hint="human_review_triggers" />
+            </Label>
             <select name="humanReviewRequired" defaultValue={initialData?.humanReviewRequired ? "true" : "false"} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
               <option value="true">Yes</option>
               <option value="false">No</option>
@@ -196,7 +200,12 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Connected Systems</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            Connected Systems
+            <HelpHint hint="connected_systems" />
+          </CardTitle>
+        </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-2">
             <Input placeholder="Add connected system..." value={sysInput} onChange={(e) => setSysInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addChip(sysInput, connectedSystems, setConnectedSystems, setSysInput); }}} />

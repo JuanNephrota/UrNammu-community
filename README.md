@@ -166,6 +166,8 @@ Phase 2 introduces a normalized telemetry foundation alongside the legacy `APIUs
 
 The current admin sync route still backfills derived `APIUsageLog` rows for compatibility, but the main oversight views now read normalized telemetry from `UsageBucket` and `CostBucket`.
 
+Proxy traffic writes to both surfaces. Every request through the Anthropic or OpenAI proxy (Vercel fallback or Azure Functions) synchronously creates an `APIUsageLog` row and idempotently upserts an hourly `UsageBucket` (and matching `CostBucket` when cost is known), linked to a per-hour synthetic `ProviderSyncRun` with `syncType = "proxy_live"`. This makes proxy usage visible on the main Oversight dashboard on the next page load, without waiting for the admin-sync interval.
+
 When traffic flows through the built-in proxy, Oversight can also raise dangerous-prompt alerts from redacted prompt-risk signals without storing full prompt bodies by default.
 
 ## Admin Integrations

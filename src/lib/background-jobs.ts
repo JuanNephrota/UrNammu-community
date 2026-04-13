@@ -34,6 +34,9 @@ export type ProviderSyncJobResult = {
   assistantsFound: number;
   agentsCreated: number;
   agentsUpdated: number;
+  /** Providers that were intentionally skipped because their admin key /
+   *  billing export is not configured. These are not failures. */
+  skipped: string[];
   errors: string[];
 };
 
@@ -154,6 +157,25 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     syncClaudeCodeAnalytics(triggeredByUserId),
   ]);
 
+  const providerLabels: Record<string, string> = {
+    anthropic: "Anthropic telemetry",
+    openai: "OpenAI telemetry",
+    gemini: "Gemini telemetry",
+    claude_code: "Claude Code analytics",
+  };
+  const rawResults = [anthropicResult, openaiResult, geminiResult, claudeCodeResult];
+  const skipped: string[] = [];
+  const errors: string[] = [];
+  for (const result of rawResults) {
+    if (result.success) continue;
+    const label = providerLabels[result.provider] ?? result.provider;
+    if ("skipped" in result && result.skipped) {
+      skipped.push(`${label}: ${result.error}`);
+    } else {
+      errors.push(`${label}: ${result.error}`);
+    }
+  }
+
   const results: ProviderSyncJobResult = {
     anthropicUsageSynced: anthropicResult.success ? anthropicResult.usageBucketsUpserted : 0,
     openaiUsageSynced: openaiResult.success ? openaiResult.usageBucketsUpserted : 0,
@@ -171,12 +193,8 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     assistantsFound: 0,
     agentsCreated: 0,
     agentsUpdated: 0,
-    errors: [
-      ...(anthropicResult.success ? [] : [`Anthropic telemetry: ${anthropicResult.error}`]),
-      ...(openaiResult.success ? [] : [`OpenAI telemetry: ${openaiResult.error}`]),
-      ...(geminiResult.success ? [] : [`Gemini telemetry: ${geminiResult.error}`]),
-      ...(claudeCodeResult.success ? [] : [`Claude Code analytics: ${claudeCodeResult.error}`]),
-    ],
+    skipped,
+    errors,
   };
 
   if (openaiResult.success) {
@@ -239,6 +257,7 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     openaiSuccess: openaiResult.success,
     geminiSuccess: geminiResult.success,
     claudeCodeSuccess: claudeCodeResult.success,
+    skipped: results.skipped,
     errors: results.errors,
     assistantsFound: results.assistantsFound,
     agentsCreated: results.agentsCreated,

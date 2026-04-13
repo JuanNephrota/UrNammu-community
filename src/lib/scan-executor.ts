@@ -4,6 +4,7 @@ import {
   isMicrosoft365Configured,
   runMicrosoft365Scan,
 } from "./microsoft-365-shadow-ai";
+import { findMatchingGovernedSystem } from "./governed-system-match";
 
 export type ShadowAIScanProvider = "google_workspace" | "microsoft_365";
 
@@ -85,7 +86,19 @@ export async function executeScan(
           updatedTools++;
         }
       } else {
-        // Create new discovered tool
+        // If this discovery already corresponds to a governed AISystem, link
+        // and suppress it rather than surfacing as new shadow AI.
+        const governedMatch = await findMatchingGovernedSystem({
+          toolName: discovery.toolName,
+          vendor: discovery.vendor,
+          detectedDomain: discovery.domain,
+        });
+
+        const baseNotes =
+          provider === "google_workspace"
+            ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`
+            : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`;
+
         const tool = await prisma.discoveredAITool.create({
           data: {
             toolName: discovery.toolName,
@@ -93,27 +106,30 @@ export async function executeScan(
             detectedDomain: discovery.domain,
             detectionSource: provider,
             userCount: discovery.userCount,
-            status: "DISCOVERED",
-            notes:
-              provider === "google_workspace"
-                ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`
-                : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`,
+            status: governedMatch ? "REGISTERED" : "DISCOVERED",
+            linkedSystemId: governedMatch?.id,
+            notes: governedMatch
+              ? `${baseNotes} Suppressed: matches governed system "${governedMatch.name}".`
+              : baseNotes,
           },
         });
 
-        // Auto-create alert
-        await prisma.alert.create({
-          data: {
-            title: `Shadow AI detected: ${discovery.toolName}`,
-            description:
-              provider === "google_workspace"
-                ? `${discovery.toolName} (${discovery.vendor}) discovered via Google Workspace OAuth scan. ${discovery.userCount} user(s) have authorized this tool.`
-                : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
-            severity: discovery.userCount >= 10 ? "HIGH" : "MEDIUM",
-            source: "shadow_ai",
-            relatedToolId: tool.id,
-          },
-        });
+        // Alert only on genuinely new shadow AI. If the discovery maps to a
+        // governed system, stay silent — it is already under governance.
+        if (!governedMatch) {
+          await prisma.alert.create({
+            data: {
+              title: `Shadow AI detected: ${discovery.toolName}`,
+              description:
+                provider === "google_workspace"
+                  ? `${discovery.toolName} (${discovery.vendor}) discovered via Google Workspace OAuth scan. ${discovery.userCount} user(s) have authorized this tool.`
+                  : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
+              severity: discovery.userCount >= 10 ? "HIGH" : "MEDIUM",
+              source: "shadow_ai",
+              relatedToolId: tool.id,
+            },
+          });
+        }
 
         newToolsAdded++;
       }

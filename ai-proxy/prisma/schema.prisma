@@ -36,3 +36,81 @@ model APIUsageLog {
 
   createdAt DateTime @default(now())
 }
+
+// -- Normalized telemetry (proxy writes; main app owns migrations) ------------
+// These models mirror the main app's schema so the proxy can write into the
+// same UsageBucket / CostBucket / ProviderSyncRun tables. The main Nammu app
+// is the source of truth for the underlying migrations — the proxy never runs
+// prisma migrate; it only reads & writes the already-existing tables.
+
+enum ProviderSyncStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model ProviderSyncRun {
+  id                String             @id @default(cuid())
+  provider          String
+  syncType          String
+  status            ProviderSyncStatus @default(RUNNING)
+  triggeredByUserId String?
+  startedAt         DateTime           @default(now())
+  completedAt      DateTime?
+  recordsProcessed  Int                @default(0)
+  errorMessage      String?
+  metadata          Json?
+
+  usageBuckets UsageBucket[]
+  costBuckets  CostBucket[]
+}
+
+model UsageBucket {
+  id                String          @id @default(cuid())
+  provider          String
+  bucketStart       DateTime
+  bucketEnd         DateTime
+  granularity       String
+  dimensionKey      String
+  model             String?
+  projectExternalId String?
+  projectName       String?
+  actorExternalId   String?
+  actorName         String?
+  apiKeyExternalId  String?
+  apiKeyName        String?
+  inputTokens       Int             @default(0)
+  outputTokens      Int             @default(0)
+  totalTokens       Int             @default(0)
+  requestCount      Int?
+  metadata          Json?
+  syncRun           ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId         String
+  aiSystemId        String?
+  createdAt         DateTime        @default(now())
+
+  @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
+}
+
+model CostBucket {
+  id                String          @id @default(cuid())
+  provider          String
+  bucketStart       DateTime
+  bucketEnd         DateTime
+  granularity       String
+  dimensionKey      String
+  amount            Float           @default(0)
+  currency          String          @default("usd")
+  model             String?
+  projectExternalId String?
+  projectName       String?
+  actorExternalId   String?
+  actorName         String?
+  lineItem          String?
+  metadata          Json?
+  syncRun           ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId         String
+  createdAt         DateTime        @default(now())
+
+  @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
+}

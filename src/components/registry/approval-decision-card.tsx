@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, RotateCcw, ShieldAlert } from "lucide-react";
+import { CheckCircle2, RotateCcw, ShieldAlert, AlertCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +19,19 @@ type Approval = {
     name: string | null;
     email: string;
   };
+};
+
+export type ApprovalBlockerView = {
+  message: string;
+  href?: string;
+  category:
+    | "risk"
+    | "policy"
+    | "compliance_status"
+    | "compliance_evidence"
+    | "policy_rule"
+    | "stage_review"
+    | "review_date";
 };
 
 const decisionStyles = {
@@ -43,11 +57,13 @@ export function ApprovalDecisionCard({
   latestDecision,
   governanceReady,
   approvals,
+  blockers = [],
 }: {
   systemId: string;
   latestDecision: Approval["decision"] | null;
   governanceReady: boolean;
   approvals: Approval[];
+  blockers?: ApprovalBlockerView[];
 }) {
   const router = useRouter();
   const [rationale, setRationale] = useState("");
@@ -70,7 +86,16 @@ export function ApprovalDecisionCard({
 
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
-        throw new Error(payload?.error ?? "Failed to save approval decision.");
+        const baseMessage = payload?.error ?? "Failed to save approval decision.";
+        const returnedBlockers: ApprovalBlockerView[] | undefined = Array.isArray(
+          payload?.blockers
+        )
+          ? payload.blockers
+          : undefined;
+        const detail = returnedBlockers?.length
+          ? `\n• ${returnedBlockers.map((b) => b.message).join("\n• ")}`
+          : "";
+        throw new Error(`${baseMessage}${detail}`);
       }
 
       setRationale("");
@@ -82,6 +107,9 @@ export function ApprovalDecisionCard({
     }
   }
 
+  const hardBlockers = blockers.filter((b) => b.category !== "compliance_evidence");
+  const softBlockers = blockers.filter((b) => b.category === "compliance_evidence");
+
   return (
     <Card>
       <CardHeader>
@@ -90,7 +118,9 @@ export function ApprovalDecisionCard({
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={governanceReady ? "success" : "warning"}>
-            {governanceReady ? "Ready for decision" : "Governance work still open"}
+            {governanceReady
+              ? "Ready for decision"
+              : `${hardBlockers.length} item${hardBlockers.length === 1 ? "" : "s"} blocking approval`}
           </Badge>
           {latestDecision && (
             <Badge variant={statusBadgeVariant(latestDecision)}>
@@ -105,6 +135,55 @@ export function ApprovalDecisionCard({
           Final approval is gated by the required stage reviews and active governance controls.
         </p>
 
+        {hardBlockers.length > 0 && (
+          <div className="rounded-md border border-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_8%,var(--bg-base))] p-3">
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[var(--warning)]">
+              <AlertCircle className="h-3.5 w-3.5" />
+              Resolve before approving
+            </p>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {hardBlockers.map((blocker, idx) => (
+                <li key={idx} className="flex items-start gap-2 leading-snug">
+                  <span className="mt-1 text-[var(--warning)]">•</span>
+                  {blocker.href ? (
+                    <Link
+                      href={blocker.href}
+                      className="text-[var(--text-primary)] underline-offset-2 hover:underline"
+                    >
+                      {blocker.message}
+                    </Link>
+                  ) : (
+                    <span className="text-[var(--text-primary)]">{blocker.message}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {softBlockers.length > 0 && (
+          <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <Info className="h-3.5 w-3.5" />
+              Evidence recommended
+            </p>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {softBlockers.map((blocker, idx) => (
+                <li key={idx} className="flex items-start gap-2 leading-snug text-[var(--text-secondary)]">
+                  <span className="mt-1 text-[var(--text-faint)]">•</span>
+                  {blocker.href ? (
+                    <Link href={blocker.href} className="underline-offset-2 hover:underline">
+                      {blocker.message}
+                    </Link>
+                  ) : (
+                    <span>{blocker.message}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="space-y-2">
           <Textarea
             value={rationale}
@@ -113,7 +192,7 @@ export function ApprovalDecisionCard({
             rows={4}
           />
           {error && (
-            <p className="text-sm text-[var(--critical)]">{error}</p>
+            <p className="whitespace-pre-line text-sm text-[var(--critical)]">{error}</p>
           )}
         </div>
 

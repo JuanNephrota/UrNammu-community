@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HelpHint } from "@/components/help/help-hint";
 import { formatDateForInput } from "@/lib/utils";
 
 interface AISystemFormProps {
@@ -260,7 +261,10 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Data Sensitivity Level</Label>
+                <Label className="flex items-center gap-1.5">
+                  Data Sensitivity Level
+                  <HelpHint hint="data_sensitivity" />
+                </Label>
                 <select
                   name="dataSensitivity"
                   defaultValue={initialData?.dataSensitivity ?? "INTERNAL"}
@@ -304,7 +308,10 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
             <CardContent className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="reviewIntervalDays">Review Interval (Days)</Label>
+                  <Label htmlFor="reviewIntervalDays" className="flex items-center gap-1.5">
+                    Review Interval (Days)
+                    <HelpHint hint="review_interval" />
+                  </Label>
                   <Input
                     id="reviewIntervalDays"
                     name="reviewIntervalDays"
@@ -332,7 +339,10 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
               </div>
 
               <div className="space-y-3">
-                <Label>Required Approval Stages</Label>
+                <Label className="flex items-center gap-1.5">
+                  Required Approval Stages
+                  <HelpHint hint="approval_stages" />
+                </Label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {requiredApprovalStages.map(({ name, label, checked }) => (
                     <label

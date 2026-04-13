@@ -4,6 +4,12 @@ import {
   ArrowRight,
   Activity,
 } from "lucide-react";
+
+// The dashboard reflects live governance state (alerts, discoveries, posture
+// trend ending at "now"). Opt out of caching so every navigation reflects
+// current data instead of a stale render.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { GovernanceActionQueue } from "@/components/dashboard/governance-action-queue";
@@ -226,28 +232,58 @@ export default async function DashboardPage() {
     }),
   ]);
 
-  const posturePeriods = new Set<string>();
-  approvedSystems.forEach((s) => posturePeriods.add(new Date(s.createdAt).toLocaleString("en-US", { month: "short", year: "2-digit" })));
-  unresolvedDiscoveries.forEach((d) => posturePeriods.add(new Date(d.detectedAt).toLocaleString("en-US", { month: "short", year: "2-digit" })));
-  const orderedPeriods = [...posturePeriods].sort((a, b) => new Date(`1 ${a}`).getTime() - new Date(`1 ${b}`).getTime());
-  const executiveTrend = orderedPeriods.reduce<{ period: string; approved: number; ungoverned: number }[]>(
-    (acc, period) => {
-      const previous = acc[acc.length - 1] ?? { approved: 0, ungoverned: 0 };
-      const approvedDelta = approvedSystems.filter(
-        (s) => new Date(s.createdAt).toLocaleString("en-US", { month: "short", year: "2-digit" }) === period
-      ).length;
-      const ungovernedDelta = unresolvedDiscoveries.filter(
-        (d) => new Date(d.detectedAt).toLocaleString("en-US", { month: "short", year: "2-digit" }) === period
-      ).length;
-      acc.push({
-        period,
-        approved: previous.approved + approvedDelta,
-        ungoverned: previous.ungoverned + ungovernedDelta,
-      });
-      return acc;
-    },
-    []
+  // Build a rolling 12-month trailing window ending at the current month.
+  // Using numeric month keys (year * 12 + month) avoids the previous
+  // locale-string parse, which mis-sorted periods and could render as a
+  // future date because of 2-digit-year ambiguity. Anything dated beyond the
+  // current month is intentionally excluded — the chart never shows the
+  // future, and stale seeded data can't pull the trend forward.
+  const postureNow = new Date();
+  const currentMonthStart = new Date(
+    Date.UTC(postureNow.getUTCFullYear(), postureNow.getUTCMonth(), 1)
   );
+  const windowMonths: Date[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const m = new Date(currentMonthStart);
+    m.setUTCMonth(m.getUTCMonth() - i);
+    windowMonths.push(m);
+  }
+  const windowStart = windowMonths[0];
+  const postureCutoff = new Date(currentMonthStart);
+  postureCutoff.setUTCMonth(postureCutoff.getUTCMonth() + 1);
+
+  const monthLabel = (d: Date): string =>
+    d.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+
+  // Seed cumulative counters with every record from before the window so the
+  // first point already reflects prior governance history.
+  let runningApproved = approvedSystems.filter(
+    (s) => new Date(s.createdAt) < windowStart
+  ).length;
+  let runningUngoverned = unresolvedDiscoveries.filter(
+    (d) => new Date(d.detectedAt) < windowStart
+  ).length;
+
+  const executiveTrend = windowMonths.map((monthStart) => {
+    const monthEnd = new Date(monthStart);
+    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
+    const approvedDelta = approvedSystems.filter((s) => {
+      const t = new Date(s.createdAt);
+      return t >= monthStart && t < monthEnd && t < postureCutoff;
+    }).length;
+    const ungovernedDelta = unresolvedDiscoveries.filter((d) => {
+      const t = new Date(d.detectedAt);
+      return t >= monthStart && t < monthEnd && t < postureCutoff;
+    }).length;
+    runningApproved += approvedDelta;
+    runningUngoverned += ungovernedDelta;
+    return {
+      period: monthLabel(monthStart),
+      approved: runningApproved,
+      ungoverned: runningUngoverned,
+    };
+  });
+
 
   const scoredSystems = systemsWithScores
     .map((system) => ({

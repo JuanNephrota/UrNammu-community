@@ -58,6 +58,16 @@ Open the Nammu URL provided by your admin. The login page shows every sign-in me
 
 **The first user to sign in via Google is automatically promoted to `ADMIN`.** All later users default to `VIEWER` until an admin promotes them.
 
+### Getting help inside the app
+
+Every dashboard page has built-in help.
+
+- Click the **?** icon in the top bar to open a side drawer with guidance for the current page.
+- Press **`?`** anywhere outside a text input to toggle the same drawer.
+- Look for inline **?** icons next to complex form labels and badges (autonomy levels, data sensitivity, compliance status, risk dimensions, policy enforcement, spend-budget scope, etc.) — hover for a one-line explanation.
+
+The full canonical content lives in `docs/help/*.md` and this guide.
+
 ### Layout Tour
 
 After signing in you land on the **Dashboard**. The layout has three areas:
@@ -258,6 +268,47 @@ On each assignment, edit:
 - **Evidence** — free text describing the controls or artifacts (link to documents via Evidence Artifacts on the Approval & Governance tab).
 - **Next review date**.
 
+### What counts as compliance evidence?
+
+Evidence has two surfaces in Nammu and approvers read both:
+
+1. **Assignment evidence** — the free-text field attached to each policy assignment (inside the Compliance status editor). This is the primary place to record *why* you chose a given status and *how* the system meets (or fails) the policy. Good entries reference specific controls and artifacts rather than restating the policy.
+
+2. **Evidence Artifacts** — structured records attached to the system (Approval & Governance tab → Evidence Artifacts card). Each artifact has a title, category, optional link URL, and optional inline notes. These are the verifiable objects that back up the assignment evidence.
+
+When writing assignment evidence, include at least:
+
+- **Controls** that apply (e.g. vendor contract + DPA, TLS in transit, RBAC, audit logging).
+- **Assessments** performed (e.g. bias evaluation, penetration test, red-team review, performance benchmark).
+- **Artifacts** on file — and reference them by their Evidence Artifact title so reviewers can click through (e.g. "See *Vendor security review — Acme, 2026-02*").
+- **Owners and dates** — who signed off and when.
+- **Remaining gaps** — anything not yet in place, with remediation owner and date.
+
+Common evidence-artifact categories (the Category field on Evidence Artifacts auto-suggests these):
+
+| Category | Example |
+|----------|---------|
+| Security Review | SOC 2 Type II report; vendor security questionnaire results |
+| Privacy / DPIA | Data Protection Impact Assessment document |
+| Legal Review | MSA, DPA, or contract addenda |
+| Model Card | Model documentation from the vendor or internal team |
+| Data Use Agreement | Signed agreement governing input/output data |
+| Bias Evaluation | Fairness test results, disparate impact analysis |
+| Performance Evaluation | Accuracy / reliability benchmark reports |
+| Architecture / Design | System design document, threat model |
+| Change Management | CAB approval, deployment ticket |
+| Vendor Assessment | Risk scorecard, subprocessors review |
+
+### Why evidence matters for approval
+
+A system can only be approved when every policy assignment is out of `NOT_ASSESSED` and `NON_COMPLIANT`. The **Approval Review** card on the Approval & Governance tab lists every unresolved item by policy name, so reviewers know exactly what is blocking approval — for example:
+
+- "Policy *SOC 2 — AI Controls* has not been assessed. Set its compliance status and attach supporting evidence."
+- "Policy *EU AI Act — High Risk* is Non-Compliant. Remediate the gap or request an exception before approval."
+- "Policy *Internal AI Governance* is marked Compliant but has no evidence text. Describe the controls, testing, or artifacts that support the rating."
+
+Empty-evidence warnings on `COMPLIANT` assignments do not hard-block approval, but they are surfaced to reviewers so a blind approve-through is obvious.
+
 ### Compliance Services View
 
 **Compliance → Services** filters systems by compliance status so you can work through everything in `NON_COMPLIANT`, for example.
@@ -350,6 +401,18 @@ Two routes to `POST /api/discovered-tools/ingest`:
 
 Each ingestion run is recorded as an `IngestionRun` with processed / matched / new / updated counts.
 
+### Automatic Suppression of Governed Tools
+
+Shadow AI discovery only surfaces tools that are **not** already governed. When a scan or ingestion produces a finding whose `toolName` (optionally narrowed by `vendor`) matches an existing AISystem in the Registry, Nammu:
+
+- links the discovery to that AISystem (`linkedSystemId`) and sets its status to `REGISTERED`,
+- annotates the notes with "Suppressed: matches governed system …",
+- and does **not** raise a new shadow-AI alert.
+
+The inverse also runs: when a new AISystem is registered, any pre-existing unlinked discoveries that match its name (and vendor, when present) are back-linked and suppressed in the same transaction.
+
+Suppressed discoveries are hidden from the Shadow AI page by default. Admins who want to audit suppressions can fetch them via `GET /api/discovered-tools?includeSuppressed=true`.
+
 ### Triage Workflow
 
 A discovered tool moves through:
@@ -379,6 +442,10 @@ With Anthropic or OpenAI admin keys configured in Settings → Provider Admin AP
 - **`CostBucket`** — amount and line-item cost, same dimension keys.
 - **`ProviderProject`** / **`ProviderActor`** — discovered workspace membership.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
+
+Each provider is gated on its own credentials. **If a provider's admin key (or billing-export config, for Gemini) is not set, that provider is skipped** — no `ProviderSyncRun` row is created and no upstream API call is made. The manual-sync panel surfaces this explicitly as "Skipped (not configured): …" so it is clear which providers are active and which are simply not configured yet.
+
+**Proxy traffic appears immediately.** Requests routed through the Anthropic or OpenAI proxy (Vercel fallback or Azure Functions) upsert hourly `UsageBucket` / `CostBucket` rows in real time, linked to a synthetic `ProviderSyncRun` with `syncType = "proxy_live"`. You do not need to wait for the admin-API sync interval to see proxy usage on the Oversight dashboard, spend budgets, or per-system Telemetry tab — it shows up on the next page refresh.
 
 If traffic also flows through the built-in OpenAI or Anthropic proxy, Oversight can attach prompt-risk findings to recent activity and alerts using redacted excerpts and category labels.
 

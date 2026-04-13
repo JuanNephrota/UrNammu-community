@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings";
 import { logger } from "@/lib/observability";
 import { analyzePromptRisk, createPromptRiskAlert } from "@/lib/prompt-risk";
+import { writeProxyUsageBucket } from "@/lib/proxy-bucket-writer";
 
 /**
  * OpenAI API Proxy
@@ -267,6 +268,25 @@ async function logUsage(params: {
           : undefined,
       },
     });
+
+    // Mirror to normalized UsageBucket/CostBucket (see proxy-bucket-writer.ts).
+    if (params.totalTokens > 0) {
+      const aiSystemId =
+        typeof (params.metadata as Record<string, unknown> | undefined)?.aiSystemId === "string"
+          ? ((params.metadata as Record<string, unknown>).aiSystemId as string)
+          : null;
+      await writeProxyUsageBucket({
+        provider: "openai",
+        model: params.model,
+        userEmail: params.userEmail,
+        department: params.department,
+        promptTokens: params.promptTokens,
+        completionTokens: params.completionTokens,
+        totalTokens: params.totalTokens,
+        cost: params.cost,
+        aiSystemId,
+      });
+    }
   } catch (err) {
     logger.error("openai_proxy.log_usage_failed", {
       model: params.model,

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { GovernanceReviewStage } from "@prisma/client";
 import { withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
+import { getApprovalBlockers, isHardBlocker } from "@/lib/approval-blockers";
 
 const approvalSchema = z.object({
   decision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVOKED"]),
@@ -33,6 +35,7 @@ export async function POST(
           select: {
             id: true,
             complianceStatus: true,
+            evidence: true,
             policy: { select: { id: true, name: true, rules: true } },
           },
         },
@@ -84,28 +87,38 @@ export async function POST(
       }),
     }));
 
-    const governanceReady =
-      system.riskAssessments.length > 0 &&
-      system.policyAssignments.length > 0 &&
-      ruleEvaluations.every(({ assignment, evaluation }) =>
-        evaluation.blockingViolations.length === 0 &&
-        assignment.complianceStatus !== "NOT_ASSESSED" &&
-        assignment.complianceStatus !== "NON_COMPLIANT"
-      ) &&
-      requiredStages.every((stage) => latestStageDecisions.get(stage) === true) &&
-      !!system.nextReviewDate &&
-      new Date(system.nextReviewDate).getTime() >= Date.now();
+    const approvedStages = new Set<GovernanceReviewStage>();
+    for (const [stage, approved] of latestStageDecisions.entries()) {
+      if (approved) approvedStages.add(stage as GovernanceReviewStage);
+    }
 
-    if (parsed.data.decision === "APPROVED" && !governanceReady) {
-      const firstBlockingAssignment = ruleEvaluations.find(
-        ({ evaluation }) => evaluation.blockingViolations.length > 0
-      );
+    const blockers = getApprovalBlockers({
+      systemId: system.id,
+      riskAssessmentsCount: system.riskAssessments.length,
+      policyAssignments: ruleEvaluations.map(({ assignment, evaluation }) => ({
+        id: assignment.id,
+        complianceStatus: assignment.complianceStatus,
+        evidenceProvided: Boolean(assignment.evidence && assignment.evidence.trim()),
+        policy: { id: assignment.policy.id, name: assignment.policy.name },
+        blockingRuleViolations: evaluation.blockingViolations,
+      })),
+      requiredStages: requiredStages as GovernanceReviewStage[],
+      approvedStages,
+      nextReviewDate: system.nextReviewDate,
+    });
+
+    const hardBlockers = blockers.filter(isHardBlocker);
+
+    if (parsed.data.decision === "APPROVED" && hardBlockers.length > 0) {
       return NextResponse.json(
         {
           error:
-            firstBlockingAssignment
-              ? `Policy ${firstBlockingAssignment.assignment.policy.name} still has blocking rule violations: ${firstBlockingAssignment.evaluation.blockingViolations[0]}`
-              : "This system still has open governance work. Complete risk and compliance review before approving it.",
+            "This system is not yet ready for approval. Resolve the items below before approving.",
+          blockers: hardBlockers.map(({ message, category, href }) => ({
+            message,
+            category,
+            href,
+          })),
         },
         { status: 400 }
       );

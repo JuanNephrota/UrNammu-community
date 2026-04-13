@@ -15,6 +15,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { HelpHint } from "@/components/help/help-hint";
 
 interface Props {
   assignmentId: string;
@@ -114,7 +115,10 @@ export function ComplianceStatusEditor({
         <div className="space-y-4">
           {/* Status selection */}
           <div className="space-y-2">
-            <Label>Status</Label>
+            <Label className="flex items-center gap-1.5">
+              Status
+              <HelpHint hint="compliance_status" />
+            </Label>
             <div className="grid gap-2">
               {statusOptions.map((option) => {
                 const Icon = option.icon;
@@ -154,23 +158,37 @@ export function ComplianceStatusEditor({
                   ? "What is missing? *"
                   : "Evidence / Notes"}
             </Label>
+            <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">
+              {status === "COMPLIANT"
+                ? "Describe the controls, testing, or artifacts that support this rating — e.g. vendor security review, DPIA on file, bias evaluation, model card, change-management approval. This text is surfaced to reviewers at approval time."
+                : status === "PARTIALLY_COMPLIANT"
+                  ? "Say which requirements are met, which are not, and what the remediation plan is. Reference any mitigating evidence artifacts already attached to the system."
+                  : status === "NON_COMPLIANT"
+                    ? "Explain the specific requirement(s) that fail and any compensating controls. If a waiver is needed, create a Governance Exception instead."
+                    : "Capture an initial note while the assessment is in progress. Evidence is required before the system can be approved."}
+            </p>
             <Textarea
               value={evidence}
               onChange={(e) => setEvidence(e.target.value)}
               rows={4}
               placeholder={
                 status === "NON_COMPLIANT"
-                  ? "Describe why this system is not compliant with this policy..."
+                  ? "Example: No DPIA on file; restricted data flows to vendor outside EU. Remediation plan: commission DPIA and add EU-only data residency addendum."
                   : status === "PARTIALLY_COMPLIANT"
-                    ? "Describe which requirements are met and which are not..."
+                    ? "Example: Vendor security review completed (Security/2026-02); bias evaluation outstanding (owner: Jane Doe, due 2026-Q3)."
                     : status === "COMPLIANT"
-                      ? "Optionally describe the evidence of compliance..."
-                      : "Add notes about this assessment..."
+                      ? "Example: DPIA signed 2026-01, vendor SOC 2 Type II on file, quarterly bias evaluation attached as an Evidence Artifact."
+                      : "Example: Initial triage in progress; awaiting vendor security review."
               }
             />
             {requiresEvidence && !evidence.trim() && (
               <p className="text-[11px] text-[var(--critical)]">
                 A description is required when marking as {status === "NON_COMPLIANT" ? "non-compliant" : "partially compliant"}.
+              </p>
+            )}
+            {status === "COMPLIANT" && !evidence.trim() && (
+              <p className="text-[11px] text-[var(--warning)]">
+                Recommended: add at least one sentence describing the controls or artifacts that back this rating. Approval will flag empty evidence as a reviewer concern.
               </p>
             )}
           </div>

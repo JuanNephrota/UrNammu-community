@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "./prisma";
 import { getSetting } from "./settings";
 import { analyzePromptRisk, createPromptRiskAlert } from "./prompt-risk";
+import { applyMcpPassthrough } from "./mcp-passthrough";
+import { writeProxyUsageBucket } from "./proxy-bucket-writer";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 
@@ -79,7 +81,20 @@ export async function handleAnthropicProxy(
   // Build the target URL
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
 
-  // Forward headers
+  // Read request body first — MCP passthrough needs to inspect it for
+  // `mcp_servers`.
+  let bodyText: string | null = null;
+  let bodyJson: Record<string, unknown> | null = null;
+  try {
+    bodyText = await req.text();
+    if (bodyText) {
+      bodyJson = JSON.parse(bodyText);
+    }
+  } catch {
+    // Not JSON or empty body
+  }
+
+  // Forward headers (default allow-list)
   const forwardHeaders: Record<string, string> = {
     "Content-Type": req.headers.get("Content-Type") ?? "application/json",
     "x-api-key": apiKey,
@@ -92,17 +107,12 @@ export async function handleAnthropicProxy(
     forwardHeaders["anthropic-beta"] = betaHeader;
   }
 
-  // Read request body
-  let bodyText: string | null = null;
-  let bodyJson: Record<string, unknown> | null = null;
-  try {
-    bodyText = await req.text();
-    if (bodyText) {
-      bodyJson = JSON.parse(bodyText);
-    }
-  } catch {
-    // Not JSON or empty body
-  }
+  // MCP passthrough: when the request involves MCP (body declares
+  // `mcp_servers`, anthropic-beta mentions `mcp-client`, or the client sent
+  // any `mcp-*` header), forward MCP headers and the client's `Authorization`
+  // bearer verbatim. Without this the proxy strips the credentials remote
+  // MCP servers need to authenticate the call.
+  const mcpResult = applyMcpPassthrough(forwardHeaders, req.headers, bodyJson);
 
   const model = (bodyJson?.model as string) ?? "unknown";
   const promptRisk = analyzePromptRisk(bodyJson);
@@ -193,6 +203,7 @@ export async function handleAnthropicProxy(
       subpath,
       aiSystemId: linkedSystem?.id ?? null,
       promptRisk,
+      mcp: mcpResult,
     });
 
     if (promptRisk.flagged) {
@@ -250,6 +261,12 @@ export async function handleAnthropicProxy(
       status: anthropicResponse.status,
       path: subpath,
       aiSystemId: linkedSystem?.id ?? null,
+      mcp: mcpResult.detected
+        ? {
+            servers: mcpResult.mcpServerCount,
+            forwardedHeaders: mcpResult.forwarded,
+          }
+        : undefined,
       promptRisk: promptRisk.flagged
         ? {
             severity: promptRisk.severity,
@@ -291,6 +308,7 @@ async function extractStreamUsage(
     subpath: string;
     aiSystemId: string | null;
     promptRisk: ReturnType<typeof analyzePromptRisk>;
+    mcp: import("./mcp-passthrough").McpPassthroughResult;
   }
 ) {
   try {
@@ -353,6 +371,12 @@ async function extractStreamUsage(
           streaming: true,
           path: ctx.subpath,
           aiSystemId: ctx.aiSystemId,
+          mcp: ctx.mcp.detected
+            ? {
+                servers: ctx.mcp.mcpServerCount,
+                forwardedHeaders: ctx.mcp.forwarded,
+              }
+            : undefined,
           promptRisk: ctx.promptRisk.flagged
             ? {
                 severity: ctx.promptRisk.severity,
@@ -409,6 +433,36 @@ async function logUsage(params: {
           : undefined,
       },
     });
+
+    // Mirror to normalized UsageBucket/CostBucket so proxy traffic appears on
+    // the main Oversight dashboard immediately (not only on the legacy
+    // /oversight/usage page). Skip when no tokens were actually charged — the
+    // error-path logUsage calls pass zeros and should not create buckets.
+    if (params.totalTokens > 0) {
+      const normalizedProvider =
+        params.provider === "claude"
+          ? "anthropic"
+          : params.provider === "chatgpt"
+            ? "openai"
+            : null;
+      if (normalizedProvider) {
+        const aiSystemId =
+          typeof (params.metadata as Record<string, unknown> | undefined)?.aiSystemId === "string"
+            ? ((params.metadata as Record<string, unknown>).aiSystemId as string)
+            : null;
+        await writeProxyUsageBucket({
+          provider: normalizedProvider,
+          model: params.model,
+          userEmail: params.userEmail,
+          department: params.department,
+          promptTokens: params.promptTokens,
+          completionTokens: params.completionTokens,
+          totalTokens: params.totalTokens,
+          cost: params.cost,
+          aiSystemId,
+        });
+      }
+    }
   } catch (err) {
     console.error("Failed to log API usage:", err);
   }

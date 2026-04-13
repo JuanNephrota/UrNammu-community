@@ -67,17 +67,42 @@ export function EvidenceArtifactsCard({
         <CardTitle>Evidence Artifacts</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-[var(--text-secondary)]">
-          Attach supporting evidence such as DPIAs, vendor reviews, architecture notes, model cards, or security decisions.
-        </p>
+        <div className="space-y-1">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Attach supporting evidence so reviewers can verify compliance at approval time. Each artifact
+            should document a specific control, assessment, or decision — not summarize the whole system.
+          </p>
+          <p className="text-xs text-[var(--text-muted)]">
+            Common categories: Security Review, Privacy / DPIA, Legal Review, Model Card,
+            Data Use Agreement, Bias Evaluation, Performance Evaluation, Architecture / Design,
+            Change Management, Vendor Assessment.
+          </p>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2">
             <Label>Title</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Vendor security review" />
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Vendor security review — Acme, 2026-02" />
           </div>
           <div className="space-y-2">
             <Label>Category</Label>
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Security, Privacy, Legal..." />
+            <Input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Security Review"
+              list="evidence-category-suggestions"
+            />
+            <datalist id="evidence-category-suggestions">
+              <option value="Security Review" />
+              <option value="Privacy / DPIA" />
+              <option value="Legal Review" />
+              <option value="Model Card" />
+              <option value="Data Use Agreement" />
+              <option value="Bias Evaluation" />
+              <option value="Performance Evaluation" />
+              <option value="Architecture / Design" />
+              <option value="Change Management" />
+              <option value="Vendor Assessment" />
+            </datalist>
           </div>
         </div>
         <div className="space-y-2">

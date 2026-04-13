@@ -42,7 +42,7 @@ type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini";
 
 type SyncResult =
   | ({ provider: SyncProvider; success: true } & SyncSummary)
-  | { provider: SyncProvider; success: false; error: string };
+  | { provider: SyncProvider; success: false; error: string; skipped?: boolean };
 
 function toJsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -212,6 +212,17 @@ export async function getAdminSyncOverview() {
 }
 
 export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  // Skip cleanly when no admin key is configured — do not create a
+  // ProviderSyncRun row, do not call the upstream API.
+  if (!(await isAnthropicAdminConfigured())) {
+    return {
+      provider: "anthropic",
+      success: false,
+      skipped: true,
+      error: "Anthropic Admin API key is not configured",
+    };
+  }
+
   const syncRun = await createSyncRun("anthropic", triggeredByUserId);
 
   try {
@@ -449,7 +460,12 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
 
 export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promise<SyncResult> {
   if (!(await isClaudeCodeAnalyticsAvailable())) {
-    return { provider: "claude_code", success: false, error: "Anthropic Admin API key not configured" };
+    return {
+      provider: "claude_code",
+      success: false,
+      skipped: true,
+      error: "Anthropic Admin API key not configured",
+    };
   }
 
   const syncRun = await createSyncRun("claude_code", triggeredByUserId);
@@ -613,6 +629,7 @@ export async function syncGeminiTelemetry(triggeredByUserId: string): Promise<Sy
     return {
       provider: "gemini",
       success: false,
+      skipped: true,
       error: "Google Gemini billing export is not configured",
     };
   }
@@ -771,6 +788,17 @@ export async function syncGeminiTelemetry(triggeredByUserId: string): Promise<Sy
 }
 
 export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  // Skip cleanly when no admin key is configured — do not create a
+  // ProviderSyncRun row, do not call the upstream API.
+  if (!(await isOpenAIAdminConfigured())) {
+    return {
+      provider: "openai",
+      success: false,
+      skipped: true,
+      error: "OpenAI Admin API key is not configured",
+    };
+  }
+
   const syncRun = await createSyncRun("openai", triggeredByUserId);
 
   try {

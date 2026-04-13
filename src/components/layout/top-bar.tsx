@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Bell, LogOut, User, Activity, ExternalLink } from "lucide-react";
+import { HelpTrigger } from "@/components/help/help-trigger";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -101,6 +102,8 @@ export function TopBar() {
 
       {/* Right: actions */}
       <div className="flex items-center gap-3">
+        <HelpTrigger />
+
         {/* Alerts dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger className="relative rounded-lg p-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors outline-none">

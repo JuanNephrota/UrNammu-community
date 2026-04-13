@@ -3,6 +3,7 @@ import { Readable, PassThrough } from "stream";
 import { calculateCost } from "../lib/pricing";
 import { logUsage } from "../lib/db";
 import { extractAnthropicStreamUsage } from "../lib/stream-parser";
+import { applyMcpPassthrough } from "../lib/mcp-passthrough";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 
@@ -33,7 +34,17 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const subpath = url.pathname.replace(/^\/api\/proxy\/anthropic/, "");
   const targetUrl = `${ANTHROPIC_BASE}${subpath || "/v1/messages"}`;
 
-  // Forward headers
+  // Read body first — MCP passthrough needs it.
+  let bodyText: string | null = null;
+  let bodyJson: Record<string, unknown> | null = null;
+  try {
+    bodyText = await req.text();
+    if (bodyText) bodyJson = JSON.parse(bodyText);
+  } catch {
+    // not JSON
+  }
+
+  // Forward headers (default allow-list)
   const forwardHeaders: Record<string, string> = {
     "Content-Type": req.headers.get("Content-Type") ?? "application/json",
     "x-api-key": apiKey,
@@ -45,15 +56,10 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     forwardHeaders["anthropic-beta"] = betaHeader;
   }
 
-  // Read body
-  let bodyText: string | null = null;
-  let bodyJson: Record<string, unknown> | null = null;
-  try {
-    bodyText = await req.text();
-    if (bodyText) bodyJson = JSON.parse(bodyText);
-  } catch {
-    // not JSON
-  }
+  // MCP passthrough: when the request involves MCP, forward `mcp-*` headers
+  // and the client's `Authorization` bearer verbatim. Without this the proxy
+  // strips credentials remote MCP servers need.
+  const mcpResult = applyMcpPassthrough(forwardHeaders, req.headers, bodyJson);
 
   const model = (bodyJson?.model as string) ?? "unknown";
   const isStreaming = bodyJson?.stream === true;
@@ -161,7 +167,16 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     cost,
     flagged,
     flagReason,
-    metadata: { latencyMs, status: anthropicRes.status },
+    metadata: {
+      latencyMs,
+      status: anthropicRes.status,
+      mcp: mcpResult.detected
+        ? {
+            servers: mcpResult.mcpServerCount,
+            forwardedHeaders: mcpResult.forwarded,
+          }
+        : undefined,
+    },
   });
 
   return {
