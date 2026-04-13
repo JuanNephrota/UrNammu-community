@@ -201,7 +201,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   return withRole(["ADMIN"], async (session) => {
@@ -211,17 +211,77 @@ export async function DELETE(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const system = await prisma.aISystem.update({
-      where: { id },
-      data: { status: "RETIRED" },
-    });
+    const body = await req.json().catch(() => ({}));
+    if (body?.confirmationText?.trim() !== existing.name) {
+      return NextResponse.json(
+        {
+          error:
+            "Type the exact service name to confirm permanent deletion.",
+        },
+        { status: 400 }
+      );
+    }
 
-    await createAuditLog({
-      userId: session.user.userId,
-      action: "DELETE",
-      entityType: "AISystem",
-      entityId: system.id,
-      aiSystemId: system.id,
+    await prisma.$transaction(async (tx) => {
+      await tx.auditLog.updateMany({
+        where: { aiSystemId: existing.id },
+        data: { aiSystemId: null },
+      });
+
+      await tx.aIAgent.updateMany({
+        where: { aiSystemId: existing.id },
+        data: { aiSystemId: null },
+      });
+
+      await tx.usageBucket.updateMany({
+        where: { aiSystemId: existing.id },
+        data: { aiSystemId: null },
+      });
+
+      await tx.investigation.deleteMany({
+        where: {
+          OR: [
+            { aiSystemId: existing.id },
+            { alert: { aiSystemId: existing.id } },
+            { governanceIncident: { aiSystemId: existing.id } },
+          ],
+        },
+      });
+
+      await tx.alert.deleteMany({
+        where: {
+          OR: [
+            { aiSystemId: existing.id },
+            { governanceIncident: { aiSystemId: existing.id } },
+          ],
+        },
+      });
+
+      await tx.discoveredAITool.updateMany({
+        where: { linkedSystemId: existing.id },
+        data: { linkedSystemId: null },
+      });
+
+      await tx.aISystem.delete({
+        where: { id: existing.id },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: session.user.userId,
+          action: "DELETE_PERMANENT",
+          entityType: "AISystem",
+          entityId: existing.id,
+          changes: {
+            deletedSystem: {
+              id: existing.id,
+              name: existing.name,
+              status: existing.status,
+              department: existing.department,
+            },
+          },
+        },
+      });
     });
 
     return NextResponse.json({ success: true });

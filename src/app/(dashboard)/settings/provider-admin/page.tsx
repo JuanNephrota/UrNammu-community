@@ -17,6 +17,16 @@ export default async function ProviderAdminSettingsPage() {
       hasOpenAIAdminKey={hasOpenAIAdminKey}
       providerSyncEnabled={settingsMap.provider_sync_enabled !== "false"}
       providerSyncIntervalHours={parseInt(settingsMap.provider_sync_interval_hours ?? "6")}
+      anomalyRecentWindowDays={parseInt(settingsMap.anomaly_recent_window_days ?? "7")}
+      anomalyBaselineWindowDays={parseInt(settingsMap.anomaly_baseline_window_days ?? "7")}
+      anomalyMinRecentTokens={parseInt(settingsMap.anomaly_min_recent_tokens ?? "2500")}
+      anomalyMinRecentCost={parseInt(settingsMap.anomaly_min_recent_cost ?? "5")}
+      anomalyProviderMultiplier={parseFloat(settingsMap.anomaly_provider_multiplier ?? "2")}
+      anomalyModelMultiplier={parseFloat(settingsMap.anomaly_model_multiplier ?? "2.5")}
+      anomalyProjectMultiplier={parseFloat(settingsMap.anomaly_project_multiplier ?? "2.25")}
+      governanceReviewNoticeDays={parseInt(settingsMap.governance_review_notice_days ?? "14")}
+      governanceExceptionNoticeDays={parseInt(settingsMap.governance_exception_notice_days ?? "14")}
+      governanceEscalationOverdueDays={parseInt(settingsMap.governance_escalation_overdue_days ?? "7")}
     />
   );
 }

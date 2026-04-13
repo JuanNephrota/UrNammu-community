@@ -15,6 +15,7 @@ import {
   buildTelemetryAnomalies,
   buildCostLookup,
   buildDataExposureFindings,
+  getOversightAnomalyOptions,
   buildSystemTelemetrySummaries,
   buildTelemetryActivityRows,
   getTelemetryAttributionLabel,
@@ -23,6 +24,7 @@ import {
 import { SpendBudgetManager } from "@/components/oversight/spend-budget-manager";
 import { getTopCostDrivers, summarizeSpendBudgets } from "@/lib/spend-governance";
 import { getOversightRecommendations } from "@/lib/oversight-recommendations";
+import { getSettings, OVERSIGHT_ANOMALY_SETTINGS_KEYS } from "@/lib/settings";
 
 export default async function OversightPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,6 +46,11 @@ export default async function OversightPage() {
     unlinkedOpenAIAgents,
     driftAlerts,
     openIncidents,
+    anomalySettings,
+    openAlertCount,
+    acknowledgedAlertCount,
+    openComplianceIssues,
+    openRiskIssues,
   ] = await Promise.all([
     prisma.usageBucket.count(),
     prisma.usageBucket.groupBy({
@@ -118,6 +125,19 @@ export default async function OversightPage() {
     prisma.governanceIncident.count({
       where: { status: "OPEN" },
     }),
+    getSettings(Object.values(OVERSIGHT_ANOMALY_SETTINGS_KEYS)),
+    prisma.alert.count({
+      where: { status: "OPEN" },
+    }),
+    prisma.alert.count({
+      where: { status: "ACKNOWLEDGED" },
+    }),
+    prisma.complianceIssue.count({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+    }),
+    prisma.riskAssessmentIssue.count({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+    }),
   ]);
 
   const costByProvider = costBuckets.reduce<Record<string, number>>((acc: Record<string, number>, bucket) => {
@@ -135,7 +155,9 @@ export default async function OversightPage() {
     costLookup,
     6
   );
+  const telemetryAnomalyOptions = getOversightAnomalyOptions(anomalySettings);
   const telemetryAnomalies = buildTelemetryAnomalies(recentUsageBuckets, costLookup, {
+    ...telemetryAnomalyOptions,
     now,
     take: 8,
   });
@@ -377,7 +399,11 @@ export default async function OversightPage() {
 
           {attributedSystemSummaries.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">
-              No governed systems have attributed telemetry yet. Link usage buckets from the usage page to start system-level oversight.
+              No governed systems have attributed telemetry yet. Link usage buckets from the{" "}
+              <Link href="/oversight/usage" className="text-[var(--accent)] hover:underline">
+                usage page
+              </Link>{" "}
+              to start system-level oversight.
             </p>
           ) : (
             <div className="space-y-3">
@@ -652,6 +678,41 @@ export default async function OversightPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Remediation Status Dashboard</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Alerts</p>
+              <p className="mt-2 text-2xl font-semibold">{openAlertCount}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{acknowledgedAlertCount} acknowledged</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Incidents</p>
+              <p className="mt-2 text-2xl font-semibold">{openIncidents}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Governance incidents needing closure</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Investigations</p>
+              <p className="mt-2 text-2xl font-semibold">{investigations.length}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Owner-driven follow-up in progress</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Compliance Issues</p>
+              <p className="mt-2 text-2xl font-semibold">{openComplianceIssues}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Open or in-progress policy issues</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Risk Issues</p>
+              <p className="mt-2 text-2xl font-semibold">{openRiskIssues}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Assessment follow-up items to resolve</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

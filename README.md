@@ -258,33 +258,31 @@ npm run db:reset
 
 - Admin sync now persists normalized telemetry for OpenAI and Anthropic.
 - Main oversight views now use normalized `UsageBucket` and `CostBucket` data.
-- Oversight now includes metadata-driven restricted-data exposure monitoring, governed-system telemetry attribution, investigation workflows, spend budgets, top cost drivers, baseline anomaly detection, model drift tracking, and recommendation queues.
+- Oversight now includes metadata-driven restricted-data exposure monitoring, governed-system telemetry attribution, investigation workflows, spend budgets, top cost drivers, configurable anomaly thresholds, baseline anomaly detection, model drift tracking, remediation dashboards, and recommendation queues.
 - Workflow notifications now surface approvals, expiring exceptions, drift, incidents, overdue reviews, and active investigations in the main app shell.
+- Background maintenance now creates renewal and escalation alerts for upcoming governance reviews, expiring exceptions, overdue systems, and unowned or blocked governance items.
 - Policy rules support richer conditions, advisory vs blocking enforcement, and exception-aware evaluation.
 - AI compliance analysis now regenerates structured per-policy compliance issues that can be rerun and tracked individually.
 - Vendor governance includes editable vendor profiles with contract posture, lifecycle tracking, renewal queues, security review status, data residency, subprocessors, approved use cases, and composite vendor risk scoring.
 - Risk Center includes recommended tiers, control-gap detection, agent-aware overlays, branching contextual questions, and use-case templates.
 - Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
+- Registry services can now be archived when they are no longer in use, and permanently deleted with explicit typed-name confirmation for duplicate or erroneous entries.
 
 ## TODO / Roadmap
 
 ### Governance
 
-- [ ] Renewal automation for governance reviews, approvals, and exception expirations
-- [ ] Ownership escalation when systems become overdue, unowned, or blocked
+- [ ] Renewal automation for formal approval records and approval re-attestation campaigns
 
 ### Oversight
 
-- [ ] Admin-configurable anomaly thresholds and time windows
 - [ ] Time range picker and provider/model/project filters on usage pages
 - [ ] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
 - [ ] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
-- [ ] Remediation status dashboards for alerts, incidents, and corrective actions
 - [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)
 - [ ] CSV/PDF export of usage logs and scheduled spend summary reports
 - [ ] Audit-ready reporting in board, auditor, and regulator-focused export formats
 - [ ] Evidence quality scoring for stale, weak, or missing governance artifacts
-- [ ] Dashboards for open incidents, drift alerts, and remediation progress
 
 ### Risk
 
@@ -300,7 +298,6 @@ npm run db:reset
 ### Shadow AI
 
 - [ ] Low-confidence review queues and promotion workflows
-- [ ] Shadow AI to approved-system conversion workflow
 
 ### Strategic
 

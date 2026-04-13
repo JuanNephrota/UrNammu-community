@@ -4,6 +4,7 @@ import { logger } from "./observability";
 import { syncAnthropicTelemetry, syncClaudeCodeAnalytics, syncOpenAITelemetry } from "./provider-telemetry";
 import { executeScan } from "./scan-executor";
 import {
+  GOVERNANCE_AUTOMATION_SETTINGS_KEYS,
   getSetting,
   GOOGLE_SETTINGS_KEYS,
   MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
@@ -11,6 +12,7 @@ import {
 } from "./settings";
 import { isGoogleWorkspaceConfigured } from "./google-workspace";
 import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
+import { evaluateGovernanceAutomation } from "./governance-automation";
 
 type BackgroundActor = string;
 
@@ -47,6 +49,11 @@ export type ScheduledMaintenanceResult = {
     skippedReason?: string;
     result?: Awaited<ReturnType<typeof executeScan>>;
   };
+  governanceAutomation: {
+    reviewRenewals: number;
+    exceptionRenewals: number;
+    ownershipEscalations: number;
+  };
 };
 
 function parseBooleanSetting(value: string | null, defaultValue: boolean) {
@@ -63,6 +70,68 @@ function parseIntervalHours(value: string | null, defaultValue: number) {
 function isDue(lastCompletedAt: Date | null, intervalHours: number, now: Date) {
   if (!lastCompletedAt) return true;
   return now.getTime() - lastCompletedAt.getTime() >= intervalHours * 60 * 60 * 1000;
+}
+
+async function syncGovernanceAutomationAlerts(input: {
+  source: string;
+  candidates: Array<{
+    key: string;
+    aiSystemId: string;
+    title: string;
+    description: string;
+    severity: "HIGH" | "MEDIUM" | "LOW";
+  }>;
+}) {
+  const openAlerts = await prisma.alert.findMany({
+    where: {
+      source: input.source,
+      status: { in: ["OPEN", "ACKNOWLEDGED"] },
+    },
+    select: { id: true, title: true, aiSystemId: true },
+  });
+
+  const desiredKeys = new Set(input.candidates.map((candidate) => candidate.key));
+
+  for (const candidate of input.candidates) {
+    const existing = openAlerts.find(
+      (alert) => alert.aiSystemId === candidate.aiSystemId && alert.title === candidate.title
+    );
+
+    if (existing) {
+      await prisma.alert.update({
+        where: { id: existing.id },
+        data: {
+          description: candidate.description,
+          severity: candidate.severity,
+        },
+      });
+      continue;
+    }
+
+    await prisma.alert.create({
+      data: {
+        title: candidate.title,
+        description: candidate.description,
+        severity: candidate.severity,
+        source: input.source,
+        aiSystemId: candidate.aiSystemId,
+      },
+    });
+  }
+
+  for (const alert of openAlerts) {
+    const stillDesired = input.candidates.some(
+      (candidate) => candidate.aiSystemId === alert.aiSystemId && candidate.title === alert.title
+    );
+    if (!stillDesired) {
+      await prisma.alert.update({
+        where: { id: alert.id },
+        data: { status: "RESOLVED" },
+      });
+    }
+  }
+
+  return desiredKeys.size;
 }
 
 export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Promise<ProviderSyncJobResult> {
@@ -215,6 +284,9 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     runningMicrosoftScan,
     googleConfigured,
     microsoftConfigured,
+    reviewNoticeDaysRaw,
+    exceptionNoticeDaysRaw,
+    escalationOverdueDaysRaw,
   ] = await Promise.all([
     getSetting(PROVIDER_SYNC_SETTINGS_KEYS.ENABLED),
     getSetting(PROVIDER_SYNC_SETTINGS_KEYS.INTERVAL_HOURS),
@@ -258,6 +330,9 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     }),
     isGoogleWorkspaceConfigured(),
     isMicrosoft365Configured(),
+    getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.REVIEW_NOTICE_DAYS),
+    getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.EXCEPTION_NOTICE_DAYS),
+    getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.ESCALATION_OVERDUE_DAYS),
   ]);
 
   const providerSyncEnabled = parseBooleanSetting(providerSyncEnabledRaw, true);
@@ -331,7 +406,12 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
               ? "A Microsoft 365 scan is already running."
               : !microsoftScanDue
                 ? `Not due yet. Interval is ${microsoftScanIntervalHours} hour(s).`
-                : undefined,
+        : undefined,
+    },
+    governanceAutomation: {
+      reviewRenewals: 0,
+      exceptionRenewals: 0,
+      ownershipEscalations: 0,
     },
   };
 
@@ -352,5 +432,124 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       "microsoft_365"
     );
   }
+
+  const reviewNoticeDays = parseIntervalHours(reviewNoticeDaysRaw, 14);
+  const exceptionNoticeDays = parseIntervalHours(exceptionNoticeDaysRaw, 14);
+  const escalationOverdueDays = parseIntervalHours(escalationOverdueDaysRaw, 7);
+
+  const systems = await prisma.aISystem.findMany({
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      nextReviewDate: true,
+      owner: { select: { name: true, email: true } },
+      approvals: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { decision: true },
+      },
+      policyAssignments: {
+        select: { complianceStatus: true },
+      },
+      governanceReviews: {
+        orderBy: { createdAt: "desc" },
+        select: { stage: true, approved: true },
+      },
+      governanceExceptions: {
+        where: { status: "ACTIVE", expiresAt: { gte: now } },
+        select: { status: true, expiresAt: true },
+      },
+      _count: {
+        select: { riskAssessments: true },
+      },
+      requireOwnerApproval: true,
+      requireSecurityApproval: true,
+      requireLegalApproval: true,
+      requireComplianceApproval: true,
+    },
+  });
+
+  const exceptions = await prisma.governanceException.findMany({
+    where: {
+      status: "ACTIVE",
+      expiresAt: { gte: now },
+    },
+    select: {
+      id: true,
+      title: true,
+      expiresAt: true,
+      aiSystemId: true,
+      aiSystem: { select: { name: true } },
+    },
+  });
+
+  const automation = evaluateGovernanceAutomation({
+    now,
+    reviewNoticeDays,
+    exceptionNoticeDays,
+    escalationOverdueDays,
+    systems: systems.map((system) => {
+      const latestStageApprovals = new Map<string, boolean>();
+      for (const review of system.governanceReviews) {
+        if (!latestStageApprovals.has(review.stage)) {
+          latestStageApprovals.set(review.stage, review.approved);
+        }
+      }
+      const requiredStages = [
+        ...(system.requireOwnerApproval ? (["OWNER"] as const) : []),
+        ...(system.requireSecurityApproval ? (["SECURITY"] as const) : []),
+        ...(system.requireLegalApproval ? (["LEGAL"] as const) : []),
+        ...(system.requireComplianceApproval ? (["COMPLIANCE"] as const) : []),
+      ];
+
+      return {
+        id: system.id,
+        name: system.name,
+        ownerName: system.owner.name,
+        ownerEmail: system.owner.email,
+        status: system.status,
+        nextReviewDate: system.nextReviewDate,
+        riskAssessmentsCount: system._count.riskAssessments,
+        policyAssignmentsCount: system.policyAssignments.length,
+        notAssessedAssignments: system.policyAssignments.filter(
+          (assignment) => assignment.complianceStatus === "NOT_ASSESSED"
+        ).length,
+        nonCompliantAssignments: system.policyAssignments.filter(
+          (assignment) => assignment.complianceStatus === "NON_COMPLIANT"
+        ).length,
+        partialAssignments: system.policyAssignments.filter(
+          (assignment) => assignment.complianceStatus === "PARTIALLY_COMPLIANT"
+        ).length,
+        latestApprovalDecision: system.approvals[0]?.decision ?? null,
+        activeExceptionCount: system.governanceExceptions.length,
+        requiredStages,
+        approvedStages: requiredStages.filter(
+          (stage) => latestStageApprovals.get(stage) === true
+        ),
+      };
+    }),
+    exceptions: exceptions.map((exception) => ({
+      id: exception.id,
+      aiSystemId: exception.aiSystemId,
+      systemName: exception.aiSystem.name,
+      title: exception.title,
+      expiresAt: exception.expiresAt,
+    })),
+  });
+
+  result.governanceAutomation.reviewRenewals = await syncGovernanceAutomationAlerts({
+    source: "review_renewal",
+    candidates: automation.reviewRenewals,
+  });
+  result.governanceAutomation.exceptionRenewals = await syncGovernanceAutomationAlerts({
+    source: "exception_renewal",
+    candidates: automation.exceptionRenewals,
+  });
+  result.governanceAutomation.ownershipEscalations = await syncGovernanceAutomationAlerts({
+    source: "ownership_escalation",
+    candidates: automation.ownershipEscalations,
+  });
+
   return result;
 }

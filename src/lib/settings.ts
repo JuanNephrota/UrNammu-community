@@ -28,6 +28,17 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS,
     provider_sync_enabled: process.env.PROVIDER_SYNC_ENABLED,
     provider_sync_interval_hours: process.env.PROVIDER_SYNC_INTERVAL_HOURS,
+    anomaly_recent_window_days: process.env.ANOMALY_RECENT_WINDOW_DAYS,
+    anomaly_baseline_window_days: process.env.ANOMALY_BASELINE_WINDOW_DAYS,
+    anomaly_min_recent_tokens: process.env.ANOMALY_MIN_RECENT_TOKENS,
+    anomaly_min_recent_cost: process.env.ANOMALY_MIN_RECENT_COST,
+    anomaly_provider_multiplier: process.env.ANOMALY_PROVIDER_MULTIPLIER,
+    anomaly_model_multiplier: process.env.ANOMALY_MODEL_MULTIPLIER,
+    anomaly_project_multiplier: process.env.ANOMALY_PROJECT_MULTIPLIER,
+    governance_review_notice_days: process.env.GOVERNANCE_REVIEW_NOTICE_DAYS,
+    governance_exception_notice_days: process.env.GOVERNANCE_EXCEPTION_NOTICE_DAYS,
+    governance_escalation_overdue_days:
+      process.env.GOVERNANCE_ESCALATION_OVERDUE_DAYS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
     proxy_secret: process.env.PROXY_SECRET,
     platform_url: process.env.NEXTAUTH_URL,
@@ -96,6 +107,22 @@ export const MICROSOFT_SHADOW_AI_SETTINGS_KEYS = {
 export const PROVIDER_SYNC_SETTINGS_KEYS = {
   ENABLED: "provider_sync_enabled",
   INTERVAL_HOURS: "provider_sync_interval_hours",
+} as const;
+
+export const OVERSIGHT_ANOMALY_SETTINGS_KEYS = {
+  RECENT_WINDOW_DAYS: "anomaly_recent_window_days",
+  BASELINE_WINDOW_DAYS: "anomaly_baseline_window_days",
+  MIN_RECENT_TOKENS: "anomaly_min_recent_tokens",
+  MIN_RECENT_COST: "anomaly_min_recent_cost",
+  PROVIDER_MULTIPLIER: "anomaly_provider_multiplier",
+  MODEL_MULTIPLIER: "anomaly_model_multiplier",
+  PROJECT_MULTIPLIER: "anomaly_project_multiplier",
+} as const;
+
+export const GOVERNANCE_AUTOMATION_SETTINGS_KEYS = {
+  REVIEW_NOTICE_DAYS: "governance_review_notice_days",
+  EXCEPTION_NOTICE_DAYS: "governance_exception_notice_days",
+  ESCALATION_OVERDUE_DAYS: "governance_escalation_overdue_days",
 } as const;
 
 export const AUTH_SETTINGS_KEYS = {

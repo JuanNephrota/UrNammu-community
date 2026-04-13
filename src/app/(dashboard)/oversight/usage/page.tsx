@@ -9,17 +9,19 @@ import {
   buildCostLookup,
   buildDataExposureFindings,
   buildTelemetryActivityRows,
+  getOversightAnomalyOptions,
   getBucketIdentityKey,
   getTelemetryAttributionLabel,
   summarizeDataExposureFindings,
 } from "@/lib/oversight-telemetry";
 import { LinkUsageDialog } from "@/components/oversight/link-usage-dialog";
+import { getSettings, OVERSIGHT_ANOMALY_SETTINGS_KEYS } from "@/lib/settings";
 
 export default async function UsageLogsPage() {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const [usageBuckets, costBuckets, syncRuns] = await Promise.all([
+  const [usageBuckets, costBuckets, syncRuns, anomalySettings] = await Promise.all([
     prisma.usageBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
@@ -36,6 +38,7 @@ export default async function UsageLogsPage() {
       orderBy: { startedAt: "desc" },
       take: 8,
     }),
+    getSettings(Object.values(OVERSIGHT_ANOMALY_SETTINGS_KEYS)),
   ]);
 
   const costMap = buildCostLookup(costBuckets);
@@ -94,7 +97,9 @@ export default async function UsageLogsPage() {
 
   const tableRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
   const recentTelemetry = buildTelemetryActivityRows(usageBuckets, costMap, 30);
+  const telemetryAnomalyOptions = getOversightAnomalyOptions(anomalySettings);
   const telemetryAnomalies = buildTelemetryAnomalies(usageBuckets, costMap, {
+    ...telemetryAnomalyOptions,
     now,
     take: 12,
   });

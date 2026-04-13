@@ -89,6 +89,8 @@ export type ModelDriftFinding = {
   reasons: string[];
 };
 
+export type OversightAnomalySettingsInput = Record<string, string | null>;
+
 const INDICATOR_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: "Restricted", pattern: /\brestricted\b/i },
   { label: "Confidential", pattern: /\bconfidential\b/i },
@@ -437,6 +439,48 @@ function getThresholds(
   return {
     ...DEFAULT_ANOMALY_THRESHOLDS[scope],
     ...(overrides?.[scope] ?? {}),
+  };
+}
+
+function parseNumberSetting(value: string | null | undefined, fallback: number) {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function getOversightAnomalyOptions(
+  settings: OversightAnomalySettingsInput
+): AnomalyOptions {
+  const recentWindowDays = parseNumberSetting(settings.anomaly_recent_window_days, 7);
+  const baselineWindowDays = parseNumberSetting(settings.anomaly_baseline_window_days, 7);
+  const minRecentTokens = parseNumberSetting(settings.anomaly_min_recent_tokens, 2500);
+  const minRecentCost = parseNumberSetting(settings.anomaly_min_recent_cost, 5);
+  const providerMultiplier = parseNumberSetting(settings.anomaly_provider_multiplier, 2);
+  const modelMultiplier = parseNumberSetting(settings.anomaly_model_multiplier, 2.5);
+  const projectMultiplier = parseNumberSetting(settings.anomaly_project_multiplier, 2.25);
+
+  return {
+    recentWindowDays,
+    baselineWindowDays,
+    thresholds: {
+      provider: {
+        minRecentTokens,
+        minRecentCost,
+        tokenSpikeMultiplier: providerMultiplier,
+        costSpikeMultiplier: providerMultiplier,
+      },
+      model: {
+        minRecentTokens,
+        minRecentCost,
+        tokenSpikeMultiplier: modelMultiplier,
+        costSpikeMultiplier: modelMultiplier,
+      },
+      project: {
+        minRecentTokens,
+        minRecentCost,
+        tokenSpikeMultiplier: projectMultiplier,
+        costSpikeMultiplier: projectMultiplier,
+      },
+    },
   };
 }
 

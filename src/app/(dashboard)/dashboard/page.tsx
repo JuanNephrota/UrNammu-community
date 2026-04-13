@@ -38,6 +38,12 @@ export default async function DashboardPage() {
     approvedSystems,
     unresolvedDiscoveries,
     recommendationCandidates,
+    acknowledgedAlerts,
+    openInvestigations,
+    openComplianceIssues,
+    openRiskIssues,
+    renewalAutomationAlerts,
+    ownershipEscalationAlerts,
   ] = await Promise.all([
     prisma.aISystem.count(),
     prisma.aIAgent.count(),
@@ -200,6 +206,24 @@ export default async function DashboardPage() {
         },
       },
     }),
+    prisma.alert.count({
+      where: { status: "ACKNOWLEDGED" },
+    }),
+    prisma.investigation.count({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+    }),
+    prisma.complianceIssue.count({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+    }),
+    prisma.riskAssessmentIssue.count({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+    }),
+    prisma.alert.count({
+      where: { status: { in: ["OPEN", "ACKNOWLEDGED"] }, source: { in: ["review_renewal", "exception_renewal"] } },
+    }),
+    prisma.alert.count({
+      where: { status: { in: ["OPEN", "ACKNOWLEDGED"] }, source: "ownership_escalation" },
+    }),
   ]);
 
   const posturePeriods = new Set<string>();
@@ -326,6 +350,20 @@ export default async function DashboardPage() {
       count: systemsWithOverdueReviews,
       href: "/registry",
       tone: systemsWithOverdueReviews > 0 ? "critical" : "success",
+    },
+    {
+      label: "Renewal automation queue",
+      description: "Scheduled maintenance generated review or exception renewal reminders.",
+      count: renewalAutomationAlerts,
+      href: "/alerts",
+      tone: renewalAutomationAlerts > 0 ? "warning" : "success",
+    },
+    {
+      label: "Ownership escalations",
+      description: "Blocked or overdue systems have been escalated back to owners.",
+      count: ownershipEscalationAlerts,
+      href: "/alerts",
+      tone: ownershipEscalationAlerts > 0 ? "critical" : "success",
     },
     {
       label: "Compliance blockers",
@@ -587,6 +625,49 @@ export default async function DashboardPage() {
         <SegmentRiskHeatmap title="Risk by Vendor" rows={vendorRiskRows} />
         <SegmentRiskHeatmap title="Risk by Data Sensitivity" rows={sensitivityRiskRows} />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-[var(--accent)]" />
+            Remediation Status
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Alerts</p>
+              <p className="mt-2 text-2xl font-semibold">{openAlerts}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{acknowledgedAlerts} acknowledged</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Investigations</p>
+              <p className="mt-2 text-2xl font-semibold">{openInvestigations}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Follow-through in progress</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Compliance Issues</p>
+              <p className="mt-2 text-2xl font-semibold">{openComplianceIssues}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Policy issues still open</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Risk Issues</p>
+              <p className="mt-2 text-2xl font-semibold">{openRiskIssues}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Assessment remediations outstanding</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Renewal Alerts</p>
+              <p className="mt-2 text-2xl font-semibold">{renewalAutomationAlerts}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Review and exception reminders</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+              <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Owner Escalations</p>
+              <p className="mt-2 text-2xl font-semibold">{ownershipEscalationAlerts}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Overdue or blocked systems escalated</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between">

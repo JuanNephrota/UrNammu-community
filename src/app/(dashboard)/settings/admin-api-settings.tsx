@@ -74,6 +74,16 @@ interface Props {
   hasOpenAIAdminKey: boolean;
   providerSyncEnabled: boolean;
   providerSyncIntervalHours: number;
+  anomalyRecentWindowDays: number;
+  anomalyBaselineWindowDays: number;
+  anomalyMinRecentTokens: number;
+  anomalyMinRecentCost: number;
+  anomalyProviderMultiplier: number;
+  anomalyModelMultiplier: number;
+  anomalyProjectMultiplier: number;
+  governanceReviewNoticeDays: number;
+  governanceExceptionNoticeDays: number;
+  governanceEscalationOverdueDays: number;
 }
 
 export function AdminAPISettings({
@@ -81,10 +91,30 @@ export function AdminAPISettings({
   hasOpenAIAdminKey,
   providerSyncEnabled: initialProviderSyncEnabled,
   providerSyncIntervalHours: initialProviderSyncIntervalHours,
+  anomalyRecentWindowDays: initialAnomalyRecentWindowDays,
+  anomalyBaselineWindowDays: initialAnomalyBaselineWindowDays,
+  anomalyMinRecentTokens: initialAnomalyMinRecentTokens,
+  anomalyMinRecentCost: initialAnomalyMinRecentCost,
+  anomalyProviderMultiplier: initialAnomalyProviderMultiplier,
+  anomalyModelMultiplier: initialAnomalyModelMultiplier,
+  anomalyProjectMultiplier: initialAnomalyProjectMultiplier,
+  governanceReviewNoticeDays: initialGovernanceReviewNoticeDays,
+  governanceExceptionNoticeDays: initialGovernanceExceptionNoticeDays,
+  governanceEscalationOverdueDays: initialGovernanceEscalationOverdueDays,
 }: Props) {
   const router = useRouter();
   const [providerSyncEnabled, setProviderSyncEnabled] = useState(initialProviderSyncEnabled);
   const [providerSyncIntervalHours, setProviderSyncIntervalHours] = useState(initialProviderSyncIntervalHours);
+  const [anomalyRecentWindowDays, setAnomalyRecentWindowDays] = useState(initialAnomalyRecentWindowDays);
+  const [anomalyBaselineWindowDays, setAnomalyBaselineWindowDays] = useState(initialAnomalyBaselineWindowDays);
+  const [anomalyMinRecentTokens, setAnomalyMinRecentTokens] = useState(initialAnomalyMinRecentTokens);
+  const [anomalyMinRecentCost, setAnomalyMinRecentCost] = useState(initialAnomalyMinRecentCost);
+  const [anomalyProviderMultiplier, setAnomalyProviderMultiplier] = useState(initialAnomalyProviderMultiplier);
+  const [anomalyModelMultiplier, setAnomalyModelMultiplier] = useState(initialAnomalyModelMultiplier);
+  const [anomalyProjectMultiplier, setAnomalyProjectMultiplier] = useState(initialAnomalyProjectMultiplier);
+  const [governanceReviewNoticeDays, setGovernanceReviewNoticeDays] = useState(initialGovernanceReviewNoticeDays);
+  const [governanceExceptionNoticeDays, setGovernanceExceptionNoticeDays] = useState(initialGovernanceExceptionNoticeDays);
+  const [governanceEscalationOverdueDays, setGovernanceEscalationOverdueDays] = useState(initialGovernanceEscalationOverdueDays);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleResult, setScheduleResult] = useState<string | null>(null);
 
@@ -104,11 +134,21 @@ export function AdminAPISettings({
         body: JSON.stringify({
           provider_sync_enabled: providerSyncEnabled ? "true" : "false",
           provider_sync_interval_hours: String(providerSyncIntervalHours),
+          anomaly_recent_window_days: String(anomalyRecentWindowDays),
+          anomaly_baseline_window_days: String(anomalyBaselineWindowDays),
+          anomaly_min_recent_tokens: String(anomalyMinRecentTokens),
+          anomaly_min_recent_cost: String(anomalyMinRecentCost),
+          anomaly_provider_multiplier: String(anomalyProviderMultiplier),
+          anomaly_model_multiplier: String(anomalyModelMultiplier),
+          anomaly_project_multiplier: String(anomalyProjectMultiplier),
+          governance_review_notice_days: String(governanceReviewNoticeDays),
+          governance_exception_notice_days: String(governanceExceptionNoticeDays),
+          governance_escalation_overdue_days: String(governanceEscalationOverdueDays),
         }),
       });
 
       if (res.ok) {
-        setScheduleResult("Background provider sync schedule saved.");
+        setScheduleResult("Provider sync, anomaly, and governance automation settings saved.");
         router.refresh();
       } else {
         const text = await res.text();
@@ -186,6 +226,76 @@ export function AdminAPISettings({
                 {scheduleResult}
               </span>
             )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h4 className="text-sm font-semibold">Anomaly Detection</h4>
+              <p className="text-xs text-[var(--text-muted)]">
+                Tune the baseline windows and spike thresholds used by AI Oversight anomaly detection.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-2">
+              <Label className="text-xs">Recent Window (days)</Label>
+              <Input type="number" min={1} value={anomalyRecentWindowDays} onChange={(e) => setAnomalyRecentWindowDays(parseInt(e.target.value || "1", 10))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Baseline Window (days)</Label>
+              <Input type="number" min={1} value={anomalyBaselineWindowDays} onChange={(e) => setAnomalyBaselineWindowDays(parseInt(e.target.value || "1", 10))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Minimum Recent Tokens</Label>
+              <Input type="number" min={1} value={anomalyMinRecentTokens} onChange={(e) => setAnomalyMinRecentTokens(parseInt(e.target.value || "1", 10))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Minimum Recent Cost</Label>
+              <Input type="number" min={0.01} step="0.01" value={anomalyMinRecentCost} onChange={(e) => setAnomalyMinRecentCost(parseFloat(e.target.value || "0.01"))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Provider Spike Multiplier</Label>
+              <Input type="number" min={1.1} step="0.1" value={anomalyProviderMultiplier} onChange={(e) => setAnomalyProviderMultiplier(parseFloat(e.target.value || "1.1"))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Model Spike Multiplier</Label>
+              <Input type="number" min={1.1} step="0.1" value={anomalyModelMultiplier} onChange={(e) => setAnomalyModelMultiplier(parseFloat(e.target.value || "1.1"))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Project Spike Multiplier</Label>
+              <Input type="number" min={1.1} step="0.1" value={anomalyProjectMultiplier} onChange={(e) => setAnomalyProjectMultiplier(parseFloat(e.target.value || "1.1"))} />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h4 className="text-sm font-semibold">Governance Renewal Automation</h4>
+              <p className="text-xs text-[var(--text-muted)]">
+                Control when scheduled maintenance creates renewal reminders and ownership escalation alerts.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label className="text-xs">Review Notice (days)</Label>
+              <Input type="number" min={1} value={governanceReviewNoticeDays} onChange={(e) => setGovernanceReviewNoticeDays(parseInt(e.target.value || "1", 10))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Exception Notice (days)</Label>
+              <Input type="number" min={1} value={governanceExceptionNoticeDays} onChange={(e) => setGovernanceExceptionNoticeDays(parseInt(e.target.value || "1", 10))} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Escalate After Overdue (days)</Label>
+              <Input type="number" min={1} value={governanceEscalationOverdueDays} onChange={(e) => setGovernanceEscalationOverdueDays(parseInt(e.target.value || "1", 10))} />
+            </div>
           </div>
         </div>
 

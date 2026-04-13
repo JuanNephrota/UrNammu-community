@@ -31,6 +31,7 @@ import {
 import { RiskAssessmentIssueStatusEditor } from "@/components/registry/risk-assessment-issue-status-editor";
 import { AIAssessButton } from "@/components/compliance/ai-assess-button";
 import { ComplianceIssueStatusEditor } from "@/components/compliance/compliance-issue-status-editor";
+import { SystemLifecycleActions } from "@/components/registry/system-lifecycle-actions";
 
 export default async function SystemDetailPage({
   params,
@@ -203,11 +204,18 @@ export default async function SystemDetailPage({
   return (
     <div className="space-y-6">
       <PageHeader title={system.name} description={system.description ?? undefined}>
-        <Link href={`/registry/${system.id}/edit`}>
-          <Button variant="outline">
-            <Pencil className="mr-2 h-4 w-4" /> Edit
-          </Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/registry/${system.id}/edit`}>
+            <Button variant="outline">
+              <Pencil className="mr-2 h-4 w-4" /> Edit
+            </Button>
+          </Link>
+          <SystemLifecycleActions
+            systemId={system.id}
+            systemName={system.name}
+            status={system.status}
+          />
+        </div>
       </PageHeader>
 
       <div className="flex flex-wrap gap-2">
