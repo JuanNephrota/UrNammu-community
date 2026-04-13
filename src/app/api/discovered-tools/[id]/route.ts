@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { withRole } from "@/lib/auth-guard";
 import { createAuditLog } from "@/lib/audit";
+
+const updateDiscoveredToolSchema = z.object({
+  status: z.enum([
+    "DISCOVERED",
+    "UNDER_REVIEW",
+    "REGISTERED",
+    "BLOCKED",
+    "APPROVED",
+  ]),
+  notes: z.string().max(2000).nullish(),
+});
 
 export async function PUT(
   req: NextRequest,
@@ -52,11 +64,19 @@ export async function PUT(
     }
 
     // Regular status update
+    const parsed = updateDiscoveredToolSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
     const updated = await prisma.discoveredAITool.update({
       where: { id },
       data: {
-        status: body.status,
-        notes: body.notes,
+        status: parsed.data.status,
+        ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
       },
     });
 

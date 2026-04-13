@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { prisma } from "./prisma";
 import { getSetting } from "./settings";
 import { analyzePromptRisk, createPromptRiskAlert } from "./prompt-risk";
@@ -194,17 +195,23 @@ export async function handleAnthropicProxy(
     // Tee the stream: one for the client, one to extract usage
     const [clientStream, logStream] = anthropicResponse.body.tee();
 
-    // Extract usage from the log stream in the background (non-blocking)
-    extractStreamUsage(logStream, {
-      model,
-      department,
-      userEmail,
-      latencyMs,
-      subpath,
-      aiSystemId: linkedSystem?.id ?? null,
-      promptRisk,
-      mcp: mcpResult,
-    });
+    // Extract usage from the log stream after the response is sent.
+    // Using `after` keeps the runtime alive long enough for the stream to drain
+    // and for the DB write to complete, without blocking the client response.
+    after(
+      extractStreamUsage(logStream, {
+        model,
+        department,
+        userEmail,
+        latencyMs,
+        subpath,
+        aiSystemId: linkedSystem?.id ?? null,
+        promptRisk,
+        mcp: mcpResult,
+      }).catch((err) => {
+        console.error("extractStreamUsage failed:", err);
+      })
+    );
 
     if (promptRisk.flagged) {
       await createPromptRiskAlert({

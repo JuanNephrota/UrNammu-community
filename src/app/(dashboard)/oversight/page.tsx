@@ -616,7 +616,7 @@ export default async function OversightPage() {
             )}
 
             {latestFailedSync && (
-              <div className="rounded-md border border-red-500/20 bg-red-500/5 p-3">
+              <div className="rounded-md border border-[var(--critical)]/20 bg-[var(--critical)]/5 p-3">
                 <div className="flex items-center gap-2 text-[var(--critical)]">
                   <AlertTriangle className="h-4 w-4" />
                   <p className="text-sm font-medium">Most recent failure</p>

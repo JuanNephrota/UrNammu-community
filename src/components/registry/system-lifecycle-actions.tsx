@@ -114,7 +114,7 @@ export function SystemLifecycleActions({
           </DialogHeader>
 
           {archiveError ? (
-            <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">
+            <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">
               {archiveError}
             </div>
           ) : null}
@@ -169,12 +169,12 @@ export function SystemLifecycleActions({
           </DialogHeader>
 
           {deleteError ? (
-            <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">
+            <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">
               {deleteError}
             </div>
           ) : null}
 
-          <div className="space-y-3 rounded-lg border border-[var(--critical)]/40 bg-red-500/5 p-4 text-sm">
+          <div className="space-y-3 rounded-lg border border-[var(--critical)]/40 bg-[var(--critical)]/5 p-4 text-sm">
             <p className="text-[var(--text-primary)]">
               Type <span className="font-semibold">{systemName}</span> to confirm permanent deletion.
             </p>

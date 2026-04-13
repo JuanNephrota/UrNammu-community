@@ -12,7 +12,7 @@ type QueueItem = {
 };
 
 const toneStyles: Record<QueueItem["tone"], string> = {
-  critical: "border-red-500/20 bg-red-500/5",
+  critical: "border-[var(--critical)]/20 bg-[var(--critical)]/5",
   warning: "border-amber-500/20 bg-amber-500/5",
   success: "border-emerald-500/20 bg-emerald-500/5",
   info: "border-sky-500/20 bg-sky-500/5",

@@ -8,7 +8,7 @@ type SegmentRow = {
 };
 
 function cellStyle(score: number) {
-  if (score >= 80) return "bg-red-500/20 text-red-200";
+  if (score >= 80) return "bg-[var(--critical)]/20 text-[var(--critical)]";
   if (score >= 60) return "bg-orange-500/20 text-orange-200";
   if (score >= 40) return "bg-amber-500/20 text-amber-200";
   return "bg-emerald-500/15 text-emerald-200";

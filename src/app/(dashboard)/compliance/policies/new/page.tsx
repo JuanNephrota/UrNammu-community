@@ -68,7 +68,7 @@ export default function NewPolicyPage() {
     <div className="space-y-6">
       <PageHeader title="Create Policy" description="Define a new compliance policy" />
       <form onSubmit={handleSubmit} className="space-y-6">
-        {error && <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">{error}</div>}
+        {error && <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">{error}</div>}
         <Card>
           <CardHeader><CardTitle>Policy Details</CardTitle></CardHeader>
           <CardContent className="space-y-4">

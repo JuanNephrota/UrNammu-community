@@ -205,7 +205,7 @@ export function OrgDataPanel() {
             )}
 
             {data?.anthropic?.error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+              <div className="rounded-lg border border-[var(--critical)]/20 bg-[var(--critical)]/5 p-4">
                 <h4 className="text-sm font-semibold text-[var(--critical)] mb-1">Anthropic</h4>
                 <p className="text-xs text-[var(--critical)]">{data.anthropic.error}</p>
               </div>
@@ -257,7 +257,7 @@ export function OrgDataPanel() {
             )}
 
             {data?.openai?.error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+              <div className="rounded-lg border border-[var(--critical)]/20 bg-[var(--critical)]/5 p-4">
                 <h4 className="text-sm font-semibold text-[var(--critical)] mb-1">OpenAI</h4>
                 <p className="text-xs text-[var(--critical)]">{data.openai.error}</p>
               </div>
@@ -314,7 +314,7 @@ export function OrgDataPanel() {
             )}
 
             {data?.gemini?.error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+              <div className="rounded-lg border border-[var(--critical)]/20 bg-[var(--critical)]/5 p-4">
                 <h4 className="text-sm font-semibold text-[var(--critical)] mb-1">Google Gemini</h4>
                 <p className="text-xs text-[var(--critical)]">{data.gemini.error}</p>
               </div>

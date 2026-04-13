@@ -74,7 +74,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       body: bodyText || undefined,
     });
   } catch (err) {
-    logUsage({
+    await logUsage({
       provider: "claude",
       model,
       department,
@@ -85,6 +85,8 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       cost: 0,
       flagged: true,
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+    }).catch((logErr) => {
+      console.error("logUsage failed:", logErr);
     });
     return { status: 502, jsonBody: { error: "Failed to reach Anthropic API" } };
   }
@@ -112,14 +114,26 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     nodeStream.pipe(clientPass);
     nodeStream.pipe(logPass);
 
-    // Extract usage in background
-    extractAnthropicStreamUsage(logPass, {
+    // Kick off the extractor now so it drains `logPass` in parallel with the
+    // client consuming `clientPass`. We MUST attach an error handler — Azure
+    // Functions has no `waitUntil`, so the promise is effectively fire-and-
+    // forget and an unhandled rejection would crash the worker.
+    //
+    // The function host keeps this invocation alive while the response body
+    // stream is open; in practice the extractor finishes at/before the client
+    // stream ends. If the client disconnects mid-stream the extractor may not
+    // complete — accepted limitation until telemetry moves to a queue.
+    const extractPromise = extractAnthropicStreamUsage(logPass, {
       provider: "claude",
       model,
       department,
       userEmail,
       latencyMs,
+    }).catch((err: unknown) => {
+      console.error("extractAnthropicStreamUsage failed:", err);
     });
+    // Silence "floating promise" linters while still not blocking the response.
+    void extractPromise;
 
     return {
       status: anthropicRes.status,
@@ -156,7 +170,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     flagReason = `API error: ${anthropicRes.status} ${responseBody.error?.message ?? ""}`;
   }
 
-  logUsage({
+  await logUsage({
     provider: "claude",
     model,
     department,
@@ -177,6 +191,8 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
           }
         : undefined,
     },
+  }).catch((err) => {
+    console.error("logUsage failed:", err);
   });
 
   return {

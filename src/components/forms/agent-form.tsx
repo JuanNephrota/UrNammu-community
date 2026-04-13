@@ -92,7 +92,7 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">{error}</div>
+        <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">{error}</div>
       )}
 
       <Card>
@@ -192,7 +192,7 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
             {capabilities.map((cap) => (
               <span key={cap} className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-dim)] px-3 py-1 text-xs font-medium text-[var(--accent)]">
                 {cap}
-                <button type="button" onClick={() => setCapabilities(capabilities.filter((c) => c !== cap))} className="ml-1 hover:text-red-500">&times;</button>
+                <button type="button" onClick={() => setCapabilities(capabilities.filter((c) => c !== cap))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
               </span>
             ))}
           </div>
@@ -215,7 +215,7 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
             {connectedSystems.map((sys) => (
               <span key={sys} className="inline-flex items-center gap-1 rounded-full bg-[var(--bg-elevated)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]">
                 {sys}
-                <button type="button" onClick={() => setConnectedSystems(connectedSystems.filter((s) => s !== sys))} className="ml-1 hover:text-red-500">&times;</button>
+                <button type="button" onClick={() => setConnectedSystems(connectedSystems.filter((s) => s !== sys))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
               </span>
             ))}
           </div>

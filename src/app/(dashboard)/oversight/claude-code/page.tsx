@@ -181,7 +181,7 @@ export default async function ClaudeCodePage() {
         );
       })()}
       {latestFailedRun?.errorMessage && (!latestSyncRun?.completedAt || latestFailedRun.completedAt! > latestSyncRun.completedAt) && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+        <div className="rounded-lg border border-[var(--critical)]/20 bg-[var(--critical)]/5 p-4">
           <p className="text-sm font-medium text-[var(--critical)]">Claude Code sync failed</p>
           <p className="text-xs text-[var(--critical)] mt-1">{latestFailedRun.errorMessage}</p>
         </div>

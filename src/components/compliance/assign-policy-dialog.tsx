@@ -136,7 +136,7 @@ export function AssignPolicyDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="rounded-md bg-red-500/10 p-2 text-xs text-[var(--critical)]">{error}</div>
+            <div className="rounded-md bg-[var(--critical)]/10 p-2 text-xs text-[var(--critical)]">{error}</div>
           )}
 
           {/* System selector (if not pre-filled) */}

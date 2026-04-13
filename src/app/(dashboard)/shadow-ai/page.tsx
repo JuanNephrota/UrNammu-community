@@ -457,7 +457,7 @@ export default function ShadowAIPage() {
             )}
           </div>
           {scanStatus?.lastScan?.status === "failed" && scanStatus.lastScan.errorMessage && (
-            <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-[var(--critical)]">
+            <div className="rounded-md bg-[var(--critical)]/10 px-3 py-2 text-xs text-[var(--critical)]">
               Error: {scanStatus.lastScan.errorMessage}
             </div>
           )}

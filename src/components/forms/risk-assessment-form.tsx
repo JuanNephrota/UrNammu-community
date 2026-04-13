@@ -490,7 +490,7 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">{error}</div>
+        <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">{error}</div>
       )}
 
       <Card>

@@ -118,7 +118,7 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <input type="hidden" name="discoveredToolId" value={initialData?.discoveredToolId ?? ""} />
       {error && (
-        <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">
+        <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">
           {error}
         </div>
       )}

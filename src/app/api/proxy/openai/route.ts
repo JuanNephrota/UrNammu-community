@@ -223,6 +223,36 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Successful upstream: return the response as-is.
+  // On upstream errors, strip internal detail before returning to the caller —
+  // OpenAI error bodies may include org IDs, rate-limit internals, or hints
+  // about our server-side key that callers shouldn't see.
+  if (!openaiResponse.ok) {
+    const upstreamCode =
+      typeof responseBody?.error?.code === "string"
+        ? responseBody.error.code
+        : null;
+    const upstreamType =
+      typeof responseBody?.error?.type === "string"
+        ? responseBody.error.type
+        : null;
+    const sanitized: Record<string, unknown> = {
+      error: "upstream_error",
+      status: openaiResponse.status,
+    };
+    if (upstreamCode) sanitized.code = upstreamCode;
+    if (upstreamType) sanitized.type = upstreamType;
+    logger.warn("openai_proxy.upstream_error", {
+      status: openaiResponse.status,
+      code: upstreamCode,
+      type: upstreamType,
+      model,
+      department,
+      userEmail,
+    });
+    return NextResponse.json(sanitized, { status: openaiResponse.status });
+  }
+
   return NextResponse.json(responseBody, {
     status: openaiResponse.status,
   });

@@ -4,6 +4,13 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { createAISystemSchema } from "@/lib/validations/ai-system";
 import { createAuditLog } from "@/lib/audit";
 
+class LinkedDiscoveryNotFoundError extends Error {
+  constructor(public readonly discoveredToolId: string) {
+    super(`Discovered tool ${discoveredToolId} not found`);
+    this.name = "LinkedDiscoveryNotFoundError";
+  }
+}
+
 export async function GET(req: NextRequest) {
   return withAuth(async () => {
     const take = Math.min(Math.max(Number.parseInt(req.nextUrl.searchParams.get("take") ?? "50", 10) || 50, 1), 100);
@@ -79,7 +86,9 @@ export async function POST(req: NextRequest) {
       ? new Date(parsed.data.nextReviewDate)
       : new Date(Date.now() + parsed.data.reviewIntervalDays * 24 * 60 * 60 * 1000);
 
-    const system = await prisma.$transaction(async (tx) => {
+    let system;
+    try {
+      system = await prisma.$transaction(async (tx) => {
       const created = await tx.aISystem.create({
         data: {
           ...parsed.data,
@@ -92,13 +101,24 @@ export async function POST(req: NextRequest) {
       });
 
       if (typeof discoveredToolId === "string" && discoveredToolId.trim()) {
+        // Verify the discovered tool exists before updating, so a bad id
+        // surfaces as a 400 rather than silently committing the AI system
+        // without linking it. Errors from the update itself (FK violations,
+        // etc.) abort the outer transaction — no `.catch` swallowing here.
+        const discovered = await tx.discoveredAITool.findUnique({
+          where: { id: discoveredToolId },
+          select: { id: true },
+        });
+        if (!discovered) {
+          throw new LinkedDiscoveryNotFoundError(discoveredToolId);
+        }
         await tx.discoveredAITool.update({
           where: { id: discoveredToolId },
           data: {
             status: "REGISTERED",
             linkedSystemId: created.id,
           },
-        }).catch(() => null);
+        });
       }
 
       // Suppress any unlinked shadow-AI discoveries that match this newly
@@ -134,7 +154,19 @@ export async function POST(req: NextRequest) {
       }
 
       return created;
-    });
+      });
+    } catch (err) {
+      if (err instanceof LinkedDiscoveryNotFoundError) {
+        return NextResponse.json(
+          {
+            error: "Linked discovered tool was not found",
+            discoveredToolId: err.discoveredToolId,
+          },
+          { status: 400 }
+        );
+      }
+      throw err;
+    }
 
     await createAuditLog({
       userId: session.user.userId,

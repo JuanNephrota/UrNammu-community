@@ -7,7 +7,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: "bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-subtle)]",
-        critical: "bg-[var(--critical-dim)] text-[var(--critical)] border border-red-500/20",
+        critical: "bg-[var(--critical-dim)] text-[var(--critical)] border border-[var(--critical)]/20",
         high: "bg-[var(--high-dim)] text-[var(--high)] border border-orange-500/20",
         medium: "bg-[var(--medium-dim)] text-[var(--medium)] border border-yellow-500/20",
         low: "bg-[var(--low-dim)] text-[var(--low)] border border-green-500/20",

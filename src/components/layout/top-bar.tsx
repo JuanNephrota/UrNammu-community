@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Bell, LogOut, User, Activity, ExternalLink } from "lucide-react";
@@ -58,38 +58,44 @@ export function TopBar() {
   const [workflowNotifications, setWorkflowNotifications] = useState<WorkflowNotification[]>([]);
   const [openCount, setOpenCount] = useState(0);
 
-  const fetchAlerts = useEffectEvent(async () => {
-    try {
-      const [alertRes, notificationRes] = await Promise.all([
-        fetch("/api/alerts?status=OPEN"),
-        fetch("/api/workflow-notifications"),
-      ]);
-      let alertCount = 0;
-      let workflowCount = 0;
-      if (alertRes.ok) {
-        const data = await alertRes.json();
-        setAlerts(data.slice(0, 6));
-        alertCount = Array.isArray(data) ? data.length : 0;
-      }
-      if (notificationRes.ok) {
-        const notifications = await notificationRes.json();
-        const workflowItems = Array.isArray(notifications) ? notifications : [];
-        setWorkflowNotifications(workflowItems.slice(0, 6));
-        workflowCount = workflowItems.length;
-      }
-      setOpenCount(alertCount + workflowCount);
-    } catch {
-      // silently fail
-    }
-  });
-
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchAlerts = async () => {
+      try {
+        const [alertRes, notificationRes] = await Promise.all([
+          fetch("/api/alerts?status=OPEN"),
+          fetch("/api/workflow-notifications"),
+        ]);
+        if (cancelled) return;
+        let alertCount = 0;
+        let workflowCount = 0;
+        if (alertRes.ok) {
+          const data = await alertRes.json();
+          if (cancelled) return;
+          setAlerts(data.slice(0, 6));
+          alertCount = Array.isArray(data) ? data.length : 0;
+        }
+        if (notificationRes.ok) {
+          const notifications = await notificationRes.json();
+          if (cancelled) return;
+          const workflowItems = Array.isArray(notifications) ? notifications : [];
+          setWorkflowNotifications(workflowItems.slice(0, 6));
+          workflowCount = workflowItems.length;
+        }
+        setOpenCount(alertCount + workflowCount);
+      } catch {
+        // silently fail
+      }
+    };
+
     fetchAlerts();
     // Poll every 30 seconds for new alerts
-    const interval = setInterval(() => {
-      fetchAlerts();
-    }, 30000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchAlerts, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   return (

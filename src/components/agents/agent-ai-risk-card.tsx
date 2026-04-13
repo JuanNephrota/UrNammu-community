@@ -147,7 +147,7 @@ export function AgentAIRiskCard({ agent, parentSystem, initialReview = null }: P
         </div>
 
         {error && (
-          <div className="rounded-md bg-red-500/10 p-3 text-sm text-[var(--critical)]">
+          <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">
             {error}
           </div>
         )}
