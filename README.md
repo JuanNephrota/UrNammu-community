@@ -11,7 +11,9 @@ Nammu is an AI governance and compliance platform for admin and compliance teams
 
 The app is built with Next.js 16, React 19, Prisma, PostgreSQL, and NextAuth.
 
-For a codebase walkthrough and extension guide, see [docs/implementation-guide.md](/Users/pmarsh/scripts/AI-gov/docs/implementation-guide.md).
+For end users (compliance officers, admins, reviewers), see the [User Guide](./docs/user-guide.md).
+
+For a codebase walkthrough and extension guide, see [docs/implementation-guide.md](./docs/implementation-guide.md).
 
 ## Modules
 
