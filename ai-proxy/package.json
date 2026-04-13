@@ -15,7 +15,7 @@
     "prisma": "^6.19.3"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@types/node": "^25",
     "azure-functions-core-tools": "^4.x",
     "typescript": "^5.9.3"
   }
