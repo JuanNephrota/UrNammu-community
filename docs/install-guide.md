@@ -1,6 +1,6 @@
 # Nammu Install Guide
 
-This guide walks through installing Nammu from zero — local development, production deployment on Vercel, the companion Azure Functions API proxy, and every external integration (Google, Microsoft, Anthropic, OpenAI).
+This guide walks through installing Nammu from zero — local development, production deployment on Vercel, the companion Azure Functions API proxy, and every external integration (Google, Microsoft, Anthropic, OpenAI, and Google Gemini / Vertex AI oversight).
 
 For day-to-day product usage once installed, see the [User Guide](./user-guide.md). For architecture, see the [Implementation Guide](./implementation-guide.md).
 
@@ -199,7 +199,17 @@ All variables read from `.env` in local dev and from the platform environment (V
 | `ANTHROPIC_API_KEY` | Fallback Claude key if `ai_provider=anthropic` and no key is set in Settings. |
 | `OPENAI_API_KEY` | Fallback OpenAI key if `ai_provider=openai` and no key is set in Settings. |
 
-### 3.5 Google Workspace shadow-AI fallback
+### 3.5 Google Gemini / Vertex AI oversight fallback
+
+| Variable | Purpose |
+|----------|---------|
+| `GEMINI_BILLING_SERVICE_ACCOUNT_KEY` | Full Google service-account JSON for BigQuery billing-export reads. Prefer Settings UI. |
+| `GEMINI_BILLING_PROJECT_ID` | Google Cloud project containing the billing export. |
+| `GEMINI_BILLING_DATASET` | BigQuery dataset for the billing export table. |
+| `GEMINI_BILLING_TABLE` | BigQuery table containing Gemini / Vertex AI billing rows. |
+| `GEMINI_BILLING_LOCATION` | BigQuery location, usually `US` or `EU`. |
+
+### 3.6 Google Workspace shadow-AI fallback
 
 | Variable | Purpose |
 |----------|---------|
@@ -209,7 +219,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 | `GOOGLE_SCAN_LOOKBACK_DAYS` | Default 30. |
 | `GOOGLE_SCAN_INTERVAL_HOURS` | Default 24. |
 
-### 3.6 Microsoft 365 shadow-AI fallback
+### 3.7 Microsoft 365 shadow-AI fallback
 
 | Variable | Purpose |
 |----------|---------|
@@ -219,7 +229,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 | `MICROSOFT_SHADOW_AI_SCAN_ENABLED` | `true` / `false`. |
 | `MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS` | Default 24. |
 
-### 3.7 Demo mode
+### 3.8 Demo mode
 
 | Variable | Purpose |
 |----------|---------|
@@ -372,6 +382,8 @@ Edit `ai-proxy/local.settings.json` for local runs, or set in Azure Function App
 | `PROXY_SECRET` | Shared secret — must match `PROXY_SECRET` in the main app. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Provider credentials the proxy uses when clients route through it. |
 
+When proxying traffic, Nammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default.
+
 ### 7.4 Run locally
 
 ```bash
@@ -398,6 +410,8 @@ Direct SDK calls can point at the proxy instead of the provider:
 - OpenAI: `https://<your-function-app>.azurewebsites.net/api/openai-proxy`
 
 Clients send their requests with an `X-Proxy-Secret: $PROXY_SECRET` header (exact header name is documented on **Settings → Proxy Setup** inside the app once deployed).
+
+If you want dangerous-prompt monitoring, make sure the relevant OpenAI or Anthropic traffic is routed through this proxy or the app's built-in `/api/proxy/*` routes.
 
 ---
 
@@ -461,14 +475,30 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 2. **Settings → Provider Admin APIs → OpenAI**: paste the admin key; enable sync; set interval.
 3. **Test Connection**.
 
-### 8.7 DNS / Proxy log ingestion
+### 8.7 Google Gemini / Vertex AI oversight
+
+Nammu supports Gemini oversight through Google Cloud Billing export data in BigQuery.
+
+1. In Google Cloud Billing, enable **Billing export to BigQuery** for the billing account that covers your Gemini / Vertex AI usage.
+2. Confirm the export lands in a dataset and table that your Nammu service account can read.
+3. Create or reuse a Google service account with BigQuery read access to that dataset and table.
+4. **Settings → Provider Admin APIs → Google Gemini / Vertex AI**:
+   - paste the service-account JSON
+   - enter the billing export project ID
+   - enter the dataset and table names
+   - set the BigQuery location
+5. Click **Test Connection**.
+
+This integration currently provides normalized spend oversight and best-effort attribution from billing export data rather than a direct Gemini admin usage API.
+
+### 8.8 DNS / Proxy log ingestion
 
 No setup beyond the main app; ingest at any time via:
 
 - **Settings → Shadow AI → DNS/Proxy import** — upload a CSV.
 - `POST /api/discovered-tools/ingest` with a JSON body (format in the [User Guide §9](./user-guide.md#9-shadow-ai-discovery)).
 
-### 8.8 AI provider for in-app features
+### 8.9 AI provider for in-app features
 
 Separate from the admin telemetry keys above, Nammu uses a provider to power AI risk suggestion, compliance gap analysis, agent review, and summarization. Set once in **Settings → General**:
 
@@ -480,7 +510,7 @@ Separate from the admin telemetry keys above, Nammu uses a provider to power AI 
 
 ## 9. Background Cron Setup
 
-Nammu has one maintenance endpoint that fans out to every background job. It must fire on a schedule for telemetry, shadow AI scans, renewal alerts, and escalations to work.
+Nammu has one maintenance endpoint that fans out to every background job. It must fire on a schedule for telemetry, shadow AI scans, Gemini billing follow-up syncs, renewal alerts, and escalations to work.
 
 ### 9.1 Endpoint
 

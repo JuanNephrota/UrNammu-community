@@ -36,10 +36,10 @@ Nammu is an enterprise AI governance platform that gives compliance, security, a
 
 - **AI System** — a managed AI service or application (e.g. "Customer Support Copilot"). The primary governance unit.
 - **AI Agent** — an autonomous agent tied to a system, with its own autonomy level and human-oversight rules.
-- **Risk Assessment** — a multi-dimensional scoring of a system across bias, security, privacy, fairness, performance, and transparency.
+- **Risk Assessment** — a multi-dimensional scoring of a system across bias, security, privacy, fairness, performance, and transparency, with branching questions and issue-level follow-up.
 - **Policy** — a governance rule (mapped to EU AI Act, NIST AI RMF, ISO 42001, SOC 2, or custom) that can be assigned to systems.
 - **Shadow AI** — unregistered AI tools discovered in the org via OAuth activity, Microsoft 365 apps, or network logs.
-- **Oversight** — provider-level telemetry: token usage, cost, anomalies, and vendor lifecycle.
+- **Oversight** — provider-level telemetry: token usage, cost, anomalies, model drift, dangerous prompt alerts, investigations, and vendor lifecycle.
 - **Governance Workflow** — the staged approval flow (Owner → Security → Legal → Compliance) plus exceptions, evidence, incidents, and investigations.
 
 The Glossary at the end of the guide collects these and more.
@@ -87,7 +87,7 @@ The Dashboard is the daily home screen. It surfaces:
 - **Compliance overview** — a donut/breakdown across `COMPLIANT`, `PARTIALLY_COMPLIANT`, `NON_COMPLIANT`, `NOT_ASSESSED`.
 - **Executive posture chart** — a visual health summary.
 - **Risk heat map** — systems vs. the 6 risk dimensions.
-- **Open alerts & investigations** — the active follow-up queue.
+- **Open alerts, investigations, and remediation rollups** — the active follow-up queue.
 - **Recent activity** — the latest governance actions from the audit log.
 
 ### Where to start each role
@@ -135,8 +135,8 @@ Status is updated automatically as governance reviews complete, or manually by a
 
 ### Archiving & Deleting
 
-- **Archive**: sets the status to `DEPRECATED` / `RETIRED`. Reversible — the record is retained for audit history.
-- **Delete**: hard delete. Requires typing the system name to confirm. Audit-log entries referring to the system remain, but every related record (assessments, assignments, approvals, incidents) is removed.
+- **Archive**: sets the status to `RETIRED`. Reversible in the sense that the record remains available for audit, history, and review.
+- **Delete**: hard delete. Requires typing the exact system name to confirm. The delete flow is meant for duplicates or mistakes, and it detaches linked references before removing the record.
 
 ---
 
@@ -174,6 +174,8 @@ On the agent detail page, **Run Risk Review** calls `/api/ai/assess-agent-risk` 
 
 Provider (Anthropic or OpenAI) is whichever is configured in Settings → General.
 
+Generated agent risk reviews are saved, so they remain visible after refresh and can be revisited during later governance work.
+
 ---
 
 ## 6. Risk Center
@@ -209,7 +211,7 @@ Start from **Risk Center → New Assessment** or from **Registry → [system] �
 3. **Use AI Suggest** (optional). The button calls `/api/ai/classify` and populates recommended scores, confidence levels, and per-dimension rationale. Review and adjust — the AI suggestion is a starting point, not the decision.
 4. **Answer branching questions** — the questionnaire expands based on data sensitivity, autonomy, and use case. Collapsible sections keep it scannable.
 5. **Review control gaps** — the system shows suggested mitigating controls for each high-score dimension. Mark as addressed (with evidence) or document a remediation plan.
-6. **Generate risk issues** — high-risk findings become `RiskAssessmentIssue` records with severity derived from score, status defaulting to `OPEN`. Edit titles and details before saving.
+6. **Generate risk issues** — high-risk findings become `RiskAssessmentIssue` records with severity derived from score, status defaulting to `OPEN`. Each issue can then be worked independently, instead of treating the whole assessment as one large remediation item.
 7. **Submit**. The system's overall `riskLevel` is updated and the assessment joins the history.
 
 ### Reassessment Cadence
@@ -367,24 +369,27 @@ New discoveries auto-create high-priority alerts for admins to triage.
 
 ## 10. Oversight (Telemetry & Cost)
 
-**Sidebar → Oversight** centralizes provider usage, cost, anomaly, vendor, investigation, and Claude Code telemetry.
+**Sidebar → Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, investigation, and Claude Code telemetry.
 
 ### How Provider Sync Works
 
-With Anthropic or OpenAI admin keys configured in Settings → Provider Admin APIs, the `/api/scheduler/maintenance` cron pulls admin-API data on the configured `provider_sync_interval_hours` (default 6) and normalizes it into:
+With Anthropic or OpenAI admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings, the `/api/scheduler/maintenance` cron pulls oversight data on the configured sync interval and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys.
 - **`ProviderProject`** / **`ProviderActor`** — discovered workspace membership.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
 
+If traffic also flows through the built-in OpenAI or Anthropic proxy, Oversight can attach prompt-risk findings to recent activity and alerts using redacted excerpts and category labels.
+
 ### Overview Page
 
 - Total tokens and total cost (rolling 7 and 30 days).
 - Breakdown by provider / model / project.
 - Data-exposure summary — usage attributed to high-sensitivity systems.
-- Anomaly findings and recommendations.
+- Anomaly, model-drift, and dangerous-prompt findings with recommendations.
 - Budget status cards.
+- Remediation rollups across alerts, incidents, investigations, and corrective follow-up.
 
 ### Usage Page
 
@@ -415,6 +420,18 @@ Anomaly thresholds are configured in **Settings → Provider Admin APIs**:
 - Per-dimension sensitivity multipliers (provider / model / project).
 
 When recent usage exceeds baseline × multiplier, a `cost_anomaly` or `model_drift` alert is raised.
+
+### Dangerous Prompt Monitoring
+
+When teams route OpenAI or Anthropic traffic through the Nammu proxy, Oversight can detect risky prompt categories such as:
+
+- jailbreak and prompt-injection attempts
+- credential or secret extraction
+- malware or phishing generation
+- regulated-data exfiltration
+- unsafe autonomy instructions
+
+By default, Nammu stores redacted excerpts and category labels rather than full prompt bodies. These findings appear in Oversight, the alert inbox, and investigations.
 
 ### Vendor Governance
 
@@ -466,6 +483,7 @@ Every alert has a `source` string indicating what generated it:
 | `data_exposure` | Restricted-sensitivity data observed in provider telemetry. |
 | `cost_anomaly` | Spend crossed a budget or anomaly threshold. |
 | `ownership_escalation` | System has no owner assigned. |
+| `dangerous_prompt` | Proxy-scanned traffic matched a risky prompt pattern. |
 
 ### Working an Alert
 

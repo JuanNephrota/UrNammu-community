@@ -4,10 +4,10 @@ Nammu is an AI governance and compliance platform for admin and compliance teams
 
 - AI system and agent inventory
 - Shadow AI discovery from Google Workspace, Microsoft 365, and DNS/proxy CSV imports
-- Risk assessments and policy mapping
-- Governance workflows with staged approvals, exceptions, evidence, and incidents
+- Risk assessments with templates, branching questions, issue tracking, and agent-aware overlays
+- Governance workflows with staged approvals, exceptions, evidence, incidents, renewal automation, and escalations
 - Vendor governance with contract, residency, subprocessors, and approved use-case tracking
-- Oversight telemetry from provider admin APIs
+- Oversight telemetry from provider admin APIs, Google Gemini / Vertex AI billing export, and proxy-based prompt-risk detection
 
 The app is built with Next.js 16, React 19, Prisma, PostgreSQL, and NextAuth.
 
@@ -22,9 +22,9 @@ For a codebase walkthrough and extension guide, see [docs/implementation-guide.m
 - `Registry`: central inventory of AI systems
 - `Agents`: tracked AI agents and assistants
 - `Shadow AI`: discovery and triage of unregistered tools
-- `Risk Center`: system-level risk assessments
+- `Risk Center`: system and agent-aware risk assessments
 - `Compliance`: policy assignment and audit evidence
-- `Oversight`: provider usage, costs, and organization telemetry
+- `Oversight`: provider usage, costs, anomalies, investigations, and organization telemetry
 
 ## Local Setup
 
@@ -166,6 +166,8 @@ Phase 2 introduces a normalized telemetry foundation alongside the legacy `APIUs
 
 The current admin sync route still backfills derived `APIUsageLog` rows for compatibility, but the main oversight views now read normalized telemetry from `UsageBucket` and `CostBucket`.
 
+When traffic flows through the built-in proxy, Oversight can also raise dangerous-prompt alerts from redacted prompt-risk signals without storing full prompt bodies by default.
+
 ## Admin Integrations
 
 ### OpenAI Admin API
@@ -263,6 +265,8 @@ It handles:
 - Google Gemini / Vertex AI billing-export follow-up syncs
 - Google Workspace shadow-AI follow-up scans
 - Microsoft 365 shadow-AI follow-up scans
+- governance renewal and exception notice alerts
+- overdue, blocked, and ownership escalation alerts
 
 Cadence is controlled in Settings:
 
