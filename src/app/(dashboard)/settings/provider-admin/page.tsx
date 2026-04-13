@@ -8,6 +8,7 @@ export default async function ProviderAdminSettingsPage() {
   const {
     hasAnthropicAdminKey,
     hasOpenAIAdminKey,
+    hasGeminiBillingConfig,
     settingsMap,
   } = await getSettingsPageData();
 
@@ -15,8 +16,13 @@ export default async function ProviderAdminSettingsPage() {
     <AdminAPISettings
       hasAnthropicAdminKey={hasAnthropicAdminKey}
       hasOpenAIAdminKey={hasOpenAIAdminKey}
+      hasGeminiBillingConfig={hasGeminiBillingConfig}
       providerSyncEnabled={settingsMap.provider_sync_enabled !== "false"}
       providerSyncIntervalHours={parseInt(settingsMap.provider_sync_interval_hours ?? "6")}
+      geminiBillingProjectId={settingsMap.gemini_billing_project_id ?? ""}
+      geminiBillingDataset={settingsMap.gemini_billing_dataset ?? ""}
+      geminiBillingTable={settingsMap.gemini_billing_table ?? ""}
+      geminiBillingLocation={settingsMap.gemini_billing_location ?? "US"}
       anomalyRecentWindowDays={parseInt(settingsMap.anomaly_recent_window_days ?? "7")}
       anomalyBaselineWindowDays={parseInt(settingsMap.anomaly_baseline_window_days ?? "7")}
       anomalyMinRecentTokens={parseInt(settingsMap.anomaly_min_recent_tokens ?? "2500")}

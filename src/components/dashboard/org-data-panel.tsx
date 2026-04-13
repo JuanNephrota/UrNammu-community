@@ -20,6 +20,13 @@ type OrgData = {
     assistants?: { data?: { id: string; name: string; model: string; created_at: number }[] } | null;
     error?: string;
   } | null;
+  gemini: {
+    totalCost?: number;
+    rowCount?: number;
+    topSkus?: { label: string; cost: number; usageAmount: number }[];
+    topProjects?: { label: string; cost: number; usageAmount: number }[];
+    error?: string;
+  } | null;
   syncRuns?: {
     id: string;
     provider: string;
@@ -64,9 +71,11 @@ export function OrgDataPanel() {
         const parts: string[] = [];
         if ((result.anthropicUsageSynced as number) > 0) parts.push(`${result.anthropicUsageSynced} Anthropic usage records`);
         if ((result.openaiUsageSynced as number) > 0) parts.push(`${result.openaiUsageSynced} OpenAI usage records`);
+        if ((result.geminiUsageSynced as number) > 0) parts.push(`${result.geminiUsageSynced} Gemini usage records`);
         if ((result.claudeCodeUsageSynced as number) > 0) parts.push(`${result.claudeCodeUsageSynced} Claude Code usage records`);
         if ((result.anthropicCostBucketsSynced as number) > 0) parts.push(`${result.anthropicCostBucketsSynced} Anthropic cost buckets`);
         if ((result.openaiCostBucketsSynced as number) > 0) parts.push(`${result.openaiCostBucketsSynced} OpenAI cost buckets`);
+        if ((result.geminiCostBucketsSynced as number) > 0) parts.push(`${result.geminiCostBucketsSynced} Gemini cost buckets`);
         if ((result.claudeCodeCostsSynced as number) > 0) parts.push(`${result.claudeCodeCostsSynced} Claude Code cost buckets`);
         if ((result.agentsCreated as number) > 0) parts.push(`${result.agentsCreated} new agents`);
         if ((result.agentsUpdated as number) > 0) parts.push(`${result.agentsUpdated} agents updated`);
@@ -82,7 +91,7 @@ export function OrgDataPanel() {
     }
   }
 
-  const hasAnyProvider = data?.anthropic || data?.openai;
+  const hasAnyProvider = data?.anthropic || data?.openai || data?.gemini;
 
   return (
     <Card>
@@ -108,9 +117,9 @@ export function OrgDataPanel() {
 
         {!data && !loading && (
           <p className="text-sm text-[var(--text-muted)] text-center py-6">
-            Click &quot;Fetch Org Data&quot; to pull usage data from Anthropic and OpenAI admin APIs.
+            Click &quot;Fetch Org Data&quot; to pull usage data from Anthropic, OpenAI, and Google Gemini oversight sources.
             <br />
-            <span className="text-xs text-[var(--text-faint)]">Configure admin API keys in Settings &gt; Provider Admin APIs first.</span>
+            <span className="text-xs text-[var(--text-faint)]">Configure provider credentials in Settings &gt; Provider Admin APIs first.</span>
           </p>
         )}
 
@@ -250,6 +259,63 @@ export function OrgDataPanel() {
               <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
                 <h4 className="text-sm font-semibold text-[var(--critical)] mb-1">OpenAI</h4>
                 <p className="text-xs text-[var(--critical)]">{data.openai.error}</p>
+              </div>
+            )}
+
+            {data?.gemini && !data.gemini.error && (
+              <div className="space-y-3 rounded-lg border border-[var(--border-subtle)] p-4">
+                <h4 className="text-sm font-semibold text-[var(--text-primary)]">Google Gemini</h4>
+
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-1.5 flex items-center gap-1">
+                    <TrendingUp className="h-3 w-3" /> Costs (30 days)
+                  </p>
+                  <p className="text-lg font-bold tabular-nums text-[var(--text-primary)]" style={{ fontFamily: "var(--font-display)" }}>
+                    ${(data.gemini.totalCost ?? 0).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {(data.gemini.rowCount ?? 0).toLocaleString()} Gemini / Vertex billing rows summarized
+                  </p>
+                </div>
+
+                {(data.gemini.topSkus?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-1.5">
+                      Top SKUs
+                    </p>
+                    <div className="space-y-1">
+                      {data.gemini.topSkus?.slice(0, 5).map((sku, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs gap-3">
+                          <span className="text-[var(--text-secondary)]">{sku.label}</span>
+                          <span className="text-[var(--text-muted)] tabular-nums">${sku.cost.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(data.gemini.topProjects?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-1.5">
+                      Top Projects
+                    </p>
+                    <div className="space-y-1">
+                      {data.gemini.topProjects?.slice(0, 5).map((project, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs gap-3">
+                          <span className="text-[var(--text-secondary)]">{project.label}</span>
+                          <span className="text-[var(--text-muted)] tabular-nums">${project.cost.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {data?.gemini?.error && (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+                <h4 className="text-sm font-semibold text-[var(--critical)] mb-1">Google Gemini</h4>
+                <p className="text-xs text-[var(--critical)]">{data.gemini.error}</p>
               </div>
             )}
           </div>

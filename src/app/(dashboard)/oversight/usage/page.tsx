@@ -21,7 +21,7 @@ export default async function UsageLogsPage() {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const [usageBuckets, costBuckets, syncRuns, anomalySettings] = await Promise.all([
+  const [usageBuckets, costBuckets, syncRuns, anomalySettings, dangerousPromptLogs] = await Promise.all([
     prisma.usageBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
@@ -39,7 +39,21 @@ export default async function UsageLogsPage() {
       take: 8,
     }),
     getSettings(Object.values(OVERSIGHT_ANOMALY_SETTINGS_KEYS)),
+    prisma.aPIUsageLog.findMany({
+      where: {
+        flagged: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+      include: {
+        user: { select: { name: true, email: true } },
+      },
+    }),
   ]);
+  const dangerousPromptFindings = dangerousPromptLogs.filter((log) => {
+    const metadata = log.promptMetadata as Record<string, unknown> | null;
+    return !!metadata?.promptRisk;
+  }).slice(0, 12);
 
   const costMap = buildCostLookup(costBuckets);
 
@@ -204,6 +218,17 @@ export default async function UsageLogsPage() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
+              Dangerous Prompts
+            </p>
+            <p className="mt-2 text-3xl font-semibold">{dangerousPromptFindings.length}</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Recent proxy-flagged prompt attempts
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
               Exposure Signals
             </p>
             <p className="mt-2 text-3xl font-semibold">{exposureSummary.totalFindings}</p>
@@ -213,6 +238,66 @@ export default async function UsageLogsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Dangerous Prompt Findings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {dangerousPromptFindings.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No proxy-scanned prompts were flagged for dangerous prompt behavior recently.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {dangerousPromptFindings.map((log) => {
+                const promptRisk = (log.promptMetadata as Record<string, unknown> | null)?.promptRisk as
+                  | Record<string, unknown>
+                  | undefined;
+                const categories = Array.isArray(promptRisk?.categories)
+                  ? (promptRisk?.categories as string[])
+                  : [];
+                const excerpt =
+                  typeof promptRisk?.excerpt === "string" ? promptRisk.excerpt : null;
+
+                return (
+                  <div
+                    key={log.id}
+                    className="rounded-lg border border-[var(--border-subtle)] p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="critical">FLAGGED</Badge>
+                          <Badge variant="info" className="capitalize">{log.provider}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm font-medium">{log.flagReason ?? "Dangerous prompt signal"}</p>
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">
+                          {log.user?.name ?? log.user?.email ?? "Unknown user"} · {log.model ?? "Unknown model"} · {log.department ?? "No department"}
+                        </p>
+                        {categories.length > 0 ? (
+                          <p className="mt-2 text-xs text-[var(--text-faint)]">
+                            Categories: {categories.join(", ")}
+                          </p>
+                        ) : null}
+                        {excerpt ? (
+                          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                            {excerpt}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="text-right text-xs text-[var(--text-faint)]">
+                        <p>{formatDateTime(log.createdAt)}</p>
+                        <p className="mt-1">{log.totalTokens.toLocaleString()} tokens</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

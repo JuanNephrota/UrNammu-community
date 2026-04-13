@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "./prisma";
 import { getSetting } from "./settings";
+import { analyzePromptRisk, createPromptRiskAlert } from "./prompt-risk";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 
@@ -67,6 +68,13 @@ export async function handleAnthropicProxy(
   // Tracking metadata
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
+  const requestedSystemId = req.headers.get("x-ai-system-id");
+  const linkedSystem = requestedSystemId
+    ? await prisma.aISystem.findUnique({
+        where: { id: requestedSystemId },
+        select: { id: true },
+      })
+    : null;
 
   // Build the target URL
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
@@ -97,6 +105,7 @@ export async function handleAnthropicProxy(
   }
 
   const model = (bodyJson?.model as string) ?? "unknown";
+  const promptRisk = analyzePromptRisk(bodyJson);
   const isStreaming = bodyJson?.stream === true;
   const startTime = Date.now();
 
@@ -119,8 +128,32 @@ export async function handleAnthropicProxy(
       totalTokens: 0,
       cost: 0,
       flagged: true,
-      flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+      flagReason:
+        promptRisk.flagReason ??
+        `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+      metadata: {
+        promptRisk: promptRisk.flagged
+          ? {
+              severity: promptRisk.severity,
+              categories: promptRisk.categories,
+              matchedSignals: promptRisk.matchedSignals,
+              excerpt: promptRisk.excerpt,
+            }
+          : undefined,
+        aiSystemId: linkedSystem?.id ?? null,
+      },
     });
+
+    if (promptRisk.flagged) {
+      await createPromptRiskAlert({
+        provider: "claude",
+        model,
+        department,
+        userEmail,
+        aiSystemId: linkedSystem?.id ?? null,
+        analysis: promptRisk,
+      });
+    }
 
     return NextResponse.json(
       { error: "Failed to reach Anthropic API" },
@@ -152,7 +185,26 @@ export async function handleAnthropicProxy(
     const [clientStream, logStream] = anthropicResponse.body.tee();
 
     // Extract usage from the log stream in the background (non-blocking)
-    extractStreamUsage(logStream, { model, department, userEmail, latencyMs, subpath });
+    extractStreamUsage(logStream, {
+      model,
+      department,
+      userEmail,
+      latencyMs,
+      subpath,
+      aiSystemId: linkedSystem?.id ?? null,
+      promptRisk,
+    });
+
+    if (promptRisk.flagged) {
+      await createPromptRiskAlert({
+        provider: "claude",
+        model,
+        department,
+        userEmail,
+        aiSystemId: linkedSystem?.id ?? null,
+        analysis: promptRisk,
+      });
+    }
 
     return new Response(clientStream, {
       status: anthropicResponse.status,
@@ -173,15 +225,16 @@ export async function handleAnthropicProxy(
   const totalTokens = promptTokens + completionTokens;
   const cost = calculateCost(model, promptTokens, completionTokens);
 
-  let flagged = false;
-  let flagReason: string | null = null;
+  let flagged = promptRisk.flagged;
+  let flagReason: string | null = promptRisk.flagReason;
 
   if (!anthropicResponse.ok) {
     flagged = true;
-    flagReason = `API error: ${anthropicResponse.status} ${responseBody.error?.message ?? ""}`;
+    const apiError = `API error: ${anthropicResponse.status} ${responseBody.error?.message ?? ""}`.trim();
+    flagReason = flagReason ? `${flagReason}; ${apiError}` : apiError;
   }
 
-  logUsage({
+  await logUsage({
     provider: "claude",
     model,
     department,
@@ -192,8 +245,32 @@ export async function handleAnthropicProxy(
     cost,
     flagged,
     flagReason,
-    metadata: { latencyMs, status: anthropicResponse.status, path: subpath },
+    metadata: {
+      latencyMs,
+      status: anthropicResponse.status,
+      path: subpath,
+      aiSystemId: linkedSystem?.id ?? null,
+      promptRisk: promptRisk.flagged
+        ? {
+            severity: promptRisk.severity,
+            categories: promptRisk.categories,
+            matchedSignals: promptRisk.matchedSignals,
+            excerpt: promptRisk.excerpt,
+          }
+        : undefined,
+    },
   });
+
+  if (promptRisk.flagged) {
+    await createPromptRiskAlert({
+      provider: "claude",
+      model,
+      department,
+      userEmail,
+      aiSystemId: linkedSystem?.id ?? null,
+      analysis: promptRisk,
+    });
+  }
 
   return NextResponse.json(responseBody, {
     status: anthropicResponse.status,
@@ -212,6 +289,8 @@ async function extractStreamUsage(
     userEmail: string | null;
     latencyMs: number;
     subpath: string;
+    aiSystemId: string | null;
+    promptRisk: ReturnType<typeof analyzePromptRisk>;
   }
 ) {
   try {
@@ -267,12 +346,21 @@ async function extractStreamUsage(
         completionTokens: outputTokens,
         totalTokens,
         cost,
-        flagged: false,
-        flagReason: null,
+        flagged: ctx.promptRisk.flagged,
+        flagReason: ctx.promptRisk.flagReason,
         metadata: {
           latencyMs: ctx.latencyMs,
           streaming: true,
           path: ctx.subpath,
+          aiSystemId: ctx.aiSystemId,
+          promptRisk: ctx.promptRisk.flagged
+            ? {
+                severity: ctx.promptRisk.severity,
+                categories: ctx.promptRisk.categories,
+                matchedSignals: ctx.promptRisk.matchedSignals,
+                excerpt: ctx.promptRisk.excerpt,
+              }
+            : undefined,
         },
       });
     }

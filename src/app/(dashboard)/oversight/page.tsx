@@ -46,6 +46,8 @@ export default async function OversightPage() {
     unlinkedOpenAIAgents,
     driftAlerts,
     openIncidents,
+    dangerousPromptAlerts,
+    recentDangerousPromptAlerts,
     anomalySettings,
     openAlertCount,
     acknowledgedAlertCount,
@@ -124,6 +126,20 @@ export default async function OversightPage() {
     }),
     prisma.governanceIncident.count({
       where: { status: "OPEN" },
+    }),
+    prisma.alert.count({
+      where: {
+        source: "dangerous_prompt",
+        status: { in: ["OPEN", "ACKNOWLEDGED"] },
+      },
+    }),
+    prisma.alert.findMany({
+      where: { source: "dangerous_prompt" },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      include: {
+        aiSystem: { select: { id: true, name: true } },
+      },
     }),
     getSettings(Object.values(OVERSIGHT_ANOMALY_SETTINGS_KEYS)),
     prisma.alert.count({
@@ -245,6 +261,7 @@ export default async function OversightPage() {
     staleProviders,
     latestFailedSyncMessage: latestFailedSync?.errorMessage ?? null,
     exposureFindingCount: exposureSummary.totalFindings,
+    dangerousPromptAlertCount: dangerousPromptAlerts,
     openInvestigations: investigations.length,
     unattributedCoverageGapPct: 100 - attributedCoverage,
     driftAlerts,
@@ -258,7 +275,7 @@ export default async function OversightPage() {
     <div className="space-y-6">
       <PageHeader
         title="AI Oversight"
-        description="Monitor Claude and ChatGPT API usage across your organization"
+        description="Monitor provider usage, prompt-risk signals, costs, and governance drift across your organization"
       >
         <Link href="/oversight/vendors">
           <Button variant="outline">
@@ -277,7 +294,7 @@ export default async function OversightPage() {
         </Link>
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-7">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-8">
         <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" />
         <StatCard title="Total Tokens" value={totalTokens.toLocaleString()} iconName="Eye" variant="default" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" />
@@ -298,6 +315,17 @@ export default async function OversightPage() {
           }
           iconName="AlertTriangle"
           variant={exposureSummary.totalFindings > 0 ? "warning" : "success"}
+        />
+        <StatCard
+          title="Dangerous Prompts"
+          value={dangerousPromptAlerts}
+          description={
+            dangerousPromptAlerts > 0
+              ? "Proxy-detected risky prompt attempts"
+              : "No active dangerous prompt alerts"
+          }
+          iconName="ShieldAlert"
+          variant={dangerousPromptAlerts > 0 ? "danger" : "success"}
         />
         <StatCard
           title="Anomalies"
@@ -524,6 +552,15 @@ export default async function OversightPage() {
                   count: exposureSummary.totalFindings,
                   href: "/oversight/usage",
                   tone: exposureSummary.criticalFindings > 0 ? "critical" as const : "warning" as const,
+                }]
+              : []),
+            ...(dangerousPromptAlerts > 0
+              ? [{
+                  label: "Dangerous prompt attempts detected",
+                  description: "Proxy-scanned prompts matched risky behaviors like jailbreaks, exfiltration, or credential extraction.",
+                  count: dangerousPromptAlerts,
+                  href: "/oversight",
+                  tone: "critical" as const,
                 }]
               : []),
             ...(investigations.length > 0
@@ -912,6 +949,54 @@ export default async function OversightPage() {
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-[var(--text-faint)]">{formatDateTime(row.date)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Dangerous Prompt Alerts</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {recentDangerousPromptAlerts.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No dangerous prompt signals have been detected from proxied traffic recently.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {recentDangerousPromptAlerts.map((alert) => (
+                <div
+                  key={alert.id}
+                  className="rounded-lg border border-[var(--border-subtle)] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={alert.severity === "CRITICAL" ? "critical" : "warning"}>
+                          {alert.severity}
+                        </Badge>
+                        {alert.aiSystem ? (
+                          <Link
+                            href={`/registry/${alert.aiSystem.id}`}
+                            className="text-sm font-medium text-[var(--accent)] hover:underline"
+                          >
+                            {alert.aiSystem.name}
+                          </Link>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-sm font-medium">{alert.title}</p>
+                      {alert.description ? (
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">{alert.description}</p>
+                      ) : null}
+                    </div>
+                    <div className="text-right text-xs text-[var(--text-faint)]">
+                      <p>{formatDateTime(alert.createdAt)}</p>
+                      <p className="mt-1">{alert.status.replace(/_/g, " ")}</p>
+                    </div>
                   </div>
                 </div>
               ))}

@@ -72,8 +72,13 @@ const PROVIDERS: ProviderConfig[] = [
 interface Props {
   hasAnthropicAdminKey: boolean;
   hasOpenAIAdminKey: boolean;
+  hasGeminiBillingConfig: boolean;
   providerSyncEnabled: boolean;
   providerSyncIntervalHours: number;
+  geminiBillingProjectId: string;
+  geminiBillingDataset: string;
+  geminiBillingTable: string;
+  geminiBillingLocation: string;
   anomalyRecentWindowDays: number;
   anomalyBaselineWindowDays: number;
   anomalyMinRecentTokens: number;
@@ -89,8 +94,13 @@ interface Props {
 export function AdminAPISettings({
   hasAnthropicAdminKey,
   hasOpenAIAdminKey,
+  hasGeminiBillingConfig,
   providerSyncEnabled: initialProviderSyncEnabled,
   providerSyncIntervalHours: initialProviderSyncIntervalHours,
+  geminiBillingProjectId: initialGeminiBillingProjectId,
+  geminiBillingDataset: initialGeminiBillingDataset,
+  geminiBillingTable: initialGeminiBillingTable,
+  geminiBillingLocation: initialGeminiBillingLocation,
   anomalyRecentWindowDays: initialAnomalyRecentWindowDays,
   anomalyBaselineWindowDays: initialAnomalyBaselineWindowDays,
   anomalyMinRecentTokens: initialAnomalyMinRecentTokens,
@@ -105,6 +115,15 @@ export function AdminAPISettings({
   const router = useRouter();
   const [providerSyncEnabled, setProviderSyncEnabled] = useState(initialProviderSyncEnabled);
   const [providerSyncIntervalHours, setProviderSyncIntervalHours] = useState(initialProviderSyncIntervalHours);
+  const [geminiBillingProjectId, setGeminiBillingProjectId] = useState(initialGeminiBillingProjectId);
+  const [geminiBillingDataset, setGeminiBillingDataset] = useState(initialGeminiBillingDataset);
+  const [geminiBillingTable, setGeminiBillingTable] = useState(initialGeminiBillingTable);
+  const [geminiBillingLocation, setGeminiBillingLocation] = useState(initialGeminiBillingLocation);
+  const [geminiServiceAccountKey, setGeminiServiceAccountKey] = useState("");
+  const [savingGemini, setSavingGemini] = useState(false);
+  const [testingGemini, setTestingGemini] = useState(false);
+  const [geminiSaveResult, setGeminiSaveResult] = useState<string | null>(null);
+  const [geminiTestResult, setGeminiTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [anomalyRecentWindowDays, setAnomalyRecentWindowDays] = useState(initialAnomalyRecentWindowDays);
   const [anomalyBaselineWindowDays, setAnomalyBaselineWindowDays] = useState(initialAnomalyBaselineWindowDays);
   const [anomalyMinRecentTokens, setAnomalyMinRecentTokens] = useState(initialAnomalyMinRecentTokens);
@@ -160,6 +179,59 @@ export function AdminAPISettings({
       setScheduleResult(`Failed: ${err instanceof Error ? err.message : "Network error"}`);
     } finally {
       setSavingSchedule(false);
+    }
+  }
+
+  async function handleSaveGemini() {
+    setSavingGemini(true);
+    setGeminiSaveResult(null);
+
+    try {
+      const payload: Record<string, string> = {
+        gemini_billing_project_id: geminiBillingProjectId.trim(),
+        gemini_billing_dataset: geminiBillingDataset.trim(),
+        gemini_billing_table: geminiBillingTable.trim(),
+        gemini_billing_location: geminiBillingLocation.trim() || "US",
+      };
+
+      if (geminiServiceAccountKey.trim()) {
+        payload.gemini_billing_service_account_key = geminiServiceAccountKey.trim();
+      }
+
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setGeminiSaveResult("Gemini billing settings saved.");
+        setGeminiServiceAccountKey("");
+        router.refresh();
+      } else {
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error ?? msg; } catch { msg = text || msg; }
+        setGeminiSaveResult(`Failed: ${msg}`);
+      }
+    } catch (err) {
+      setGeminiSaveResult(`Failed: ${err instanceof Error ? err.message : "Network error"}`);
+    } finally {
+      setSavingGemini(false);
+    }
+  }
+
+  async function handleTestGemini() {
+    setTestingGemini(true);
+    setGeminiTestResult(null);
+    try {
+      const res = await fetch("/api/settings/test-gemini-billing", { method: "POST" });
+      const data = await res.json();
+      setGeminiTestResult(res.ok ? data : { success: false, message: data.error ?? `HTTP ${res.status}` });
+    } catch {
+      setGeminiTestResult({ success: false, message: "Test failed." });
+    } finally {
+      setTestingGemini(false);
     }
   }
 
@@ -296,6 +368,108 @@ export function AdminAPISettings({
               <Label className="text-xs">Escalate After Overdue (days)</Label>
               <Input type="number" min={1} value={governanceEscalationOverdueDays} onChange={(e) => setGovernanceEscalationOverdueDays(parseInt(e.target.value || "1", 10))} />
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-subtle)] p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                Google Gemini via Cloud Billing Export
+              </h4>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Pull Gemini and Vertex AI oversight cost data from a Google Cloud Billing export table in BigQuery.
+              </p>
+            </div>
+            {hasGeminiBillingConfig ? (
+              <div className="flex items-center gap-1.5 text-xs text-[var(--success)]">
+                <Wifi className="h-3.5 w-3.5" /> Configured
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs text-[var(--text-faint)]">
+                <WifiOff className="h-3.5 w-3.5" /> Not configured
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-md bg-[var(--bg-base)] p-3">
+            <ol className="space-y-1 text-xs text-[var(--text-muted)]">
+              <li className="flex gap-2"><span className="font-bold shrink-0" style={{ color: "var(--accent)" }}>1.</span> Enable Cloud Billing export to BigQuery for the billing account that covers Gemini / Vertex AI usage.</li>
+              <li className="flex gap-2"><span className="font-bold shrink-0" style={{ color: "var(--accent)" }}>2.</span> Create a Google Cloud service account with BigQuery read access to that dataset.</li>
+              <li className="flex gap-2"><span className="font-bold shrink-0" style={{ color: "var(--accent)" }}>3.</span> Paste the service account JSON plus the BigQuery project, dataset, and billing export table below.</li>
+            </ol>
+            <a
+              href="https://cloud.google.com/billing/docs/how-to/export-data-bigquery-tables"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--accent)] hover:underline"
+            >
+              Google Cloud Billing Export Docs
+            </a>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs">Billing Project ID</Label>
+              <Input value={geminiBillingProjectId} onChange={(e) => setGeminiBillingProjectId(e.target.value)} placeholder="my-gcp-project" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">BigQuery Dataset</Label>
+              <Input value={geminiBillingDataset} onChange={(e) => setGeminiBillingDataset(e.target.value)} placeholder="billing_export" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Billing Export Table</Label>
+              <Input value={geminiBillingTable} onChange={(e) => setGeminiBillingTable(e.target.value)} placeholder="gcp_billing_export_v1_..." />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">BigQuery Location</Label>
+              <Input value={geminiBillingLocation} onChange={(e) => setGeminiBillingLocation(e.target.value)} placeholder="US" />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2 text-xs">
+              <KeyRound className="h-3 w-3" />
+              Service Account JSON
+            </Label>
+            {hasGeminiBillingConfig && !geminiServiceAccountKey ? (
+              <div className="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2">
+                <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+                <span className="text-xs text-[var(--text-muted)] flex-1">Service account key configured</span>
+                <Button size="sm" variant="ghost" onClick={() => setGeminiServiceAccountKey(" ")} className="text-xs h-6 px-2">
+                  Replace
+                </Button>
+              </div>
+            ) : (
+                <Input
+                  type="password"
+                  value={geminiServiceAccountKey.trim()}
+                  onChange={(e) => setGeminiServiceAccountKey(e.target.value)}
+                  placeholder='{"type":"service_account", ...}'
+                  className="font-mono text-xs"
+                />
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={handleSaveGemini} disabled={savingGemini}>
+              {savingGemini ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+              {savingGemini ? "Saving..." : "Save Gemini Settings"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleTestGemini} disabled={testingGemini || !hasGeminiBillingConfig}>
+              {testingGemini ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+              {testingGemini ? "Testing..." : "Test Gemini Connection"}
+            </Button>
+            {geminiSaveResult ? (
+              <span className={`text-xs ${geminiSaveResult.includes("saved") ? "text-[var(--success)]" : "text-[var(--critical)]"}`}>
+                {geminiSaveResult}
+              </span>
+            ) : null}
+            {geminiTestResult ? (
+              <span className={`text-xs ${geminiTestResult.success ? "text-[var(--success)]" : "text-[var(--critical)]"}`}>
+                {geminiTestResult.message}
+              </span>
+            ) : null}
           </div>
         </div>
 

@@ -13,6 +13,11 @@ const SETTINGS_KEYS = [
   "microsoft_shadow_ai_client_secret",
   "microsoft_shadow_ai_scan_enabled",
   "microsoft_shadow_ai_scan_interval_hours",
+  "gemini_billing_service_account_key",
+  "gemini_billing_project_id",
+  "gemini_billing_dataset",
+  "gemini_billing_table",
+  "gemini_billing_location",
   "provider_sync_enabled",
   "provider_sync_interval_hours",
   "anomaly_recent_window_days",
@@ -103,5 +108,10 @@ export async function getSettingsPageData() {
     modelLabel,
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasOpenAIAdminKey: !!settingsMap.openai_admin_key,
+    hasGeminiBillingConfig:
+      !!settingsMap.gemini_billing_service_account_key &&
+      !!settingsMap.gemini_billing_project_id &&
+      !!settingsMap.gemini_billing_dataset &&
+      !!settingsMap.gemini_billing_table,
   };
 }

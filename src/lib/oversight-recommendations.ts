@@ -19,6 +19,7 @@ export function getOversightRecommendations(input: {
   staleProviders: string[];
   latestFailedSyncMessage?: string | null;
   exposureFindingCount: number;
+  dangerousPromptAlertCount: number;
   openInvestigations: number;
   unattributedCoverageGapPct: number;
   driftAlerts: number;
@@ -60,6 +61,17 @@ export function getOversightRecommendations(input: {
       href: "/oversight/usage",
       tone: "critical",
       priority: 90,
+    });
+  }
+
+  if (input.dangerousPromptAlertCount > 0) {
+    pushUnique(recommendations, {
+      key: "dangerous-prompts",
+      title: "Review dangerous prompt alerts",
+      detail: `${input.dangerousPromptAlertCount} prompt-risk alert${input.dangerousPromptAlertCount === 1 ? "" : "s"} need review for potential misuse, exfiltration, or jailbreak attempts.`,
+      href: "/oversight",
+      tone: input.dangerousPromptAlertCount >= 3 ? "critical" : "warning",
+      priority: 92,
     });
   }
 

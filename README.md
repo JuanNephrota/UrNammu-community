@@ -80,6 +80,13 @@ OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 PROXY_SECRET=
 
+# Optional Google Gemini / Vertex AI oversight fallback settings
+GEMINI_BILLING_SERVICE_ACCOUNT_KEY=
+GEMINI_BILLING_PROJECT_ID=
+GEMINI_BILLING_DATASET=
+GEMINI_BILLING_TABLE=
+GEMINI_BILLING_LOCATION=US
+
 # Required if you want background maintenance via cron
 CRON_SECRET=replace-with-a-long-random-secret
 ```
@@ -140,6 +147,7 @@ Integration secrets are stored in `AppSetting`, but secret values are encrypted 
 - provider API keys
 - provider admin API keys
 - Google Workspace service account JSON
+- Google Gemini / BigQuery service account JSON
 - Microsoft 365 Shadow AI client secret
 - proxy secrets
 
@@ -179,6 +187,30 @@ Used for:
 - member inventory
 
 Configure in `Settings > Provider Admin APIs` with an Anthropic admin key.
+
+### Google Gemini / Vertex AI Oversight
+
+Used for:
+
+- Gemini and Vertex AI cost oversight from Google Cloud Billing export data
+- project-level spend attribution for Gemini-related usage
+- normalized Gemini provider buckets inside AI Oversight
+
+Required settings:
+
+- Google Cloud service account JSON with BigQuery read access
+- billing export project ID
+- billing export dataset
+- billing export table
+- BigQuery location
+
+Configure in `Settings > Provider Admin APIs`.
+
+Current implementation notes:
+
+- pulls Gemini / Vertex AI billing data through BigQuery rather than a direct admin usage API
+- normalizes Gemini cost and best-effort project/model attribution into the same `UsageBucket` and `CostBucket` pipeline used by other providers
+- supports connection testing from settings before enabling scheduled syncs
 
 ### Google Workspace
 
@@ -228,6 +260,7 @@ It handles:
 
 - provider admin telemetry sync
 - OpenAI assistant follow-up discovery
+- Google Gemini / Vertex AI billing-export follow-up syncs
 - Google Workspace shadow-AI follow-up scans
 - Microsoft 365 shadow-AI follow-up scans
 
@@ -260,9 +293,10 @@ npm run db:reset
 
 ## Current Implementation Notes
 
-- Admin sync now persists normalized telemetry for OpenAI and Anthropic.
+- Admin sync now persists normalized telemetry for OpenAI, Anthropic, and Google Gemini / Vertex AI billing export data.
 - Main oversight views now use normalized `UsageBucket` and `CostBucket` data.
 - Oversight now includes metadata-driven restricted-data exposure monitoring, governed-system telemetry attribution, investigation workflows, spend budgets, top cost drivers, configurable anomaly thresholds, baseline anomaly detection, model drift tracking, remediation dashboards, and recommendation queues.
+- Oversight now includes proxy-based dangerous prompt detection with risky prompt categories, redacted excerpts, alert generation, and dashboard surfacing for jailbreak, exfiltration, credential, malware, and unsafe-autonomy patterns.
 - Workflow notifications now surface approvals, expiring exceptions, drift, incidents, overdue reviews, and active investigations in the main app shell.
 - Background maintenance now creates renewal and escalation alerts for upcoming governance reviews, expiring exceptions, overdue systems, and unowned or blocked governance items.
 - Policy rules support richer conditions, advisory vs blocking enforcement, and exception-aware evaluation.

@@ -26,6 +26,12 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.MICROSOFT_SHADOW_AI_SCAN_ENABLED,
     microsoft_shadow_ai_scan_interval_hours:
       process.env.MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS,
+    gemini_billing_service_account_key:
+      process.env.GEMINI_BILLING_SERVICE_ACCOUNT_KEY,
+    gemini_billing_project_id: process.env.GEMINI_BILLING_PROJECT_ID,
+    gemini_billing_dataset: process.env.GEMINI_BILLING_DATASET,
+    gemini_billing_table: process.env.GEMINI_BILLING_TABLE,
+    gemini_billing_location: process.env.GEMINI_BILLING_LOCATION,
     provider_sync_enabled: process.env.PROVIDER_SYNC_ENABLED,
     provider_sync_interval_hours: process.env.PROVIDER_SYNC_INTERVAL_HOURS,
     anomaly_recent_window_days: process.env.ANOMALY_RECENT_WINDOW_DAYS,
@@ -102,6 +108,14 @@ export const MICROSOFT_SHADOW_AI_SETTINGS_KEYS = {
   CLIENT_SECRET: "microsoft_shadow_ai_client_secret",
   SCAN_ENABLED: "microsoft_shadow_ai_scan_enabled",
   SCAN_INTERVAL_HOURS: "microsoft_shadow_ai_scan_interval_hours",
+} as const;
+
+export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
+  SERVICE_ACCOUNT_KEY: "gemini_billing_service_account_key",
+  PROJECT_ID: "gemini_billing_project_id",
+  DATASET: "gemini_billing_dataset",
+  TABLE: "gemini_billing_table",
+  LOCATION: "gemini_billing_location",
 } as const;
 
 export const PROVIDER_SYNC_SETTINGS_KEYS = {

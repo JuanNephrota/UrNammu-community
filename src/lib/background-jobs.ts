@@ -1,7 +1,12 @@
 import { prisma } from "./prisma";
 import { fetchOpenAIOrgData, listAssistants } from "./openai-admin";
 import { logger } from "./observability";
-import { syncAnthropicTelemetry, syncClaudeCodeAnalytics, syncOpenAITelemetry } from "./provider-telemetry";
+import {
+  syncAnthropicTelemetry,
+  syncClaudeCodeAnalytics,
+  syncGeminiTelemetry,
+  syncOpenAITelemetry,
+} from "./provider-telemetry";
 import { executeScan } from "./scan-executor";
 import {
   GOVERNANCE_AUTOMATION_SETTINGS_KEYS,
@@ -19,9 +24,11 @@ type BackgroundActor = string;
 export type ProviderSyncJobResult = {
   anthropicUsageSynced: number;
   openaiUsageSynced: number;
+  geminiUsageSynced: number;
   claudeCodeUsageSynced: number;
   anthropicCostBucketsSynced: number;
   openaiCostBucketsSynced: number;
+  geminiCostBucketsSynced: number;
   claudeCodeCostsSynced: number;
   rawSnapshotsStored: number;
   assistantsFound: number;
@@ -140,22 +147,26 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     trigger: triggeredByUserId === "system" ? "scheduler" : "manual",
   });
 
-  const [anthropicResult, openaiResult, claudeCodeResult] = await Promise.all([
+  const [anthropicResult, openaiResult, geminiResult, claudeCodeResult] = await Promise.all([
     syncAnthropicTelemetry(triggeredByUserId),
     syncOpenAITelemetry(triggeredByUserId),
+    syncGeminiTelemetry(triggeredByUserId),
     syncClaudeCodeAnalytics(triggeredByUserId),
   ]);
 
   const results: ProviderSyncJobResult = {
     anthropicUsageSynced: anthropicResult.success ? anthropicResult.usageBucketsUpserted : 0,
     openaiUsageSynced: openaiResult.success ? openaiResult.usageBucketsUpserted : 0,
+    geminiUsageSynced: geminiResult.success ? geminiResult.usageBucketsUpserted : 0,
     claudeCodeUsageSynced: claudeCodeResult.success ? claudeCodeResult.usageBucketsUpserted : 0,
     anthropicCostBucketsSynced: anthropicResult.success ? anthropicResult.costBucketsUpserted : 0,
     openaiCostBucketsSynced: openaiResult.success ? openaiResult.costBucketsUpserted : 0,
+    geminiCostBucketsSynced: geminiResult.success ? geminiResult.costBucketsUpserted : 0,
     claudeCodeCostsSynced: claudeCodeResult.success ? claudeCodeResult.costBucketsUpserted : 0,
     rawSnapshotsStored:
       (anthropicResult.success ? anthropicResult.rawSnapshotsStored : 0) +
       (openaiResult.success ? openaiResult.rawSnapshotsStored : 0) +
+      (geminiResult.success ? geminiResult.rawSnapshotsStored : 0) +
       (claudeCodeResult.success ? claudeCodeResult.rawSnapshotsStored : 0),
     assistantsFound: 0,
     agentsCreated: 0,
@@ -163,6 +174,7 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     errors: [
       ...(anthropicResult.success ? [] : [`Anthropic telemetry: ${anthropicResult.error}`]),
       ...(openaiResult.success ? [] : [`OpenAI telemetry: ${openaiResult.error}`]),
+      ...(geminiResult.success ? [] : [`Gemini telemetry: ${geminiResult.error}`]),
       ...(claudeCodeResult.success ? [] : [`Claude Code analytics: ${claudeCodeResult.error}`]),
     ],
   };
@@ -225,6 +237,7 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     userId: triggeredByUserId,
     anthropicSuccess: anthropicResult.success,
     openaiSuccess: openaiResult.success,
+    geminiSuccess: geminiResult.success,
     claudeCodeSuccess: claudeCodeResult.success,
     errors: results.errors,
     assistantsFound: results.assistantsFound,

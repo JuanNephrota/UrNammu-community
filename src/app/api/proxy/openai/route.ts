@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings";
 import { logger } from "@/lib/observability";
+import { analyzePromptRisk, createPromptRiskAlert } from "@/lib/prompt-risk";
 
 /**
  * OpenAI API Proxy
@@ -80,6 +81,13 @@ export async function POST(req: NextRequest) {
 
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
+  const requestedSystemId = req.headers.get("x-ai-system-id");
+  const linkedSystem = requestedSystemId
+    ? await prisma.aISystem.findUnique({
+        where: { id: requestedSystemId },
+        select: { id: true },
+      })
+    : null;
 
   let body: Record<string, unknown>;
   try {
@@ -89,6 +97,7 @@ export async function POST(req: NextRequest) {
   }
 
   const model = (body.model as string) ?? "unknown";
+  const promptRisk = analyzePromptRisk(body);
   const startTime = Date.now();
   let openaiResponse: Response;
 
@@ -118,8 +127,32 @@ export async function POST(req: NextRequest) {
       totalTokens: 0,
       cost: 0,
       flagged: true,
-      flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+      flagReason:
+        promptRisk.flagReason ??
+        `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+      metadata: {
+        promptRisk: promptRisk.flagged
+          ? {
+              severity: promptRisk.severity,
+              categories: promptRisk.categories,
+              matchedSignals: promptRisk.matchedSignals,
+              excerpt: promptRisk.excerpt,
+            }
+          : undefined,
+        aiSystemId: linkedSystem?.id ?? null,
+      },
     });
+
+    if (promptRisk.flagged) {
+      await createPromptRiskAlert({
+        provider: "chatgpt",
+        model,
+        department,
+        userEmail,
+        aiSystemId: linkedSystem?.id ?? null,
+        analysis: promptRisk,
+      });
+    }
 
     return NextResponse.json(
       { error: "Failed to reach OpenAI API" },
@@ -136,12 +169,13 @@ export async function POST(req: NextRequest) {
   const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
   const cost = calculateCost(model, promptTokens, completionTokens);
 
-  let flagged = false;
-  let flagReason: string | null = null;
+  let flagged = promptRisk.flagged;
+  let flagReason: string | null = promptRisk.flagReason;
 
   if (!openaiResponse.ok) {
     flagged = true;
-    flagReason = `API error: ${openaiResponse.status} ${responseBody.error?.message ?? ""}`;
+    const apiError = `API error: ${openaiResponse.status} ${responseBody.error?.message ?? ""}`.trim();
+    flagReason = flagReason ? `${flagReason}; ${apiError}` : apiError;
   }
 
   await logUsage({
@@ -155,8 +189,38 @@ export async function POST(req: NextRequest) {
     cost,
     flagged,
     flagReason,
-    metadata: { latencyMs, status: openaiResponse.status },
+    metadata: {
+      latencyMs,
+      status: openaiResponse.status,
+      aiSystemId: linkedSystem?.id ?? null,
+      promptRisk: promptRisk.flagged
+        ? {
+            severity: promptRisk.severity,
+            categories: promptRisk.categories,
+            matchedSignals: promptRisk.matchedSignals,
+            excerpt: promptRisk.excerpt,
+          }
+        : undefined,
+    },
   });
+
+  if (promptRisk.flagged) {
+    await createPromptRiskAlert({
+      provider: "chatgpt",
+      model,
+      department,
+      userEmail,
+      aiSystemId: linkedSystem?.id ?? null,
+      analysis: promptRisk,
+    });
+    logger.warn("openai_proxy.dangerous_prompt_detected", {
+      model,
+      department,
+      userEmail,
+      categories: promptRisk.categories,
+      aiSystemId: linkedSystem?.id ?? null,
+    });
+  }
 
   return NextResponse.json(responseBody, {
     status: openaiResponse.status,

@@ -7,6 +7,7 @@ test("prioritizes budget and investigation recommendations", () => {
     staleProviders: [],
     latestFailedSyncMessage: null,
     exposureFindingCount: 1,
+    dangerousPromptAlertCount: 0,
     openInvestigations: 2,
     unattributedCoverageGapPct: 42,
     driftAlerts: 1,

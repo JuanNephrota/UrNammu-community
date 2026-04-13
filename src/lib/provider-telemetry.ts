@@ -16,6 +16,12 @@ import {
   listAssistants,
 } from "./openai-admin";
 import {
+  getGeminiBillingOverview,
+  getGeminiBillingRows,
+  getGeminiUsageMetadata,
+  isGeminiBillingConfigured,
+} from "./gemini-admin";
+import {
   getClaudeCodeActorExternalId,
   getClaudeCodeReportRange,
   isClaudeCodeAnalyticsAvailable,
@@ -32,7 +38,7 @@ type SyncSummary = {
   apiUsageLogsCreated: number;
 };
 
-type SyncProvider = "anthropic" | "openai" | "claude_code";
+type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini";
 
 type SyncResult =
   | ({ provider: SyncProvider; success: true } & SyncSummary)
@@ -176,7 +182,7 @@ async function upsertDerivedUsageLog(args: {
 }
 
 export async function getAdminSyncOverview() {
-  const [latestRuns, anthropicLive, openaiLive] = await Promise.all([
+  const [latestRuns, anthropicLive, openaiLive, geminiLive] = await Promise.all([
     prisma.providerSyncRun.findMany({
       where: { syncType: "telemetry" },
       orderBy: { startedAt: "desc" },
@@ -188,11 +194,19 @@ export async function getAdminSyncOverview() {
     isOpenAIAdminConfigured().then((configured) =>
       configured ? fetchOpenAIOrgData().catch((err) => ({ error: err instanceof Error ? err.message : "Failed" })) : null
     ),
+    isGeminiBillingConfigured().then((configured) =>
+      configured
+        ? getGeminiBillingOverview().catch((err) => ({
+            error: err instanceof Error ? err.message : "Failed",
+          }))
+        : null
+    ),
   ]);
 
   return {
     anthropic: anthropicLive,
     openai: openaiLive,
+    gemini: geminiLive,
     syncRuns: latestRuns,
   };
 }
@@ -591,6 +605,168 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "claude_code", success: false, error: errorMessage };
+  }
+}
+
+export async function syncGeminiTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  if (!(await isGeminiBillingConfigured())) {
+    return {
+      provider: "gemini",
+      success: false,
+      error: "Google Gemini billing export is not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("gemini", triggeredByUserId);
+
+  try {
+    const rows = await getGeminiBillingRows(7);
+
+    await storeSnapshot(syncRun.id, "gemini", "billing_export_summary", {
+      rows: rows.length,
+      sample: rows.slice(0, 10),
+    });
+
+    const rawSnapshotsStored = 1;
+    let projectsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    let costBucketsUpserted = 0;
+
+    for (const row of rows) {
+      const bucketStart = new Date(`${row.usage_date}T00:00:00.000Z`);
+      const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+      const { model, requestCount, metadata } = getGeminiUsageMetadata(row);
+      const dimensionKey = makeDimensionKey({
+        projectExternalId: row.project_id,
+        model,
+        sku: row.sku_description,
+        date: row.usage_date,
+      });
+
+      await prisma.usageBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: "gemini",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: {
+          model,
+          projectExternalId: row.project_id,
+          projectName: row.project_name,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          requestCount,
+          metadata: toJsonValue(metadata),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "gemini",
+          bucketStart,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          model,
+          projectExternalId: row.project_id,
+          projectName: row.project_name,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          requestCount,
+          metadata: toJsonValue(metadata),
+          syncRunId: syncRun.id,
+        },
+      });
+      usageBucketsUpserted++;
+
+      await prisma.costBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: "gemini",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: {
+          amount: row.total_cost,
+          currency: "usd",
+          model,
+          projectExternalId: row.project_id,
+          projectName: row.project_name,
+          lineItem: row.sku_description,
+          metadata: toJsonValue(metadata),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "gemini",
+          bucketStart,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          amount: row.total_cost,
+          currency: "usd",
+          model,
+          projectExternalId: row.project_id,
+          projectName: row.project_name,
+          lineItem: row.sku_description,
+          metadata: toJsonValue(metadata),
+          syncRunId: syncRun.id,
+        },
+      });
+      costBucketsUpserted++;
+
+      if (row.project_id) {
+        await prisma.providerProject.upsert({
+          where: { provider_externalId: { provider: "gemini", externalId: row.project_id } },
+          update: {
+            name: row.project_name,
+            status: "active",
+            metadata: toJsonValue({
+              serviceDescription: row.service_description,
+              skuDescription: row.sku_description,
+            }),
+            lastSeenAt: new Date(),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "gemini",
+            externalId: row.project_id,
+            name: row.project_name,
+            status: "active",
+            metadata: toJsonValue({
+              serviceDescription: row.service_description,
+              skuDescription: row.sku_description,
+            }),
+            syncRunId: syncRun.id,
+          },
+        });
+        projectsUpserted++;
+      }
+    }
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted,
+      rawSnapshotsStored,
+      projectsUpserted,
+      actorsUpserted: 0,
+      apiUsageLogsCreated: 0,
+    };
+
+    await completeSyncRun(syncRun.id, summary, {
+      billingRows: rows.length,
+    });
+
+    return { provider: "gemini", success: true, syncRunId: syncRun.id, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "gemini", success: false, error: errorMessage };
   }
 }
 
