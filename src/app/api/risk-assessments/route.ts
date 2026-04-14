@@ -92,21 +92,31 @@ export async function POST(req: NextRequest) {
     else if (overallScore >= 40) riskLevel = "MEDIUM";
     else if (overallScore >= 20) riskLevel = "LOW";
 
-    await prisma.aISystem.update({
-      where: { id: parsed.data.aiSystemId },
-      data: { riskLevel },
-    });
+    try {
+      await prisma.aISystem.update({
+        where: { id: parsed.data.aiSystemId },
+        data: { riskLevel },
+      });
+    } catch {
+      // System may have been deleted after assessment creation — log but don't fail the request
+      console.error(`Failed to update risk level for system ${parsed.data.aiSystemId}`);
+    }
 
     // Create alert if high risk
     if (overallScore >= 60) {
-      await prisma.alert.create({
-        data: {
-          title: `High risk score detected`,
-          description: `AI system scored ${overallScore.toFixed(1)} in risk assessment`,
-          severity: overallScore >= 80 ? "CRITICAL" : "HIGH",
-          source: "risk_center",
-        },
-      });
+      try {
+        await prisma.alert.create({
+          data: {
+            title: `High risk score detected`,
+            description: `AI system scored ${overallScore.toFixed(1)} in risk assessment`,
+            severity: overallScore >= 80 ? "CRITICAL" : "HIGH",
+            source: "risk_center",
+            aiSystemId: parsed.data.aiSystemId,
+          },
+        });
+      } catch {
+        console.error(`Failed to create high-risk alert for system ${parsed.data.aiSystemId}`);
+      }
     }
 
     await createAuditLog({

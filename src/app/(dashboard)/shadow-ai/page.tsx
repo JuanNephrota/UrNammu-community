@@ -109,11 +109,11 @@ export default function ShadowAIPage() {
     fetch("/api/discovered-tools/scan")
       .then((r) => r.json())
       .then(setScanStatus)
-      .catch(() => {});
+      .catch((err) => console.error("Failed to fetch scan status:", err));
     fetch("/api/discovered-tools/ingest?take=10")
       .then((r) => r.json())
       .then(setIngestionRuns)
-      .catch(() => {});
+      .catch((err) => console.error("Failed to fetch ingestion runs:", err));
   }, [fetchTools]);
 
   async function handleScan(provider: "google_workspace" | "microsoft_365") {

@@ -57,11 +57,15 @@ export async function POST(req: NextRequest) {
 
     // Support batch inserts
     const entries = Array.isArray(body) ? body : [body];
-    const results = [];
+    const created = [];
+    const errors: { index: number; issues: z.ZodIssue[] }[] = [];
 
-    for (const entry of entries) {
-      const parsed = createUsageSchema.safeParse(entry);
-      if (!parsed.success) continue;
+    for (let i = 0; i < entries.length; i++) {
+      const parsed = createUsageSchema.safeParse(entries[i]);
+      if (!parsed.success) {
+        errors.push({ index: i, issues: parsed.error.issues });
+        continue;
+      }
 
       const log = await prisma.aPIUsageLog.create({
         data: {
@@ -69,9 +73,9 @@ export async function POST(req: NextRequest) {
           userId: session.user.userId,
         },
       });
-      results.push(log);
+      created.push(log);
     }
 
-    return NextResponse.json(results, { status: 201 });
+    return NextResponse.json({ created, errors }, { status: 201 });
   });
 }

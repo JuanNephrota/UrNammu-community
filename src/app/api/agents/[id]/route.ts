@@ -39,6 +39,11 @@ export async function PUT(
       return NextResponse.json({ error: "Validation failed" }, { status: 400 });
     }
 
+    const existing = await prisma.aIAgent.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
+
     const agent = await prisma.aIAgent.update({
       where: { id },
       data: parsed.data,

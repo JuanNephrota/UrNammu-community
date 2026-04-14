@@ -761,6 +761,9 @@ model Alert {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([aiSystemId])
+  @@index([status, createdAt])
 }
 
 model Investigation {
@@ -807,16 +810,20 @@ model SpendBudget {
 
 model AuditLog {
   id         String    @id @default(cuid())
-  user       User      @relation(fields: [userId], references: [id])
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId     String
   action     String
   entityType String
   entityId   String
-  aiSystem   AISystem? @relation("SystemAuditLogs", fields: [aiSystemId], references: [id])
+  aiSystem   AISystem? @relation("SystemAuditLogs", fields: [aiSystemId], references: [id], onDelete: SetNull)
   aiSystemId String?
-  agent      AIAgent?  @relation("AgentAuditLogs", fields: [agentId], references: [id])
+  agent      AIAgent?  @relation("AgentAuditLogs", fields: [agentId], references: [id], onDelete: SetNull)
   agentId    String?
   changes    Json?
 
   createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([aiSystemId])
+  @@index([agentId])
 }

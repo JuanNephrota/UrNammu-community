@@ -107,17 +107,20 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           if (!credentials?.email) return null;
           const email = String(credentials.email);
 
-          let user = await prisma.user.findUnique({
-            where: { email },
-          });
-
-          if (!user && !isProduction) {
-            user = await prisma.user.create({
-              data: {
+          let user;
+          if (!isProduction) {
+            user = await prisma.user.upsert({
+              where: { email },
+              update: {},
+              create: {
                 email,
                 name: email.split("@")[0],
                 role: "VIEWER",
               },
+            });
+          } else {
+            user = await prisma.user.findUnique({
+              where: { email },
             });
           }
 
