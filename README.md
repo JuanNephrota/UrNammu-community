@@ -320,9 +320,9 @@ npm run db:reset
 
 ### Oversight
 
-- [ ] Time range picker and provider/model/project filters on usage pages
-- [ ] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
-- [ ] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
+- [x] Time range picker and provider/model/project filters on usage pages
+- [x] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
+- [x] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
 - [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)
 - [ ] CSV/PDF export of usage logs and scheduled spend summary reports
 - [ ] Audit-ready reporting in board, auditor, and regulator-focused export formats

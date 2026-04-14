@@ -1,684 +1,270 @@
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { formatDate, formatDateTime } from "@/lib/utils";
 import {
-  buildModelDriftFindings,
-  buildTelemetryAnomalies,
   buildCostLookup,
-  buildDataExposureFindings,
-  buildTelemetryActivityRows,
-  getOversightAnomalyOptions,
   getBucketIdentityKey,
   getTelemetryAttributionLabel,
-  summarizeDataExposureFindings,
+  buildTelemetryActivityRows,
 } from "@/lib/oversight-telemetry";
-import { LinkUsageDialog } from "@/components/oversight/link-usage-dialog";
-import { getSettings, OVERSIGHT_ANOMALY_SETTINGS_KEYS } from "@/lib/settings";
+import { UsageDashboard } from "@/components/oversight/usage-dashboard";
 
 export default async function UsageLogsPage() {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const [usageBuckets, costBuckets, syncRuns, anomalySettings, dangerousPromptLogs] = await Promise.all([
-    prisma.usageBucket.findMany({
-      where: { bucketStart: { gte: thirtyDaysAgo } },
-      orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
-      take: 300,
-      include: { aiSystem: { select: { id: true, name: true, vendor: true, modelType: true, department: true, status: true, riskLevel: true, dataSensitivity: true } } },
-    }),
-    prisma.costBucket.findMany({
-      where: { bucketStart: { gte: thirtyDaysAgo } },
-      orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
-      take: 300,
-    }),
-    prisma.providerSyncRun.findMany({
-      where: { syncType: "telemetry" },
-      orderBy: { startedAt: "desc" },
-      take: 8,
-    }),
-    getSettings(Object.values(OVERSIGHT_ANOMALY_SETTINGS_KEYS)),
-    prisma.aPIUsageLog.findMany({
-      where: {
-        flagged: true,
-      },
-      orderBy: { createdAt: "desc" },
-      take: 40,
-      include: {
-        user: { select: { name: true, email: true } },
-      },
-    }),
-  ]);
-  const dangerousPromptFindings = dangerousPromptLogs.filter((log) => {
-    const metadata = log.promptMetadata as Record<string, unknown> | null;
-    return !!metadata?.promptRisk;
-  }).slice(0, 12);
+  // Fetch initial 30-day data + filter options in parallel
+  const [usageBuckets, costBuckets, allProviders, allModels, allProjects] =
+    await Promise.all([
+      prisma.usageBucket.findMany({
+        where: { bucketStart: { gte: thirtyDaysAgo } },
+        orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
+        take: 500,
+        include: {
+          aiSystem: {
+            select: {
+              id: true,
+              name: true,
+              vendor: true,
+              department: true,
+            },
+          },
+        },
+      }),
+      prisma.costBucket.findMany({
+        where: { bucketStart: { gte: thirtyDaysAgo } },
+        orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
+        take: 500,
+      }),
+      prisma.usageBucket.groupBy({
+        by: ["provider"],
+        where: {
+          bucketStart: {
+            gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+          },
+        },
+      }),
+      prisma.usageBucket.groupBy({
+        by: ["model"],
+        where: {
+          bucketStart: {
+            gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+          },
+          model: { not: null },
+        },
+      }),
+      prisma.usageBucket.groupBy({
+        by: ["projectName"],
+        where: {
+          bucketStart: {
+            gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+          },
+          projectName: { not: null },
+        },
+      }),
+    ]);
 
   const costMap = buildCostLookup(costBuckets);
 
-  const modelSummary = new Map<
-    string,
-    { label: string; provider: string; tokens: number; cost: number; requests: number }
-  >();
-  const projectSummary = new Map<
-    string,
-    { label: string; tokens: number; cost: number; providers: Set<string> }
-  >();
+  // Build summary
+  const totalTokens = usageBuckets.reduce((s, b) => s + b.totalTokens, 0);
+  const totalInputTokens = usageBuckets.reduce(
+    (s, b) => s + b.inputTokens,
+    0
+  );
+  const totalOutputTokens = usageBuckets.reduce(
+    (s, b) => s + b.outputTokens,
+    0
+  );
+  const totalRequests = usageBuckets.reduce(
+    (s, b) => s + (b.requestCount ?? 0),
+    0
+  );
+  const totalCost = costBuckets.reduce((s, b) => s + b.amount, 0);
+  const costPerRequest = totalRequests > 0 ? totalCost / totalRequests : 0;
 
+  // Input/output cost split (weighted: output tokens ~3x more expensive)
+  const weightedInput = totalInputTokens;
+  const weightedOutput = totalOutputTokens * 3;
+  const weightedTotal = weightedInput + weightedOutput;
+  const inputTokenCost =
+    weightedTotal > 0 ? totalCost * (weightedInput / weightedTotal) : 0;
+  const outputTokenCost =
+    weightedTotal > 0 ? totalCost * (weightedOutput / weightedTotal) : 0;
+
+  // Monthly forecast
+  const daysInMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0
+  ).getDate();
+  const currentDay = Math.min(daysInMonth, now.getDate());
+  const elapsedPct = currentDay / daysInMonth;
+  const projectedMonthEndSpend =
+    elapsedPct > 0 ? totalCost / elapsedPct : null;
+
+  // Daily usage
+  const dailyMap = new Map<
+    string,
+    {
+      date: string;
+      tokens: number;
+      cost: number;
+      inputTokens: number;
+      outputTokens: number;
+    }
+  >();
   for (const bucket of usageBuckets) {
-    const bucketCost = costMap.get(getBucketIdentityKey(bucket)) ?? 0;
+    const dateKey = bucket.bucketStart.toISOString().slice(0, 10);
+    const existing = dailyMap.get(dateKey) ?? {
+      date: dateKey,
+      tokens: 0,
+      cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+    existing.tokens += bucket.totalTokens;
+    existing.inputTokens += bucket.inputTokens;
+    existing.outputTokens += bucket.outputTokens;
+    existing.cost += costMap.get(getBucketIdentityKey(bucket)) ?? 0;
+    dailyMap.set(dateKey, existing);
+  }
+  const dailyUsage = [...dailyMap.values()].sort((a, b) =>
+    a.date.localeCompare(b.date)
+  );
 
-    const modelKey = `${bucket.provider}:${bucket.model ?? "unknown"}`;
-    const modelItem = modelSummary.get(modelKey) ?? {
+  // Daily cost breakdown
+  const dailyCostBreakdown = dailyUsage.map((d) => {
+    const dayWeightedInput = d.inputTokens;
+    const dayWeightedOutput = d.outputTokens * 3;
+    const dayWeightedTotal = dayWeightedInput + dayWeightedOutput;
+    return {
+      date: d.date,
+      inputCost:
+        dayWeightedTotal > 0
+          ? d.cost * (dayWeightedInput / dayWeightedTotal)
+          : 0,
+      outputCost:
+        dayWeightedTotal > 0
+          ? d.cost * (dayWeightedOutput / dayWeightedTotal)
+          : 0,
+      totalCost: d.cost,
+    };
+  });
+
+  // Top models
+  const modelMap = new Map<
+    string,
+    {
+      label: string;
+      provider: string;
+      tokens: number;
+      cost: number;
+      requests: number;
+      inputTokens: number;
+      outputTokens: number;
+    }
+  >();
+  for (const bucket of usageBuckets) {
+    const key = `${bucket.provider}:${bucket.model ?? "unknown"}`;
+    const item = modelMap.get(key) ?? {
       label: bucket.model ?? "Unspecified model",
       provider: bucket.provider,
       tokens: 0,
       cost: 0,
       requests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
     };
-    modelItem.tokens += bucket.totalTokens;
-    modelItem.cost += bucketCost;
-    modelItem.requests += bucket.requestCount ?? 0;
-    modelSummary.set(modelKey, modelItem);
-
-    const projectLabel = getTelemetryAttributionLabel(bucket, bucket.aiSystem?.name);
-    const projectItem = projectSummary.get(projectLabel) ?? {
-      label: projectLabel,
-      tokens: 0,
-      cost: 0,
-      providers: new Set<string>(),
-    };
-    projectItem.tokens += bucket.totalTokens;
-    projectItem.cost += bucketCost;
-    projectItem.providers.add(bucket.provider);
-    projectSummary.set(projectLabel, projectItem);
+    item.tokens += bucket.totalTokens;
+    item.inputTokens += bucket.inputTokens;
+    item.outputTokens += bucket.outputTokens;
+    item.cost += costMap.get(getBucketIdentityKey(bucket)) ?? 0;
+    item.requests += bucket.requestCount ?? 0;
+    modelMap.set(key, item);
   }
-
-  const topModels = [...modelSummary.values()]
-    .sort((a, b) => b.tokens - a.tokens)
-    .slice(0, 8);
-  const topProjects = [...projectSummary.values()]
+  const topModels = [...modelMap.values()]
     .sort((a, b) => b.tokens - a.tokens)
     .slice(0, 8);
 
-  const totalTokens = usageBuckets.reduce((sum, bucket) => sum + bucket.totalTokens, 0);
-  const totalRequests = usageBuckets.reduce(
-    (sum, bucket) => sum + (bucket.requestCount ?? 0),
-    0
-  );
-  const totalCost = costBuckets.reduce((sum, bucket) => sum + bucket.amount, 0);
-
-  const tableRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
-  const recentTelemetry = buildTelemetryActivityRows(usageBuckets, costMap, 30);
-  const telemetryAnomalyOptions = getOversightAnomalyOptions(anomalySettings);
-  const telemetryAnomalies = buildTelemetryAnomalies(usageBuckets, costMap, {
-    ...telemetryAnomalyOptions,
-    now,
-    take: 12,
-  });
-  const modelDriftFindings = buildModelDriftFindings(usageBuckets, costMap, 12);
-  const exposureFindings = buildDataExposureFindings(usageBuckets, costMap, 20);
-  const exposureSummary = summarizeDataExposureFindings(exposureFindings);
-
-  // Group unattributed buckets (no aiSystemId) by label+provider+model for remediation
-  const unattributedGroups = new Map<
+  // Top projects
+  const projectMap = new Map<
     string,
-    { label: string; provider: string; model: string; tokens: number; bucketIds: string[] }
+    { label: string; tokens: number; cost: number; providers: string[] }
   >();
   for (const bucket of usageBuckets) {
-    if (bucket.aiSystemId) continue;
-    const label = getTelemetryAttributionLabel(bucket);
-    const groupKey = `${label}::${bucket.provider}::${bucket.model ?? "unknown"}`;
-    const existing = unattributedGroups.get(groupKey) ?? {
+    const label = getTelemetryAttributionLabel(bucket, bucket.aiSystem?.name);
+    const item = projectMap.get(label) ?? {
       label,
-      provider: bucket.provider,
-      model: bucket.model ?? "unknown",
       tokens: 0,
-      bucketIds: [],
+      cost: 0,
+      providers: [],
     };
-    existing.tokens += bucket.totalTokens;
-    existing.bucketIds.push(bucket.id);
-    unattributedGroups.set(groupKey, existing);
+    item.tokens += bucket.totalTokens;
+    item.cost += costMap.get(getBucketIdentityKey(bucket)) ?? 0;
+    if (!item.providers.includes(bucket.provider)) {
+      item.providers.push(bucket.provider);
+    }
+    projectMap.set(label, item);
   }
-  const unattributedList = [...unattributedGroups.values()]
+  const topProjects = [...projectMap.values()]
     .sort((a, b) => b.tokens - a.tokens)
-    .slice(0, 20);
+    .slice(0, 8);
+
+  // Activity rows
+  const activityRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
+
+  const defaultStartDate = thirtyDaysAgo.toISOString().slice(0, 10);
+  const defaultEndDate = now.toISOString().slice(0, 10);
+
+  const initialData = {
+    summary: {
+      totalTokens,
+      totalInputTokens,
+      totalOutputTokens,
+      totalRequests,
+      totalCost,
+      costPerRequest,
+      inputTokenCost,
+      outputTokenCost,
+      projectedMonthEndSpend,
+    },
+    dailyUsage,
+    dailyCostBreakdown,
+    topModels,
+    topProjects,
+    activityRows: activityRows.map((r) => ({
+      ...r,
+      date: r.date.toISOString(),
+    })),
+    filterOptions: {
+      providers: allProviders.map((p) => p.provider).sort(),
+      models: allModels
+        .map((m) => m.model)
+        .filter(Boolean)
+        .sort() as string[],
+      projects: allProjects
+        .map((p) => p.projectName)
+        .filter(Boolean)
+        .sort() as string[],
+    },
+  };
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Usage Telemetry"
-        description="Normalized provider-admin telemetry for usage, cost, and attribution drill-down"
+        description="Provider usage, cost breakdown, and attribution drill-down with time range and filter controls"
       />
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Usage Buckets
-            </p>
-            <p className="mt-2 text-3xl font-semibold">{usageBuckets.length}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">Last 30 days</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Anomalies
-            </p>
-            <p className="mt-2 text-3xl font-semibold">{telemetryAnomalies.length}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Provider, model, or project spikes
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Model Drift
-            </p>
-            <p className="mt-2 text-3xl font-semibold">{modelDriftFindings.length}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Governed systems with provider/model mismatch
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Token Volume
-            </p>
-            <p className="mt-2 text-3xl font-semibold">{totalTokens.toLocaleString()}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              {totalRequests.toLocaleString()} requests tracked
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Estimated Cost
-            </p>
-            <p className="mt-2 text-3xl font-semibold">${totalCost.toFixed(2)}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">From provider cost buckets</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Sync Coverage
-            </p>
-            <p className="mt-2 text-3xl font-semibold">
-              {new Set(syncRuns.map((run) => run.provider)).size}
-            </p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">Providers synced recently</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Dangerous Prompts
-            </p>
-            <p className="mt-2 text-3xl font-semibold">{dangerousPromptFindings.length}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Recent proxy-flagged prompt attempts
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">
-              Exposure Signals
-            </p>
-            <p className="mt-2 text-3xl font-semibold">{exposureSummary.totalFindings}</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              {exposureSummary.restrictedSystemFindings} linked to restricted systems
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Dangerous Prompt Findings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {dangerousPromptFindings.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">
-              No proxy-scanned prompts were flagged for dangerous prompt behavior recently.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {dangerousPromptFindings.map((log) => {
-                const promptRisk = (log.promptMetadata as Record<string, unknown> | null)?.promptRisk as
-                  | Record<string, unknown>
-                  | undefined;
-                const categories = Array.isArray(promptRisk?.categories)
-                  ? (promptRisk?.categories as string[])
-                  : [];
-                const excerpt =
-                  typeof promptRisk?.excerpt === "string" ? promptRisk.excerpt : null;
-
-                return (
-                  <div
-                    key={log.id}
-                    className="rounded-lg border border-[var(--border-subtle)] p-4"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="critical">FLAGGED</Badge>
-                          <Badge variant="info" className="capitalize">{log.provider}</Badge>
-                        </div>
-                        <p className="mt-2 text-sm font-medium">{log.flagReason ?? "Dangerous prompt signal"}</p>
-                        <p className="mt-1 text-xs text-[var(--text-muted)]">
-                          {log.user?.name ?? log.user?.email ?? "Unknown user"} · {log.model ?? "Unknown model"} · {log.department ?? "No department"}
-                        </p>
-                        {categories.length > 0 ? (
-                          <p className="mt-2 text-xs text-[var(--text-faint)]">
-                            Categories: {categories.join(", ")}
-                          </p>
-                        ) : null}
-                        {excerpt ? (
-                          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-                            {excerpt}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="text-right text-xs text-[var(--text-faint)]">
-                        <p>{formatDateTime(log.createdAt)}</p>
-                        <p className="mt-1">{log.totalTokens.toLocaleString()} tokens</p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Telemetry Anomalies</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {telemetryAnomalies.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">
-              No usage or cost spikes exceeded the current baseline thresholds.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {telemetryAnomalies.map((anomaly) => (
-                <div
-                  key={anomaly.id}
-                  className="rounded-lg border border-[var(--border-subtle)] p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            anomaly.severity === "critical"
-                              ? "critical"
-                              : anomaly.severity === "warning"
-                                ? "warning"
-                                : "info"
-                          }
-                        >
-                          {anomaly.scope.toUpperCase()}
-                        </Badge>
-                        <p className="text-sm font-medium">{anomaly.label}</p>
-                      </div>
-                      <p className="mt-1 text-xs text-[var(--text-muted)]">
-                        {anomaly.reasons.join(" ")}
-                      </p>
-                    </div>
-                    <div className="text-right text-xs text-[var(--text-faint)]">
-                      <p>{anomaly.recentTokens.toLocaleString()} recent tokens</p>
-                      <p>${anomaly.recentCost.toFixed(4)} recent cost</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Model Drift Tracking</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {modelDriftFindings.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">
-              No governed systems show provider or model-family drift in recent telemetry.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {modelDriftFindings.map((finding) => (
-                <div
-                  key={finding.id}
-                  className="rounded-lg border border-[var(--border-subtle)] p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            finding.severity === "critical"
-                              ? "critical"
-                              : finding.severity === "warning"
-                                ? "warning"
-                                : "info"
-                          }
-                        >
-                          DRIFT
-                        </Badge>
-                        <p className="text-sm font-medium">{finding.systemName}</p>
-                      </div>
-                      <p className="mt-1 text-xs text-[var(--text-muted)]">
-                        {finding.reasons.join(" ")}
-                      </p>
-                      <p className="mt-2 text-xs text-[var(--text-faint)]">
-                        Expected: {finding.expectedVendor ?? "Unknown vendor"} / {finding.expectedModelType ?? "Unknown model"} ·
-                        Observed: {finding.observedProviders.join(", ")} / {finding.observedModels.join(", ")}
-                      </p>
-                    </div>
-                    <p className="text-xs text-[var(--text-faint)]">{formatDateTime(finding.lastSeen)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Restricted-Data Exposure Findings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {exposureFindings.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">
-              No restricted-data signals were detected from the last 30 days of provider-visible telemetry.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {exposureFindings.map((finding) => (
-                <div
-                  key={finding.id}
-                  className="rounded-lg border border-[var(--border-subtle)] p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            finding.severity === "critical"
-                              ? "critical"
-                              : finding.severity === "warning"
-                                ? "warning"
-                                : "info"
-                          }
-                        >
-                          {finding.severity.toUpperCase()}
-                        </Badge>
-                        <Badge variant="info" className="capitalize">
-                          {finding.provider}
-                        </Badge>
-                        {finding.systemSensitivity && (
-                          <Badge variant={finding.systemSensitivity === "RESTRICTED" ? "critical" : "warning"}>
-                            {finding.systemSensitivity}
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="mt-2 text-sm font-medium">
-                        {finding.attribution} · {finding.model}
-                      </p>
-                      <p className="mt-1 text-xs text-[var(--text-muted)]">
-                        {finding.reasons.join(" ")}
-                      </p>
-                      <p className="mt-2 text-xs text-[var(--text-faint)]">
-                        Indicators: {finding.matchedIndicators.join(", ") || "Sensitivity markers only"} · Visibility:{" "}
-                        {finding.visibilitySignals.join(", ")}
-                      </p>
-                    </div>
-                    <div className="text-right text-xs text-[var(--text-faint)]">
-                      <p>{formatDateTime(finding.date)}</p>
-                      <p className="mt-1">{finding.tokens.toLocaleString()} tokens</p>
-                      <p className="mt-1">{finding.requests.toLocaleString()} requests</p>
-                      <p className="mt-1">${finding.cost.toFixed(4)}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {unattributedList.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Unattributed Usage ({unattributedList.reduce((s, g) => s + g.bucketIds.length, 0)} buckets)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-[var(--text-muted)] mb-4">
-              These usage buckets are not linked to a registered AI system. Link them to track usage against governed systems.
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--border-subtle)]">
-                    <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Attribution</th>
-                    <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Provider</th>
-                    <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Model</th>
-                    <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Tokens</th>
-                    <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Buckets</th>
-                    <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unattributedList.map((group, i) => (
-                    <tr key={i} className="border-b border-[var(--border-subtle)]">
-                      <td className="px-3 py-3 text-[var(--text-secondary)]">{group.label}</td>
-                      <td className="px-3 py-3">
-                        <Badge variant="info" className="capitalize">{group.provider}</Badge>
-                      </td>
-                      <td className="px-3 py-3 font-mono text-xs text-[var(--text-secondary)]">{group.model}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{group.tokens.toLocaleString()}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{group.bucketIds.length}</td>
-                      <td className="px-3 py-3 text-right">
-                        <LinkUsageDialog
-                          bucketIds={group.bucketIds}
-                          label={group.label}
-                          bucketCount={group.bucketIds.length}
-                          tokenCount={group.tokens}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader>
-            <CardTitle>Normalized Usage Activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {tableRows.length === 0 ? (
-              <p className="text-sm text-[var(--text-muted)]">No usage telemetry yet.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--border-subtle)]">
-                      <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Date</th>
-                      <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Provider</th>
-                      <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Model</th>
-                      <th className="px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Project / Actor</th>
-                      <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Requests</th>
-                      <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Tokens</th>
-                      <th className="px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableRows.map((row) => (
-                      <tr key={row.id} className="border-b border-[var(--border-subtle)]">
-                        <td className="px-3 py-3 text-xs text-[var(--text-faint)] whitespace-nowrap">
-                          {formatDate(row.date)}
-                        </td>
-                        <td className="px-3 py-3">
-                          <Badge variant="info" className="capitalize">
-                            {row.provider}
-                          </Badge>
-                        </td>
-                        <td className="px-3 py-3 font-mono text-xs text-[var(--text-secondary)]">
-                          {row.model}
-                        </td>
-                        <td className="px-3 py-3 text-[var(--text-secondary)]">
-                          {row.attribution}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums">
-                          {row.requests.toLocaleString()}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums">
-                          {row.tokens.toLocaleString()}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums">
-                          ${row.cost.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Top Models</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {topModels.length === 0 ? (
-                <p className="text-sm text-[var(--text-muted)]">No model-level telemetry yet.</p>
-              ) : (
-                topModels.map((item) => (
-                  <div
-                    key={`${item.provider}:${item.label}`}
-                    className="rounded-lg border border-[var(--border-subtle)] p-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">{item.label}</p>
-                        <p className="text-xs text-[var(--text-faint)] capitalize">
-                          {item.provider}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold">
-                          {item.tokens.toLocaleString()}
-                        </p>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          ${item.cost.toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Projects and Actors</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {topProjects.length === 0 ? (
-                <p className="text-sm text-[var(--text-muted)]">No project or actor attribution yet.</p>
-              ) : (
-                topProjects.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-lg border border-[var(--border-subtle)] p-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">{item.label}</p>
-                        <p className="text-xs text-[var(--text-faint)]">
-                          {[...item.providers].join(", ")}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold">
-                          {item.tokens.toLocaleString()}
-                        </p>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          ${item.cost.toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Telemetry Activity</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {recentTelemetry.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">No recent telemetry activity yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {recentTelemetry.map((row) => (
-                <div
-                  key={row.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border-subtle)] p-3"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="info" className="capitalize">
-                        {row.provider}
-                      </Badge>
-                      <span className="font-mono text-xs text-[var(--text-secondary)]">
-                        {row.model}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      {row.attribution} · {row.tokens.toLocaleString()} tokens · ${row.cost.toFixed(4)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="mt-1 text-xs text-[var(--text-faint)]">
-                      {formatDateTime(row.date)}
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--text-muted)]">
-                      {row.requests.toLocaleString()} requests
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <UsageDashboard
+        initialData={initialData}
+        initialFilters={{
+          startDate: defaultStartDate,
+          endDate: defaultEndDate,
+          provider: "",
+          model: "",
+          project: "",
+        }}
+      />
     </div>
   );
 }

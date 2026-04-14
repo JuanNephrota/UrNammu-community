@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Eye, AlertTriangle, RefreshCw, Building2 } from "lucide-react";
+import { Eye, AlertTriangle, RefreshCw, Building2, BarChart3 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -285,6 +285,11 @@ export default async function OversightPage() {
         <Link href="/oversight/usage">
           <Button variant="outline">
             <Eye className="mr-2 h-4 w-4" /> View All Logs
+          </Button>
+        </Link>
+        <Link href="/oversight/provider-posture">
+          <Button variant="outline">
+            <BarChart3 className="mr-2 h-4 w-4" /> Provider Posture
           </Button>
         </Link>
         <Link href="/oversight/investigations">
