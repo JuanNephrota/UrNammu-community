@@ -11,6 +11,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
 1. [Introduction](#1-introduction)
 2. [Getting Started](#2-getting-started)
 3. [Dashboard (Command Center)](#3-dashboard-command-center)
+   - [Executive Dashboard](#3a-executive-dashboard)
 4. [AI System Registry](#4-ai-system-registry)
 5. [AI Agents](#5-ai-agents)
 6. [Risk Center](#6-risk-center)
@@ -105,6 +106,62 @@ The Dashboard is the daily home screen. It surfaces:
 - **Admins**: review Settings → Provider Admin APIs and Settings → Shadow AI first to confirm telemetry is flowing, then move to the governance queue.
 - **Compliance officers**: start in the governance queue (systems needing assessment / approval) and the Alerts panel.
 - **Viewers**: use the Registry and Risk Center to read the current state of the portfolio.
+
+---
+
+## 3a. Executive Dashboard
+
+**Sidebar → Executive** is the board-ready view of AI governance posture. Unlike the operational Dashboard (Section 3), the Executive page is designed for C-suite and board reporting with high-level metrics, period-over-period comparisons, and a natural-language briefing.
+
+### Posture Scorecard
+
+The hero element is a **composite governance score from 0 to 100**, computed from five weighted dimensions:
+
+| Dimension | Weight | What it measures |
+|-----------|--------|------------------|
+| Compliance | 25% | Percentage of compliance mappings that are fully `COMPLIANT`. |
+| Risk Posture | 25% | Inverse of the average risk-assessment score (lower risk = higher posture). |
+| Governance Coverage | 20% | Percentage of AI systems in `APPROVED` or `DEPLOYED` status. |
+| Shadow AI | 15% | Inverse ratio of `DISCOVERED` tools to total discovered tools. |
+| Incident Health | 15% | Penalty-based: open incidents, critical alerts, and open alerts reduce the score. |
+
+The scorecard shows a color-coded arc gauge (green ≥ 75, amber 50–74, red < 50) and a **delta badge** comparing the current 30-day score to the prior 30-day period.
+
+### Executive Briefing (Narrative)
+
+A template-driven narrative panel generates 5–6 natural-language paragraphs summarizing:
+
+- **Opening** — overall posture tier (Strong / Moderate / Needs Attention) with point delta.
+- **Compliance** — compliant mapping count and rate, with change vs prior period.
+- **Risk** — average risk score and HIGH/CRITICAL system count, with trend.
+- **Spend** — total AI spend, top provider, and percentage change.
+- **Shadow AI** — unregistered and under-review tool counts.
+- **Incidents** — open incident and critical alert counts, with directional change.
+
+No AI model is invoked — all text is derived directly from governance data.
+
+### Board Summary Cards
+
+Six KPI cards in a responsive grid, each with a current value and a delta indicator:
+
+- **Governance Score** — composite 0–100 with point delta.
+- **Compliance Rate** — percentage with percentage-point delta.
+- **Avg Risk Score** — lower is better; delta inverted so positive = improvement.
+- **Monthly Spend** — dollar total with percent change.
+- **Shadow AI Backlog** — count of DISCOVERED + UNDER_REVIEW tools.
+- **Open Incidents** — count with directional delta.
+
+### 12-Month Posture Trend
+
+A multi-series area chart showing three metrics over a rolling 12-month window:
+
+- **Governance Score** (cyan) — monthly coverage-based governance health.
+- **Compliance %** (emerald) — compliance mapping rate each month.
+- **Risk Health** (amber) — inverted average risk score (higher = healthier).
+
+### Risk Concentration
+
+Two segment heatmaps (reused from the Dashboard) show risk concentration by **department** and by **vendor**, with system count, average risk score, and high-risk count per segment.
 
 ---
 
@@ -460,7 +517,17 @@ If traffic also flows through the built-in OpenAI or Anthropic proxy, Oversight 
 
 ### Usage Page
 
-**Oversight → Usage** drills into the normalized buckets: filter by provider, model, project, actor, time range. Shows per-bucket tokens, requests, cost, and the ability to link a bucket (or group of buckets) back to an `AISystem` for attribution.
+**Oversight → Usage** drills into normalized telemetry with interactive filter controls:
+
+- **Time range** — pick a start and end date, or use the **7d**, **30d**, **90d**, **YTD** presets to change the window instantly.
+- **Provider / Model / Project filters** — narrow the view to a single provider (e.g. Anthropic), model family (e.g. claude-sonnet-4-20250514), or project. Filters populate from the last 90 days of telemetry data.
+- **Summary cards** — Token Volume (with input / output breakdown), Requests, Total Cost, Cost per Request, and Monthly Forecast update live when filters change.
+- **Usage Trend chart** — daily token volume area chart for the selected period.
+- **Cost Breakdown panel** — a stacked bar chart splitting daily cost into **Input Token Cost** (cyan) and **Output Token Cost** (purple), plus stat cards for average cost per request and projected month-end spend with a pacing badge (`On track` / `Trending high` / `Over pace`).
+- **Activity table** — per-bucket rows with date, provider, model, attribution, requests, tokens, and cost.
+- **Top Models / Projects** — ranked sidebar cards showing the highest-volume models and project attributions.
+
+All data re-fetches client-side when you click **Apply**, so the page stays responsive without a full reload.
 
 ### Linking Usage to Systems
 
@@ -526,6 +593,16 @@ Create an investigation from an alert (preferred) or manually:
 ### Claude Code Oversight
 
 **Oversight → Claude Code** shows Claude Code-specific telemetry pulled via the Anthropic admin sync: session counts, tool accept/reject breakdown, lines added/removed, commits, PRs, model distribution, estimated cost.
+
+### Provider Posture Comparison
+
+**Oversight → Provider Posture** gives a side-by-side comparison of every AI provider used in the organization. The page shows:
+
+- **Summary cards** — active provider count, total 30-day spend, recent incidents, and high-risk system count.
+- **Comparison table** — one row per provider with columns for Total Cost, % of Spend, Tokens, Requests, Systems, High-Risk count, Incidents, Exceptions, Alerts, and a computed **Risk Tier** badge (`LOW` / `MEDIUM` / `HIGH` / `CRITICAL`).
+- **Sortable columns** — click any column header to sort ascending or descending. Useful for quickly finding the most expensive provider or the one with the most incidents.
+
+The risk tier is calculated from a weighted score: incidents × 10 + alerts × 3 + high-risk systems × 5 + exceptions × 2. Thresholds: ≥ 30 = CRITICAL, ≥ 15 = HIGH, ≥ 5 = MEDIUM, < 5 = LOW.
 
 ---
 
@@ -719,6 +796,24 @@ Runs on every maintenance call. Produces alerts for:
 2. **Settings → Users & Identity** — change their role to `COMPLIANCE_OFFICER`.
 3. Walk them through the Dashboard governance queue, Alerts, and an open system's Approval & Governance tab.
 
+### G. Prepare a board-ready governance report
+
+1. **Executive** — review the posture scorecard and note the composite score and delta.
+2. Read the **Executive Briefing** narrative — it summarizes compliance, risk, spend, shadow AI, and incidents in board-appropriate language.
+3. Check the **Board Summary Cards** for any red (danger) metrics that need executive attention.
+4. Review the **12-Month Posture Trend** chart to identify improving or declining dimensions.
+5. Note any risk-concentration hotspots in the Department and Vendor heatmaps.
+6. Share the page URL or screenshot the dashboard for the board deck.
+
+### H. Investigate a provider cost spike
+
+1. **Oversight → Usage** — select the **7d** preset to focus on recent activity.
+2. Use the **Provider** dropdown to filter to the suspected provider.
+3. Review the **Cost Breakdown** panel — check if the spike is input-heavy (bulk ingestion) or output-heavy (generation).
+4. Check the **Monthly Forecast** card — if it shows "Over pace", review spend budgets.
+5. **Oversight → Provider Posture** — compare the provider's cost % and incident count against others.
+6. If the spike is unexpected, create an Investigation from the Alerts inbox.
+
 ---
 
 ## 16. Troubleshooting / FAQ
@@ -771,6 +866,9 @@ Runs on every maintenance call. Produces alerts for:
 | **Shadow AI** | Unregistered / ungoverned AI tool detected in the organization. |
 | **DiscoveredAITool** | A shadow-AI finding from Google Workspace, Microsoft 365, or DNS import. |
 | **Oversight** | Provider-level usage, cost, anomaly, and vendor telemetry. |
+| **Posture Score** | Composite 0–100 governance health metric from five weighted dimensions (compliance, risk, coverage, shadow AI, incidents). |
+| **Provider Posture** | Side-by-side provider comparison across cost, incidents, exceptions, and risk tier. |
+| **Executive Dashboard** | Board-ready view with posture scorecard, narrative briefing, KPI cards, and trend charts. |
 | **UsageBucket / CostBucket** | Normalized aggregated telemetry record keyed by provider / model / project / actor / time bucket. |
 | **VendorProfile** | Vendor lifecycle data: contract status, dates, security review, data residency, subprocessors, approved use cases. |
 | **Investigation** | Follow-up workflow for an alert or incident, with owner and resolution summary. |
