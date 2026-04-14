@@ -23,6 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # Prisma v6 validates DATABASE_URL exists even during `prisma generate`
+    # (which doesn't actually connect). The postinstall script runs
+    # `prisma generate && husky`, so the variable must be present from the
+    # very first `npm ci`. A placeholder is sufficient — no real DB needed.
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
+
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -35,13 +42,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Prisma generate
-        run: npx prisma generate
-        env:
-          # Prisma doesn't need a live DB to generate — a placeholder keeps
-          # the CLI happy on runners that don't provision one.
-          DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -62,6 +62,8 @@ jobs:
     defaults:
       run:
         working-directory: ai-proxy
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
 
     steps:
       - name: Checkout
@@ -76,11 +78,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Prisma generate
-        run: npx prisma generate
-        env:
-          DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -100,6 +97,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: github.event_name == 'pull_request'
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
