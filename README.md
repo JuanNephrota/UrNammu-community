@@ -311,6 +311,10 @@ npm run db:reset
 - Risk Center includes recommended tiers, control-gap detection, agent-aware overlays, branching contextual questions, and use-case templates.
 - Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
 - Registry services can now be archived when they are no longer in use, and permanently deleted with explicit typed-name confirmation for duplicate or erroneous entries.
+- Dashboard stat cards and remediation status cards are clickable, routing directly to the relevant module page.
+- Proxy usage attribution now supports `x-user-email`, `x-department`, and `x-ai-system-id` headers. The setup guide generates Claude Code config snippets that include `${PROXY_USER_EMAIL}` for automatic per-user attribution via `git config user.email`.
+- API route validation hardened: alert status updates use Zod enum validation, agent updates check existence before writing, risk assessment operations are wrapped in error handling, and batch usage log ingestion reports per-entry validation errors.
+- Database indexes added on `AuditLog` and `Alert` foreign keys for query performance. `AuditLog` cascade deletes properly when users are removed.
 
 ## TODO / Roadmap
 

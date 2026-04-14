@@ -93,13 +93,12 @@ If a button or tab is missing, check your role — most controls hide (rather th
 
 The Dashboard is the daily home screen. It surfaces:
 
-- **System stats** — total AI systems, agents, high-risk systems, discovered tools.
+- **System stats** — total AI systems, agents, high-risk systems, open alerts, shadow AI discoveries, and compliance rate. Each stat card is clickable and navigates to the relevant module (Registry, Agents, Risk Center, Alerts, Shadow AI, or Compliance).
 - **Governance queue** — the next-best actions across the portfolio (systems needing assessment, policies waiting on assignment, stages waiting on approval).
-- **Compliance overview** — a donut/breakdown across `COMPLIANT`, `PARTIALLY_COMPLIANT`, `NON_COMPLIANT`, `NOT_ASSESSED`.
-- **Executive posture chart** — a visual health summary.
-- **Risk heat map** — systems vs. the 6 risk dimensions.
-- **Open alerts, investigations, and remediation rollups** — the active follow-up queue.
-- **Recent activity** — the latest governance actions from the audit log.
+- **Executive posture chart** — a rolling 12-month governance trend showing approved systems vs. ungoverned discoveries.
+- **Segment risk heat maps** — risk breakdowns by department, vendor, and data sensitivity.
+- **Remediation status** — clickable summary cards for open alerts, investigations, compliance issues, risk issues, renewal alerts, and ownership escalations. Each routes to the relevant page.
+- **Automated governance recommendations** — AI-generated next-best-action suggestions per system, linked to the registry.
 
 ### Where to start each role
 
@@ -661,7 +660,24 @@ Configure organization-level telemetry pulls.
 
 ### 12.3 Proxy Setup
 
-Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (Azure Functions + Vercel fallback). Docs in this page explain the endpoints developers should route through.
+Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (Azure Functions + Vercel fallback). The setup page generates ready-to-paste configuration for both organization-wide managed settings and per-user `~/.claude/settings.json`.
+
+**Attribution headers** — the proxy supports optional headers for usage attribution:
+
+| Header | Purpose |
+|--------|---------|
+| `x-proxy-key` | Authentication (required). Must match the configured proxy secret. |
+| `x-user-email` | Links usage to a platform user for per-person cost tracking. |
+| `x-department` | Department or cost center label for spend attribution. |
+| `x-ai-system-id` | Links usage to a registered AI system in the registry. |
+
+For Claude Code, user attribution requires each developer to set a shell environment variable:
+
+```bash
+export PROXY_USER_EMAIL="$(git config user.email)"
+```
+
+Add this to `~/.zshrc` or `~/.bashrc`. The managed settings and per-user settings snippets on the Proxy Setup page reference `${PROXY_USER_EMAIL}` automatically. Without this variable, usage will still be logged but will appear as "Unattributed" on the Oversight dashboards.
 
 ### 12.4 Users & Identity
 

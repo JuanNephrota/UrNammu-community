@@ -411,6 +411,20 @@ Direct SDK calls can point at the proxy instead of the provider:
 
 Clients authenticate to the proxy with an `x-proxy-key: $PROXY_SECRET` header. The proxy forwards a strict allow-list of headers to Anthropic / OpenAI by default (`Content-Type`, `anthropic-version`, `anthropic-beta`, plus the org's own `x-api-key`). Other headers are dropped.
 
+**Usage attribution.** The proxy accepts optional headers for tracking:
+
+- `x-user-email` — links usage to a platform user for per-person cost tracking.
+- `x-department` — department or cost center label.
+- `x-ai-system-id` — links usage to a registered AI system in the registry.
+
+For **Claude Code**, the Proxy Setup page in Settings generates ready-to-paste managed settings and per-user `~/.claude/settings.json` snippets. These reference `${PROXY_USER_EMAIL}` for automatic per-user attribution. Each developer adds one line to their shell profile (`~/.zshrc` or `~/.bashrc`):
+
+```bash
+export PROXY_USER_EMAIL="$(git config user.email)"
+```
+
+Without this variable, proxy usage will still be logged but will appear as "Unattributed" on the Oversight dashboards.
+
 **MCP passthrough.** When the request involves Model Context Protocol — detected by any of:
 
 - `mcp_servers` in the JSON body (non-empty array)
