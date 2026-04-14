@@ -20,7 +20,7 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Nammu",
+  title: "UrNammu",
   description: "Enterprise AI governance, risk, and compliance platform",
   icons: {
     icon: "/favicon.png",

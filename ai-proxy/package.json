@@ -1,7 +1,7 @@
 {
-  "name": "nammu-ai-proxy",
+  "name": "urnammu-ai-proxy",
   "version": "1.0.0",
-  "description": "Nammu AI API Proxy — Claude & OpenAI usage logging",
+  "description": "UrNammu AI API Proxy — Claude & OpenAI usage logging",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc && prisma generate",

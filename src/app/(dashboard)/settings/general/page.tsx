@@ -22,7 +22,7 @@ export default async function GeneralSettingsPage() {
           <dl className="space-y-3 text-sm">
             <div className="flex justify-between">
               <dt className="text-[var(--text-muted)]">Platform</dt>
-              <dd className="font-medium">Nammu v1.0</dd>
+              <dd className="font-medium">UrNammu v1.0</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-[var(--text-muted)]">Database</dt>

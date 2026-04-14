@@ -246,7 +246,7 @@ completion = client.chat.completions.create(
                 <Input
                   value={customUrl}
                   onChange={(e) => setCustomUrl(e.target.value)}
-                  placeholder="https://nammu.yourcompany.com"
+                  placeholder="https://urnammu.yourcompany.com"
                   className="font-mono text-xs"
                 />
               </div>

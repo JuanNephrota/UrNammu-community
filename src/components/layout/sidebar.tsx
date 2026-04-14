@@ -75,15 +75,15 @@ export function Sidebar() {
         {!collapsed && (
           <Link href="/dashboard" className="flex items-center gap-2.5 group">
             <Image
-              src="/nammu_logo_dark.png"
-              alt="Nammu"
+              src="/urnammu_logo_dark.png"
+              alt="UrNammu"
               width={28}
               height={28}
               className="shrink-0 transition-all group-hover:drop-shadow-[0_0_8px_var(--accent-glow)]"
             />
             <Image
-              src="/nammu_wordmark_dark.png"
-              alt="Nammu"
+              src="/urnammu_wordmark_dark.png"
+              alt="UrNammu"
               width={100}
               height={24}
               className="transition-all group-hover:opacity-90"
@@ -93,8 +93,8 @@ export function Sidebar() {
         {collapsed && (
           <Link href="/dashboard" className="mx-auto group">
             <Image
-              src="/nammu_logo_dark.png"
-              alt="Nammu"
+              src="/urnammu_logo_dark.png"
+              alt="UrNammu"
               width={28}
               height={28}
               className="transition-all group-hover:drop-shadow-[0_0_8px_var(--accent-glow)]"

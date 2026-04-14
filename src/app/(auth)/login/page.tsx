@@ -68,8 +68,8 @@ export default function LoginPage() {
             <div className="relative mb-5">
               <div className="absolute inset-0 rounded-full bg-amber-500/10 blur-2xl scale-[2]" />
               <Image
-                src="/nammu_logo_light.png"
-                alt="Nammu"
+                src="/urnammu_logo_light.png"
+                alt="UrNammu"
                 width={120}
                 height={120}
                 className="relative"
@@ -77,8 +77,8 @@ export default function LoginPage() {
               />
             </div>
             <Image
-              src="/nammu_wordmark_light.png"
-              alt="Nammu"
+              src="/urnammu_wordmark_light.png"
+              alt="UrNammu"
               width={260}
               height={62}
               className="relative"

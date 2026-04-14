@@ -71,7 +71,7 @@ AI SYSTEM:
 - Status: ${systemData.status}
 
 IMPORTANT CONTEXT — GOVERNANCE PLATFORM IN USE:
-This AI system is registered in and actively governed through "Nammu", an enterprise AI governance and compliance platform. The following capabilities are ALREADY in place for this system and must NOT be flagged as gaps:
+This AI system is registered in and actively governed through "UrNammu", an enterprise AI governance and compliance platform. The following capabilities are ALREADY in place for this system and must NOT be flagged as gaps:
 - Centralized AI system registry with ownership, versioning, and status tracking
 - Multi-dimensional risk assessments (bias, security, privacy, fairness, performance, transparency) with scoring and justifications
 - Policy management with assignment, compliance status tracking, and evidence documentation

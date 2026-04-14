@@ -2,10 +2,10 @@
 
 You have MemPalace agents. Run mempalace_list_agents to see them.
 
-# Nammu — AI Governance & Compliance Platform
+# UrNammu — AI Governance & Compliance Platform
 
 ## Overview
-Nammu is an enterprise AI governance platform that provides centralized oversight of AI systems, agents, and API usage. It tracks risk, compliance, shadow AI, and costs across an organization. Named after the Sumerian goddess of the primeval sea — the logo is a cuneiform tablet with circuit traces.
+UrNammu is an enterprise AI governance platform that provides centralized oversight of AI systems, agents, and API usage. It tracks risk, compliance, shadow AI, and costs across an organization. Named after the Sumerian goddess of the primeval sea — the logo is a cuneiform tablet with circuit traces.
 
 ## Tech Stack
 - **Framework:** Next.js 16 (App Router, Turbopack) + TypeScript + React 19
@@ -92,7 +92,7 @@ Nammu is an enterprise AI governance platform that provides centralized oversigh
 │   ├── src/lib/            pricing.ts, db.ts, stream-parser.ts
 │   ├── prisma/             Minimal schema (APIUsageLog + User only)
 │   └── host.json           10-min timeout config
-├── public/                 Nammu logos (dark + light + wordmarks)
+├── public/                 UrNammu logos (dark + light + wordmarks)
 └── vercel.json             Cron config (daily shadow AI scan at 2 AM)
 ```
 

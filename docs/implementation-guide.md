@@ -1,6 +1,6 @@
 # Implementation Guide
 
-This guide is the fastest way to understand how Nammu is put together, where the major product areas live, and how to extend the platform without fighting the existing architecture.
+This guide is the fastest way to understand how UrNammu is put together, where the major product areas live, and how to extend the platform without fighting the existing architecture.
 
 ## Stack
 

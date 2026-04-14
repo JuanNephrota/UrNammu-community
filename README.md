@@ -1,6 +1,6 @@
-# Nammu
+# UrNammu
 
-Nammu is an AI governance and compliance platform for admin and compliance teams. It combines:
+UrNammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
 - AI system and agent inventory
 - Shadow AI discovery from Google Workspace, Microsoft 365, and DNS/proxy CSV imports
@@ -11,7 +11,7 @@ Nammu is an AI governance and compliance platform for admin and compliance teams
 
 The app is built with Next.js 16, React 19, Prisma, PostgreSQL, and NextAuth.
 
-For installing Nammu (local dev or production), see the [Install Guide](./docs/install-guide.md).
+For installing UrNammu (local dev or production), see the [Install Guide](./docs/install-guide.md).
 
 For end users (compliance officers, admins, reviewers), see the [User Guide](./docs/user-guide.md).
 

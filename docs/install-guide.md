@@ -1,6 +1,6 @@
-# Nammu Install Guide
+# UrNammu Install Guide
 
-This guide walks through installing Nammu from zero — local development, production deployment on Vercel, the companion Azure Functions API proxy, and every external integration (Google, Microsoft, Anthropic, OpenAI, and Google Gemini / Vertex AI oversight).
+This guide walks through installing UrNammu from zero — local development, production deployment on Vercel, the companion Azure Functions API proxy, and every external integration (Google, Microsoft, Anthropic, OpenAI, and Google Gemini / Vertex AI oversight).
 
 For day-to-day product usage once installed, see the [User Guide](./user-guide.md). For architecture, see the [Implementation Guide](./implementation-guide.md).
 
@@ -60,8 +60,8 @@ git --version
 ### 2.1 Clone the repo
 
 ```bash
-git clone <your-repo-url> nammu
-cd nammu
+git clone <your-repo-url> urnammu
+cd urnammu
 ```
 
 ### 2.2 Install dependencies
@@ -80,20 +80,20 @@ This runs the `postinstall` script, which executes `prisma generate` against `pr
 ```bash
 brew install postgresql@16
 brew services start postgresql@16
-createdb nammu_dev
+createdb urnammu_dev
 ```
 
 **Ubuntu / Debian:**
 ```bash
 sudo apt install postgresql
-sudo -u postgres createdb nammu_dev
+sudo -u postgres createdb urnammu_dev
 sudo -u postgres createuser --superuser $USER   # once
 ```
 
 **Docker (cross-platform alternative):**
 ```bash
-docker run --name nammu-postgres -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=nammu_dev -p 5432:5432 -d postgres:16
+docker run --name urnammu-postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=urnammu_dev -p 5432:5432 -d postgres:16
 ```
 
 ### 2.4 Create `.env`
@@ -103,7 +103,7 @@ Copy `.env.example` if present, or create a new `.env` at the repo root:
 ```bash
 cat > .env <<'EOF'
 # --- Database ---
-DATABASE_URL="postgresql://$USER@localhost:5432/nammu_dev?schema=public"
+DATABASE_URL="postgresql://$USER@localhost:5432/urnammu_dev?schema=public"
 
 # --- Auth ---
 NEXTAUTH_URL=http://localhost:3001
@@ -172,7 +172,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 | Variable | Purpose |
 |----------|---------|
 | `DATABASE_URL` | Postgres connection string. Must include `?schema=public`. |
-| `NEXTAUTH_URL` | Public base URL of the Nammu app (`http://localhost:3001` in dev). |
+| `NEXTAUTH_URL` | Public base URL of the UrNammu app (`http://localhost:3001` in dev). |
 | `NEXTAUTH_SECRET` | Signs NextAuth session tokens. 32+ random bytes. |
 | `SETTINGS_ENCRYPTION_KEY` | AES key for encrypting secret `AppSetting` values. 32+ random bytes. |
 
@@ -242,7 +242,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 
 ## 4. Database Setup
 
-Nammu uses Prisma ORM and PostgreSQL. The schema is in `prisma/schema.prisma`; migrations live in `prisma/migrations/`.
+UrNammu uses Prisma ORM and PostgreSQL. The schema is in `prisma/schema.prisma`; migrations live in `prisma/migrations/`.
 
 ### 4.1 Choosing a database
 
@@ -323,7 +323,7 @@ The main Next.js app is designed for Vercel. Other Node-compatible hosts (Fly.io
 1. **Create a Vercel project** linked to your Git repo.
 2. **Add a Postgres database** via Vercel → Storage → Create → Postgres. Vercel auto-wires `DATABASE_URL`, but verify it points to the same instance across Preview and Production.
 3. **Set environment variables** in Vercel → Settings → Environment Variables. At minimum:
-   - `NEXTAUTH_URL` — your production URL (e.g., `https://nammu.example.com`).
+   - `NEXTAUTH_URL` — your production URL (e.g., `https://urnammu.example.com`).
    - `NEXTAUTH_SECRET`, `SETTINGS_ENCRYPTION_KEY`, `CRON_SECRET`.
    - `ENABLE_DEV_LOGIN=false`.
    - `ENABLE_LOCAL_AUTH=false` (unless you truly want local accounts in prod).
@@ -382,7 +382,7 @@ Edit `ai-proxy/local.settings.json` for local runs, or set in Azure Function App
 | `PROXY_SECRET` | Shared secret — must match `PROXY_SECRET` in the main app. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Provider credentials the proxy uses when clients route through it. |
 
-When proxying traffic, Nammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default.
+When proxying traffic, UrNammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default.
 
 ### 7.4 Run locally
 
@@ -485,10 +485,10 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 
 ### 8.7 Google Gemini / Vertex AI oversight
 
-Nammu supports Gemini oversight through Google Cloud Billing export data in BigQuery.
+UrNammu supports Gemini oversight through Google Cloud Billing export data in BigQuery.
 
 1. In Google Cloud Billing, enable **Billing export to BigQuery** for the billing account that covers your Gemini / Vertex AI usage.
-2. Confirm the export lands in a dataset and table that your Nammu service account can read.
+2. Confirm the export lands in a dataset and table that your UrNammu service account can read.
 3. Create or reuse a Google service account with BigQuery read access to that dataset and table.
 4. **Settings → Provider Admin APIs → Google Gemini / Vertex AI**:
    - paste the service-account JSON
@@ -508,7 +508,7 @@ No setup beyond the main app; ingest at any time via:
 
 ### 8.9 AI provider for in-app features
 
-Separate from the admin telemetry keys above, Nammu uses a provider to power AI risk suggestion, compliance gap analysis, agent review, and summarization. Set once in **Settings → General**:
+Separate from the admin telemetry keys above, UrNammu uses a provider to power AI risk suggestion, compliance gap analysis, agent review, and summarization. Set once in **Settings → General**:
 
 - Provider: `anthropic` or `openai`
 - Model: e.g., `claude-3.5-sonnet`, `gpt-4`
@@ -518,7 +518,7 @@ Separate from the admin telemetry keys above, Nammu uses a provider to power AI 
 
 ## 9. Background Cron Setup
 
-Nammu has one maintenance endpoint that fans out to every background job. It must fire on a schedule for telemetry, shadow AI scans, Gemini billing follow-up syncs, renewal alerts, and escalations to work.
+UrNammu has one maintenance endpoint that fans out to every background job. It must fire on a schedule for telemetry, shadow AI scans, Gemini billing follow-up syncs, renewal alerts, and escalations to work.
 
 ### 9.1 Endpoint
 
@@ -601,8 +601,8 @@ Always read `CHANGELOG.md` (if present) and skim new migrations in `prisma/migra
 npm run db:reset       # uses --force; wipes all data
 
 # Or drop the whole database
-dropdb nammu_dev
-createdb nammu_dev
+dropdb urnammu_dev
+createdb urnammu_dev
 npm run db:migrate
 npm run db:seed
 ```

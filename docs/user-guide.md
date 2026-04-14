@@ -1,6 +1,6 @@
-# Nammu User Guide
+# UrNammu User Guide
 
-This guide explains how to use Nammu day-to-day — registering AI systems, running risk assessments, managing compliance, triaging shadow AI, and overseeing provider usage.
+This guide explains how to use UrNammu day-to-day — registering AI systems, running risk assessments, managing compliance, triaging shadow AI, and overseeing provider usage.
 
 For a codebase walkthrough aimed at developers, see [implementation-guide.md](./implementation-guide.md).
 
@@ -30,7 +30,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
 
 ## 1. Introduction
 
-Nammu is an enterprise AI governance platform that gives compliance, security, and risk teams centralized oversight of every AI system, agent, and API consumed in the organization. It is designed for **compliance officers, security reviewers, and governance admins** — not end users of AI tools.
+UrNammu is an enterprise AI governance platform that gives compliance, security, and risk teams centralized oversight of every AI system, agent, and API consumed in the organization. It is designed for **compliance officers, security reviewers, and governance admins** — not end users of AI tools.
 
 ### Core Concepts at a Glance
 
@@ -50,7 +50,7 @@ The Glossary at the end of the guide collects these and more.
 
 ### Signing In
 
-Open the Nammu URL provided by your admin. The login page shows every sign-in method that is configured in Settings:
+Open the UrNammu URL provided by your admin. The login page shows every sign-in method that is configured in Settings:
 
 - **Google (Google OAuth)** — the standard production sign-in. Click *Continue with Google*.
 - **Microsoft / Entra ID** — appears when the tenant has been configured in Settings → Users & Identity.
@@ -270,7 +270,7 @@ On each assignment, edit:
 
 ### What counts as compliance evidence?
 
-Evidence has two surfaces in Nammu and approvers read both:
+Evidence has two surfaces in UrNammu and approvers read both:
 
 1. **Assignment evidence** — the free-text field attached to each policy assignment (inside the Compliance status editor). This is the primary place to record *why* you chose a given status and *how* the system meets (or fails) the policy. Good entries reference specific controls and artifacts rather than restating the policy.
 
@@ -403,7 +403,7 @@ Each ingestion run is recorded as an `IngestionRun` with processed / matched / n
 
 ### Automatic Suppression of Governed Tools
 
-Shadow AI discovery only surfaces tools that are **not** already governed. When a scan or ingestion produces a finding whose `toolName` (optionally narrowed by `vendor`) matches an existing AISystem in the Registry, Nammu:
+Shadow AI discovery only surfaces tools that are **not** already governed. When a scan or ingestion produces a finding whose `toolName` (optionally narrowed by `vendor`) matches an existing AISystem in the Registry, UrNammu:
 
 - links the discovery to that AISystem (`linkedSystemId`) and sets its status to `REGISTERED`,
 - annotates the notes with "Suppressed: matches governed system …",
@@ -490,7 +490,7 @@ When recent usage exceeds baseline × multiplier, a `cost_anomaly` or `model_dri
 
 ### Dangerous Prompt Monitoring
 
-When teams route OpenAI or Anthropic traffic through the Nammu proxy, Oversight can detect risky prompt categories such as:
+When teams route OpenAI or Anthropic traffic through the UrNammu proxy, Oversight can detect risky prompt categories such as:
 
 - jailbreak and prompt-injection attempts
 - credential or secret extraction
@@ -498,7 +498,7 @@ When teams route OpenAI or Anthropic traffic through the Nammu proxy, Oversight 
 - regulated-data exfiltration
 - unsafe autonomy instructions
 
-By default, Nammu stores redacted excerpts and category labels rather than full prompt bodies. These findings appear in Oversight, the alert inbox, and investigations.
+By default, UrNammu stores redacted excerpts and category labels rather than full prompt bodies. These findings appear in Oversight, the alert inbox, and investigations.
 
 ### Vendor Governance
 
@@ -606,7 +606,7 @@ Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (A
 ### Google OAuth (sign-in)
 
 1. In the Google Cloud Console, create an OAuth 2.0 Client (Web application).
-2. Authorized redirect URI: `https://<nammu-host>/api/auth/callback/google`.
+2. Authorized redirect URI: `https://<urnammu-host>/api/auth/callback/google`.
 3. Copy the client ID and secret into **Settings → Users & Identity**.
 4. Click **Test Google Auth**.
 5. The first user to sign in is promoted to `ADMIN`.
@@ -623,7 +623,7 @@ Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (A
 ### Microsoft Entra ID (sign-in + shadow AI)
 
 1. Register an application in Azure AD.
-2. For sign-in: add a redirect URI `https://<nammu-host>/api/auth/callback/azure-ad`, and grant `openid profile email User.Read`.
+2. For sign-in: add a redirect URI `https://<urnammu-host>/api/auth/callback/azure-ad`, and grant `openid profile email User.Read`.
 3. For shadow AI: grant Graph permissions `AuditLog.Read.All` and `Directory.Read.All` (application permissions with admin consent).
 4. Copy tenant ID, client ID, and secret into **Settings → Users & Identity** (auth) and/or **Settings → Shadow AI** (discovery).
 
@@ -647,7 +647,7 @@ Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (A
 
 ## 14. Background Automation
 
-Nammu has a single cron endpoint that runs every hour on Vercel (or external cron) and fans out to individual jobs.
+UrNammu has a single cron endpoint that runs every hour on Vercel (or external cron) and fans out to individual jobs.
 
 ### `GET /api/scheduler/maintenance`
 
@@ -745,7 +745,7 @@ Runs on every maintenance call. Produces alerts for:
 - Test the provider by submitting a simple classify request; check server logs for provider-side errors.
 
 **Evidence upload isn't persisting.**
-- Nammu stores evidence as inline text + link URLs, not as binary uploads. Paste the document URL or a text summary into the artifact.
+- UrNammu stores evidence as inline text + link URLs, not as binary uploads. Paste the document URL or a text summary into the artifact.
 
 **First user didn't become an admin.**
 - The auto-promotion only fires on Google OAuth. If you signed in with dev credentials, promote the user manually in **Settings → Users & Identity**.
