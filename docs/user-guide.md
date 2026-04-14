@@ -564,7 +564,24 @@ When teams route OpenAI or Anthropic traffic through the UrNammu proxy, Oversigh
 - regulated-data exfiltration
 - unsafe autonomy instructions
 
-By default, UrNammu stores redacted excerpts and category labels rather than full prompt bodies. These findings appear in Oversight, the alert inbox, and investigations.
+Each dangerous prompt alert stores structured metadata: provider, model, department, user, matched categories, matched signal phrases, and a sanitized excerpt (full prompt bodies are never stored). On the Alerts page, dangerous prompt alerts render this as a structured investigation card with:
+
+- **Provider and model badges** for at-a-glance context
+- **Category badges** color-coded by severity (critical vs. warning)
+- **Matched signals** shown as highlighted code elements — the exact phrases that triggered the rule
+- **Sanitized excerpt** in a monospace block for context
+- **Related API usage logs** — an expandable panel showing flagged APIUsageLog records within a ±5 minute window
+
+### False Positive Marking
+
+When investigating a dangerous prompt alert, if the signal is benign (e.g. a legitimate security test, developer workflow, or overly broad pattern match), you can mark it as a **false positive**:
+
+1. Click **False Positive** on the alert (replaces the Dismiss button for prompt risk alerts).
+2. Enter a **reason** explaining why this is a false positive.
+3. Optionally check **Create exception** to suppress similar future alerts. This creates a `PromptRiskException` for each matched rule category.
+4. The alert is automatically dismissed and tagged with a "False Positive" badge in the history.
+
+Exceptions are managed at **Alerts → Manage prompt risk exceptions** (`/alerts/exceptions`). Each exception can be deactivated or reactivated. Exceptions suppress alert creation only — the full prompt risk analysis is still logged on every APIUsageLog record for audit purposes. An alert is only suppressed when all its matched categories are covered by active exceptions.
 
 ### Vendor Governance
 
@@ -635,7 +652,9 @@ Statuses: `OPEN` → `ACKNOWLEDGED` → `RESOLVED` / `DISMISSED`.
 Inline actions per alert:
 - **Acknowledge** — marks as seen / being worked.
 - **Create Investigation** — opens an Investigation pre-linked to this alert.
-- **Dismiss** or **Resolve** — terminal states (dismiss = not a real issue; resolve = addressed).
+- **Resolve** — marks the alert as addressed.
+- **Dismiss** — marks as not a real issue (for non-prompt-risk alerts).
+- **False Positive** — for dangerous prompt alerts only. Requires a reason and optionally creates suppression exceptions (see False Positive Marking above).
 
 ---
 

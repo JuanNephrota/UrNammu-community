@@ -6,10 +6,17 @@ import { matchDomain, resolveAIToolMatch } from "@/lib/ai-tools-registry";
 
 /**
  * Debug endpoint — tests Google Workspace connection and returns raw scan diagnostics.
- * Only available to ADMIN users.
+ * Only available to ADMIN users in non-production environments.
  */
 export async function GET() {
   return withRole(["ADMIN"], async () => {
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { error: "Debug endpoint is disabled in production" },
+        { status: 403 }
+      );
+    }
+
     const configured = await isGoogleWorkspaceConfigured();
     if (!configured) {
       return NextResponse.json({ configured: false, error: "Google Workspace not configured" });
@@ -131,8 +138,8 @@ export async function GET() {
 
       return NextResponse.json({
         configured: true,
-        serviceAccount: key.client_email,
-        adminEmail,
+        serviceAccount: key.client_email.replace(/^(.{3}).*(@.*)$/, "$1***$2"),
+        adminEmail: adminEmail?.replace(/^(.{3}).*(@.*)$/, "$1***$2"),
         lookbackDays: 30,
         totalEvents: items.length,
         uniqueApps: sortedApps.length,
@@ -143,10 +150,10 @@ export async function GET() {
         hasMorePages: !!response.data.nextPageToken,
       });
     } catch (err) {
+      console.error("Google Workspace debug scan failed:", err);
       return NextResponse.json({
         configured: true,
-        error: err instanceof Error ? err.message : "Unknown error",
-        errorType: err instanceof Error ? err.constructor.name : "Unknown",
+        error: "Google Workspace scan failed. Check server logs for details.",
       });
     }
   });

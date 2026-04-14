@@ -315,6 +315,8 @@ npm run db:reset
 - Proxy usage attribution now supports `x-user-email`, `x-department`, and `x-ai-system-id` headers. The setup guide generates Claude Code config snippets that include `${PROXY_USER_EMAIL}` for automatic per-user attribution via `git config user.email`.
 - API route validation hardened: alert status updates use Zod enum validation, agent updates check existence before writing, risk assessment operations are wrapped in error handling, and batch usage log ingestion reports per-entry validation errors.
 - Database indexes added on `AuditLog` and `Alert` foreign keys for query performance. `AuditLog` cascade deletes properly when users are removed.
+- Dangerous prompt alerts now store structured metadata (provider, model, categories, matched signals, excerpt) and render as investigation cards with category badges, signal evidence, and related usage logs.
+- False positive marking for prompt risk alerts: dismiss with required reason, optionally create `PromptRiskException` records that suppress similar future alerts. Exceptions are managed at `/alerts/exceptions` and support activation/deactivation.
 
 ## TODO / Roadmap
 

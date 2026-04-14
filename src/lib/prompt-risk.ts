@@ -72,6 +72,7 @@ export type PromptRiskAnalysis = {
   flagReason: string | null;
   summary: string | null;
   categories: string[];
+  ruleKeys: string[];
   matchedSignals: string[];
   excerpt: string | null;
 };
@@ -168,12 +169,14 @@ export function analyzePromptRisk(requestBody: Record<string, unknown> | null | 
       flagReason: null,
       summary: null,
       categories: [],
+      ruleKeys: [],
       matchedSignals: [],
       excerpt: null,
     };
   }
 
   const categories: string[] = [];
+  const ruleKeys: string[] = [];
   const matchedSignals: string[] = [];
   let severity: PromptRiskSeverity | null = null;
 
@@ -185,6 +188,7 @@ export function analyzePromptRisk(requestBody: Record<string, unknown> | null | 
     if (matches.length === 0) continue;
 
     categories.push(rule.label);
+    ruleKeys.push(rule.key);
     matchedSignals.push(...matches.slice(0, 3));
     if (severity !== "critical") {
       severity = rule.severity === "critical" ? "critical" : severity ?? "warning";
@@ -198,6 +202,7 @@ export function analyzePromptRisk(requestBody: Record<string, unknown> | null | 
       flagReason: null,
       summary: null,
       categories: [],
+      ruleKeys: [],
       matchedSignals: [],
       excerpt: sanitizeExcerpt(promptText),
     };
@@ -214,9 +219,51 @@ export function analyzePromptRisk(requestBody: Record<string, unknown> | null | 
     flagReason: summary,
     summary,
     categories,
+    ruleKeys,
     matchedSignals: [...new Set(matchedSignals)].slice(0, 6),
     excerpt: sanitizeExcerpt(promptText),
   };
+}
+
+/**
+ * Check whether all matched rule keys are covered by active exceptions.
+ * Returns true only when EVERY ruleKey has at least one matching exception.
+ */
+export async function shouldSuppressAlert(
+  ruleKeys: string[],
+  matchedSignals: string[]
+): Promise<boolean> {
+  if (ruleKeys.length === 0) return false;
+
+  const exceptions = await prisma.promptRiskException.findMany({
+    where: {
+      active: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      category: { in: ruleKeys },
+    },
+  });
+
+  if (exceptions.length === 0) return false;
+
+  // Check each ruleKey has at least one matching exception
+  for (const key of ruleKeys) {
+    const keyExceptions = exceptions.filter((e) => e.category === key);
+    if (keyExceptions.length === 0) return false;
+
+    // A blanket exception (pattern=null) covers the whole category
+    const hasBlanket = keyExceptions.some((e) => !e.pattern);
+    if (hasBlanket) continue;
+
+    // Pattern-based exceptions: at least one signal must match one exception pattern
+    const patternMatch = keyExceptions.some((exc) =>
+      matchedSignals.some((signal) =>
+        signal.toLowerCase().includes((exc.pattern ?? "").toLowerCase())
+      )
+    );
+    if (!patternMatch) return false;
+  }
+
+  return true;
 }
 
 export async function createPromptRiskAlert(input: {
@@ -228,6 +275,13 @@ export async function createPromptRiskAlert(input: {
   analysis: PromptRiskAnalysis;
 }) {
   if (!input.analysis.flagged || !input.analysis.summary) return;
+
+  // Check if all matched categories are covered by exceptions
+  const suppressed = await shouldSuppressAlert(
+    input.analysis.ruleKeys,
+    input.analysis.matchedSignals
+  );
+  if (suppressed) return;
 
   const title = `Dangerous prompt signal detected: ${input.analysis.categories[0] ?? "Prompt risk"}`;
   const recentDuplicate = await prisma.alert.findFirst({
@@ -251,12 +305,24 @@ export async function createPromptRiskAlert(input: {
     input.analysis.excerpt ? `Excerpt: ${input.analysis.excerpt}` : null,
   ].filter(Boolean);
 
+  const metadata = {
+    provider: input.provider,
+    model: input.model,
+    department: input.department,
+    userEmail: input.userEmail,
+    categories: input.analysis.categories,
+    ruleKeys: input.analysis.ruleKeys,
+    matchedSignals: input.analysis.matchedSignals,
+    excerpt: input.analysis.excerpt,
+  };
+
   if (recentDuplicate) {
     await prisma.alert.update({
       where: { id: recentDuplicate.id },
       data: {
         severity: input.analysis.severity === "critical" ? "CRITICAL" : "HIGH",
         description: descriptionParts.join(" · "),
+        promptRiskMetadata: metadata,
       },
     });
     return;
@@ -269,6 +335,7 @@ export async function createPromptRiskAlert(input: {
       severity: input.analysis.severity === "critical" ? "CRITICAL" : "HIGH",
       source: "dangerous_prompt",
       aiSystemId: input.aiSystemId ?? null,
+      promptRiskMetadata: metadata,
     },
   });
 }

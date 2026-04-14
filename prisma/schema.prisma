@@ -214,6 +214,8 @@ model User {
   governanceIncidents GovernanceIncident[]
   investigations Investigation[]      @relation("InvestigationOwner")
   spendBudgets SpendBudget[]          @relation("SpendBudgetOwner")
+  falsePositiveAlerts Alert[]          @relation("AlertFalsePositiveBy")
+  promptRiskExceptions PromptRiskException[] @relation("PromptRiskExceptionCreator")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -759,11 +761,22 @@ model Alert {
   discoveredTool DiscoveredAITool? @relation(fields: [relatedToolId], references: [id])
   investigation  Investigation?
 
+  // Structured prompt risk metadata (for source = "dangerous_prompt")
+  promptRiskMetadata    Json?
+  falsePositive         Boolean   @default(false)
+  falsePositiveReason   String?   @db.Text
+  falsePositiveByUser   User?     @relation("AlertFalsePositiveBy", fields: [falsePositiveByUserId], references: [id], onDelete: SetNull)
+  falsePositiveByUserId String?
+  falsePositiveAt       DateTime?
+
+  promptRiskExceptions  PromptRiskException[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([aiSystemId])
   @@index([status, createdAt])
+  @@index([source, falsePositive])
 }
 
 model Investigation {
@@ -788,6 +801,26 @@ model Investigation {
   @@index([status, createdAt])
   @@index([ownerUserId, status])
   @@index([aiSystemId, status])
+}
+
+// ─── Prompt Risk Exceptions ────────────────────────────
+
+model PromptRiskException {
+  id              String    @id @default(cuid())
+  category        String    // stable rule key: prompt_injection, secret_extraction, etc.
+  pattern         String?   @db.Text // optional: specific signal substring; null = entire category
+  reason          String    @db.Text
+  sourceAlert     Alert?    @relation(fields: [sourceAlertId], references: [id], onDelete: SetNull)
+  sourceAlertId   String?
+  createdByUser   User      @relation("PromptRiskExceptionCreator", fields: [createdByUserId], references: [id])
+  createdByUserId String
+  active          Boolean   @default(true)
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([category, active])
+  @@index([createdByUserId])
 }
 
 model SpendBudget {
