@@ -100,10 +100,7 @@ export async function GET(req: NextRequest) {
     const totalCost = costBuckets.reduce((s, b) => s + b.amount, 0);
     const costPerRequest = totalRequests > 0 ? totalCost / totalRequests : 0;
 
-    // Input/output cost split (proportional based on token ratio)
-    const tokenTotal = totalInputTokens + totalOutputTokens;
-    const inputCostRatio = tokenTotal > 0 ? totalInputTokens / tokenTotal : 0.5;
-    // For a more accurate split, we weight output tokens 3x (typical LLM pricing)
+    // Input/output cost split — weight output tokens 3x (typical LLM pricing)
     const weightedInput = totalInputTokens;
     const weightedOutput = totalOutputTokens * 3;
     const weightedTotal = weightedInput + weightedOutput;
@@ -154,7 +151,6 @@ export async function GET(req: NextRequest) {
 
     // Daily cost breakdown for stacked bar chart
     const dailyCostBreakdown = dailyUsage.map((d) => {
-      const dayTotal = d.inputTokens + d.outputTokens;
       const dayWeightedInput = d.inputTokens;
       const dayWeightedOutput = d.outputTokens * 3;
       const dayWeightedTotal = dayWeightedInput + dayWeightedOutput;
