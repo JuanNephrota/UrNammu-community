@@ -22,8 +22,16 @@ export async function GET(req: NextRequest) {
     // surface them (e.g. for admin debugging or audit exports).
     const includeSuppressed =
       req.nextUrl.searchParams.get("includeSuppressed") === "true";
+    const confidence = req.nextUrl.searchParams.get("confidence");
+
+    const where: Record<string, unknown> = {};
+    if (!includeSuppressed) where.linkedSystemId = null;
+    if (confidence && ["high", "medium", "low"].includes(confidence)) {
+      where.matchConfidence = confidence;
+    }
+
     const tools = await prisma.discoveredAITool.findMany({
-      where: includeSuppressed ? undefined : { linkedSystemId: null },
+      where: Object.keys(where).length > 0 ? where : undefined,
       orderBy: { detectedAt: "desc" },
       include: { _count: { select: { alerts: true } } },
     });

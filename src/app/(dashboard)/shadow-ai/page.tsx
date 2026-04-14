@@ -32,6 +32,9 @@ type Tool = {
   notes: string | null;
   detectedAt: string;
   linkedSystemId?: string | null;
+  matchConfidence?: string | null;
+  matchScore?: number | null;
+  matchReasons?: string[] | null;
 };
 
 type ScanStatus = {
@@ -267,8 +270,48 @@ export default function ShadowAIPage() {
     }
   }
 
-  const discovered = tools.filter((t) => t.status === "DISCOVERED" || t.status === "UNDER_REVIEW");
+  const [dismissReason, setDismissReason] = useState("");
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [dismissedCount, setDismissedCount] = useState(0);
+
+  // Fetch dismissed count on mount
+  useEffect(() => {
+    fetch("/api/discovered-tools/dismissed")
+      .then((r) => r.json())
+      .then((data) => { if (Array.isArray(data)) setDismissedCount(data.length); })
+      .catch(() => {});
+  }, []);
+
+  const allDiscovered = tools.filter((t) => t.status === "DISCOVERED" || t.status === "UNDER_REVIEW");
+  // High-confidence = no matchConfidence set (legacy/manual) or "high"
+  const discovered = allDiscovered.filter((t) => !t.matchConfidence || t.matchConfidence === "high");
+  // Low/medium confidence candidates for review queue
+  const lowConfidenceCandidates = allDiscovered.filter((t) => t.matchConfidence === "low" || t.matchConfidence === "medium");
   const resolved = tools.filter((t) => !["DISCOVERED", "UNDER_REVIEW"].includes(t.status));
+
+  async function handlePromote(id: string) {
+    const res = await fetch(`/api/discovered-tools/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "promote" }),
+    });
+    if (res.ok) fetchTools();
+  }
+
+  async function handleDismiss(id: string) {
+    if (!dismissReason.trim()) return;
+    const res = await fetch(`/api/discovered-tools/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "dismiss_candidate", reason: dismissReason.trim() }),
+    });
+    if (res.ok) {
+      setDismissingId(null);
+      setDismissReason("");
+      setDismissedCount((c) => c + 1);
+      fetchTools();
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -537,6 +580,87 @@ export default function ShadowAIPage() {
             </Card>
           )}
 
+          {/* Low-Confidence Review Queue */}
+          {lowConfidenceCandidates.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  Low-Confidence Candidates ({lowConfidenceCandidates.length})
+                  <Badge variant="warning">Review Queue</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-[var(--text-muted)] mb-3">
+                  These tools were detected via AI keyword heuristics but did not match any known tool in the registry with high confidence. Promote confirmed AI tools or dismiss false matches.
+                </p>
+                <div className="space-y-3">
+                  {lowConfidenceCandidates.map((tool) => (
+                    <div key={tool.id} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">{tool.toolName}</p>
+                          <Badge variant={tool.matchConfidence === "low" ? "warning" : "info"}>
+                            {tool.matchConfidence}
+                          </Badge>
+                          {tool.matchScore != null && (
+                            <span className="text-[10px] text-[var(--text-faint)]">Score: {tool.matchScore}</span>
+                          )}
+                          {(tool.detectionSource === "google_workspace" ||
+                            tool.detectionSource === "microsoft_365") && (
+                            <Badge variant="info" className="text-[9px] px-1.5">
+                              {sourceBadgeLabel(tool.detectionSource)}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <Button size="sm" variant="outline" onClick={() => handlePromote(tool.id)}>
+                            Promote
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => { setDismissingId(dismissingId === tool.id ? null : tool.id); setDismissReason(""); }}
+                          >
+                            Dismiss
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        {tool.vendor ?? "Unknown vendor"} &middot; {tool.detectedDomain ?? "—"} &middot; {tool.userCount} users
+                        {tool.department && ` · ${tool.department}`}
+                      </p>
+                      {tool.matchReasons && tool.matchReasons.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {tool.matchReasons.map((reason) => (
+                            <code
+                              key={reason}
+                              className="rounded bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] border border-[var(--border-subtle)]"
+                            >
+                              {reason}
+                            </code>
+                          ))}
+                        </div>
+                      )}
+                      {dismissingId === tool.id && (
+                        <div className="flex items-center gap-2 pt-1">
+                          <Input
+                            value={dismissReason}
+                            onChange={(e) => setDismissReason(e.target.value)}
+                            placeholder="Reason for dismissal (e.g. not an AI tool, internal service)..."
+                            className="text-xs"
+                          />
+                          <Button size="sm" onClick={() => handleDismiss(tool.id)} disabled={!dismissReason.trim()}>
+                            Confirm
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {resolved.length > 0 && (
             <Card>
               <CardHeader><CardTitle>Resolved ({resolved.length})</CardTitle></CardHeader>
@@ -616,6 +740,12 @@ export default function ShadowAIPage() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {dismissedCount > 0 && (
+            <div className="text-xs text-[var(--text-faint)]">
+              {dismissedCount} dismissed candidate{dismissedCount !== 1 ? "s" : ""} hidden from future scans.
+            </div>
           )}
 
           {tools.length === 0 && (

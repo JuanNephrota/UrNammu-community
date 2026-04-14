@@ -216,6 +216,7 @@ model User {
   spendBudgets SpendBudget[]          @relation("SpendBudgetOwner")
   falsePositiveAlerts Alert[]          @relation("AlertFalsePositiveBy")
   promptRiskExceptions PromptRiskException[] @relation("PromptRiskExceptionCreator")
+  dismissedCandidates DismissedCandidate[] @relation("DismissedCandidateBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -306,10 +307,30 @@ model DiscoveredAITool {
   linkedSystemId  String?
   notes           String?         @db.Text
 
+  matchConfidence String?         // "high", "medium", or "low"
+  matchScore      Int?            // numeric score from resolveAIToolMatch
+  matchReasons    Json?           // array of reason strings
+
   alerts Alert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status, matchConfidence])
+}
+
+model DismissedCandidate {
+  id              String   @id @default(cuid())
+  toolName        String
+  vendor          String?
+  detectedDomain  String?
+  reason          String   @db.Text
+  dismissedByUser User     @relation("DismissedCandidateBy", fields: [dismissedByUserId], references: [id])
+  dismissedByUserId String
+  createdAt       DateTime @default(now())
+
+  @@unique([toolName, detectedDomain])
+  @@index([dismissedByUserId])
 }
 
 // ─── Scan History ───────────────────────────────────────

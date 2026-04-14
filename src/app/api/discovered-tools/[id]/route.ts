@@ -23,6 +23,70 @@ export async function PUT(
     const { id } = await params;
     const body = await req.json();
 
+    // Handle promote low-confidence candidate to main discovery queue
+    if (body.action === "promote") {
+      const tool = await prisma.discoveredAITool.findUnique({ where: { id } });
+      if (!tool) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+      const updated = await prisma.discoveredAITool.update({
+        where: { id },
+        data: {
+          matchConfidence: "high",
+          notes: tool.notes
+            ? `${tool.notes}\nManually promoted from low-confidence queue.`
+            : "Manually promoted from low-confidence queue.",
+        },
+      });
+
+      await createAuditLog({
+        userId: session.user.userId,
+        action: "PROMOTE",
+        entityType: "DiscoveredAITool",
+        entityId: id,
+        changes: { fromConfidence: tool.matchConfidence, toConfidence: "high" },
+      });
+
+      return NextResponse.json(updated);
+    }
+
+    // Handle dismiss candidate (permanently suppress from future scans)
+    if (body.action === "dismiss_candidate") {
+      const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+      if (!reason) {
+        return NextResponse.json({ error: "reason is required for dismissal" }, { status: 400 });
+      }
+
+      const tool = await prisma.discoveredAITool.findUnique({ where: { id } });
+      if (!tool) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+      await prisma.$transaction(async (tx) => {
+        // Create DismissedCandidate to prevent resurfacing
+        await tx.dismissedCandidate.upsert({
+          where: { toolName_detectedDomain: { toolName: tool.toolName, detectedDomain: tool.detectedDomain ?? "" } },
+          update: { reason, dismissedByUserId: session.user.userId },
+          create: {
+            toolName: tool.toolName,
+            vendor: tool.vendor,
+            detectedDomain: tool.detectedDomain,
+            reason,
+            dismissedByUserId: session.user.userId,
+          },
+        });
+        // Remove the discovery record
+        await tx.discoveredAITool.delete({ where: { id } });
+      });
+
+      await createAuditLog({
+        userId: session.user.userId,
+        action: "DISMISS_CANDIDATE",
+        entityType: "DiscoveredAITool",
+        entityId: id,
+        changes: { toolName: tool.toolName, reason },
+      });
+
+      return NextResponse.json({ dismissed: true });
+    }
+
     // Handle promote to registered system
     if (body.action === "register" || body.action === "register_and_assess") {
       const tool = await prisma.discoveredAITool.findUnique({ where: { id } });

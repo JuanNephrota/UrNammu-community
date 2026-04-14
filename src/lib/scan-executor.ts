@@ -63,6 +63,12 @@ export async function executeScan(
     let updatedTools = 0;
 
     for (const discovery of result.discoveries) {
+      // Skip if this tool was previously dismissed from the low-confidence queue
+      const dismissed = await prisma.dismissedCandidate.findUnique({
+        where: { toolName_detectedDomain: { toolName: discovery.toolName, detectedDomain: discovery.domain ?? "" } },
+      });
+      if (dismissed) continue;
+
       // Check for existing tool (dedup by name + domain)
       const existing = await prisma.discoveredAITool.findFirst({
         where: {
@@ -72,16 +78,23 @@ export async function executeScan(
       });
 
       if (existing) {
-        // Update user count if higher
+        // Update user count if higher, and backfill confidence if missing
+        const updates: Record<string, unknown> = {};
         if (discovery.userCount > existing.userCount) {
+          updates.userCount = discovery.userCount;
+          updates.notes = existing.notes
+            ? `${existing.notes}\nUpdated by scan: ${discovery.userCount} users detected.${discovery.notes ? ` ${discovery.notes}` : ""}`
+            : `Scan detected ${discovery.userCount} users.${discovery.notes ? ` ${discovery.notes}` : ""}`;
+        }
+        if (!existing.matchConfidence && discovery.matchConfidence) {
+          updates.matchConfidence = discovery.matchConfidence;
+          updates.matchScore = discovery.matchScore ?? null;
+          updates.matchReasons = discovery.matchReasons ?? [];
+        }
+        if (Object.keys(updates).length > 0) {
           await prisma.discoveredAITool.update({
             where: { id: existing.id },
-            data: {
-              userCount: discovery.userCount,
-              notes: existing.notes
-                ? `${existing.notes}\nUpdated by scan: ${discovery.userCount} users detected.${discovery.notes ? ` ${discovery.notes}` : ""}`
-                : `Scan detected ${discovery.userCount} users.${discovery.notes ? ` ${discovery.notes}` : ""}`,
-            },
+            data: updates,
           });
           updatedTools++;
         }
@@ -108,6 +121,9 @@ export async function executeScan(
             userCount: discovery.userCount,
             status: governedMatch ? "REGISTERED" : "DISCOVERED",
             linkedSystemId: governedMatch?.id,
+            matchConfidence: discovery.matchConfidence ?? null,
+            matchScore: discovery.matchScore ?? null,
+            matchReasons: discovery.matchReasons ?? [],
             notes: governedMatch
               ? `${baseNotes} Suppressed: matches governed system "${governedMatch.name}".`
               : baseNotes,

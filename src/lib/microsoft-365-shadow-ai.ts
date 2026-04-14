@@ -342,6 +342,9 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
         domain: candidateDomains[0] ?? resolvedMatch.tool.domains[0],
         userEmails: [],
         userCount,
+        matchConfidence: resolvedMatch.confidence,
+        matchScore: resolvedMatch.score,
+        matchReasons: resolvedMatch.reasons,
         notes: summarizeDiscoverySignals({
           consentType: metadata?.consentType ?? null,
           principalCount: metadata?.principals.size ?? 0,

@@ -278,6 +278,9 @@ async function runIngestion(source: string, entries: LogEntry[]) {
         userCount,
         status: governedMatch ? "REGISTERED" : "DISCOVERED",
         linkedSystemId: governedMatch?.id,
+        matchConfidence: "high",
+        matchScore: 8,
+        matchReasons: [`domain matched '${discovery.domain}'`],
         notes: governedMatch
           ? `${baseNotes} Suppressed: matches governed system "${governedMatch.name}".`
           : baseNotes,

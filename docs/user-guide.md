@@ -469,20 +469,40 @@ The inverse also runs: when a new AISystem is registered, any pre-existing unlin
 
 Suppressed discoveries are hidden from the Shadow AI page by default. Admins who want to audit suppressions can fetch them via `GET /api/discovered-tools?includeSuppressed=true`.
 
+### Confidence Scoring
+
+Every discovered tool is assigned a match confidence level based on how it was identified:
+
+| Confidence | Score Range | Meaning |
+|-----------|-------------|---------|
+| **High** | 10+ | Strong match — domain + name or multiple signals confirmed |
+| **Medium** | 6–9 | Partial match — name or publisher matched but not domain |
+| **Low** | < 6 | Heuristic match — AI keywords detected (e.g. `.ai` domain, "gpt", "copilot") but no known registry match |
+
+Confidence, score, and match reasons are stored on each `DiscoveredAITool` record and displayed in the UI.
+
 ### Triage Workflow
 
 A discovered tool moves through:
 
 `DISCOVERED` → `UNDER_REVIEW` → `REGISTERED` / `APPROVED` / `BLOCKED`
 
-On the tool's row:
+The Shadow AI page splits discoveries into three sections:
 
-- **Link to system** — if the tool is already governed (e.g. you registered it before scanning found it), point the discovery at the existing AISystem. Status becomes `REGISTERED`.
-- **Mark approved** — permit its use without adding to the Registry.
-- **Mark blocked** — indicate it is not allowed; this is an organizational signal, not a technical block.
-- **Add notes** — confidence reasoning, reviewer observations.
+1. **Needs Review** — high-confidence matches and legacy tools (no confidence data). These are confirmed AI tools that need a governance decision.
+2. **Low-Confidence Candidates** — medium and low-confidence matches from heuristic detection. Each candidate shows its confidence badge, numeric score, and match reasons. Actions:
+   - **Promote** — confirms the tool as a real AI discovery and moves it to the main "Needs Review" queue with high confidence.
+   - **Dismiss** — removes the tool from the queue with a required reason. Creates a `DismissedCandidate` record that prevents the tool from resurfacing on future scans. Dismissed candidates are shown as a count at the bottom of the page.
+3. **Resolved** — tools that have been registered, approved, or blocked.
 
-New discoveries auto-create high-priority alerts for admins to triage.
+On a tool's row in "Needs Review":
+
+- **Convert to Governed System** — navigates to the full system creation form.
+- **Register & Assess** — auto-creates an AISystem and routes to risk assessment.
+- **Approve** — permit its use without adding to the Registry.
+- **Block** — indicate it is not allowed; this is an organizational signal, not a technical block.
+
+New high-confidence discoveries auto-create alerts for admins to triage. Dismissed candidates are permanently suppressed — the scan executor checks the `DismissedCandidate` table before creating new records.
 
 ---
 

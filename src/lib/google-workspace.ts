@@ -14,6 +14,9 @@ export interface ScanDiscovery {
   userEmails: string[];
   userCount: number;
   notes?: string;
+  matchConfidence?: "high" | "medium" | "low";
+  matchScore?: number;
+  matchReasons?: string[];
 }
 
 export interface FullScanResult {
@@ -288,6 +291,9 @@ export async function runFullScan(
     domain: discovery.domain,
     userEmails: discovery.userEmails,
     userCount: discovery.userCount,
+    matchConfidence: discovery.confidence,
+    matchScore: discovery.confidence === "high" ? 12 : discovery.confidence === "medium" ? 7 : 3,
+    matchReasons: discovery.reasons,
     notes: buildGoogleDiscoveryNotes({
       confidence: discovery.confidence,
       reasons: discovery.reasons,
