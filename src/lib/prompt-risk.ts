@@ -68,37 +68,47 @@ export type PromptRiskAnalysis = {
   excerpt: string | null;
 };
 
-function extractTextFromContent(value: unknown, acc: string[]) {
-  if (typeof value === "string") {
-    acc.push(value);
+/**
+ * Extract only **user-authored** text from a request body. We deliberately
+ * skip:
+ *
+ * -  `system` / `instructions` — developer-controlled, not end-user input.
+ * -  `role: "assistant"` messages — contain `tool_use` blocks with bash
+ *    commands, file edits, and other programmatic content that legitimately
+ *    includes keywords like "reverse shell", "credentials", "delete records",
+ *    etc. Scanning these produces massive false-positive noise, especially
+ *    from Claude Code.
+ * -  `role: "tool"` messages (OpenAI) and `type: "tool_result"` content
+ *    blocks (Anthropic) — tool outputs, not user text.
+ * -  `type: "tool_use"` content blocks inside any message — the model's own
+ *    tool invocations.
+ *
+ * What we DO scan: `role: "user"` message text, excluding tool_result
+ * sub-blocks. This is the surface where prompt injection and social
+ * engineering actually originate.
+ */
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractUserTextFromContentBlocks(blocks: unknown, acc: string[]) {
+  if (typeof blocks === "string") {
+    acc.push(blocks);
     return;
   }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      extractTextFromContent(item, acc);
-    }
-    return;
-  }
-
-  if (!value || typeof value !== "object") return;
-
-  const record = value as Record<string, unknown>;
-  for (const [key, nested] of Object.entries(record)) {
-    if (
-      key === "text" ||
-      key === "content" ||
-      key === "prompt" ||
-      key === "input" ||
-      key === "system" ||
-      key === "instructions"
-    ) {
-      extractTextFromContent(nested, acc);
+  if (!Array.isArray(blocks)) return;
+  for (const block of blocks) {
+    if (typeof block === "string") {
+      acc.push(block);
       continue;
     }
-
-    if (key === "messages" || key === "contents") {
-      extractTextFromContent(nested, acc);
+    if (!isRecord(block)) continue;
+    // Skip tool_result and tool_use content blocks entirely.
+    if (block.type === "tool_result" || block.type === "tool_use") continue;
+    // Accept text blocks.
+    if (block.type === "text" && typeof block.text === "string") {
+      acc.push(block.text);
     }
   }
 }
@@ -106,7 +116,25 @@ function extractTextFromContent(value: unknown, acc: string[]) {
 function extractPromptText(requestBody: Record<string, unknown> | null | undefined): string {
   if (!requestBody) return "";
   const parts: string[] = [];
-  extractTextFromContent(requestBody, parts);
+
+  // Anthropic: messages is [{ role, content }]
+  // OpenAI:    messages is [{ role, content }]
+  const messages = requestBody.messages;
+  if (Array.isArray(messages)) {
+    for (const msg of messages) {
+      if (!isRecord(msg)) continue;
+      const role = msg.role;
+      // Only scan user messages.
+      if (role !== "user") continue;
+      extractUserTextFromContentBlocks(msg.content, parts);
+    }
+  }
+
+  // Bare `prompt` field (legacy / non-chat APIs) — treat as user text.
+  if (typeof requestBody.prompt === "string") {
+    parts.push(requestBody.prompt);
+  }
+
   return parts.join("\n").slice(0, 8000);
 }
 
