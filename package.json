@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JuanNephrota/Nammu.git"
+    "url": "https://github.com/JuanNephrota/UrNammu.git"
   },
   "private": true,
   "scripts": {
@@ -74,7 +74,7 @@
     "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^10",
+    "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
