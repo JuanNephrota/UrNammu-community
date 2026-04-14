@@ -71,7 +71,7 @@ export function ProxySetupGuide({ proxySecret, platformUrl }: Props) {
   const claudeCodeManagedSettings = `{
   "env": {
     "ANTHROPIC_BASE_URL": "${claudeProxyUrl}",
-    "ANTHROPIC_CUSTOM_HEADERS": "x-proxy-key: ${customSecret}\\nx-department: \${DEPARTMENT}"
+    "ANTHROPIC_CUSTOM_HEADERS": "x-proxy-key: ${customSecret}\\nx-department: \${DEPARTMENT}\\nx-user-email: \${PROXY_USER_EMAIL}"
   }
 }`;
 
@@ -79,7 +79,7 @@ export function ProxySetupGuide({ proxySecret, platformUrl }: Props) {
 {
   "env": {
     "ANTHROPIC_BASE_URL": "${claudeProxyUrl}",
-    "ANTHROPIC_CUSTOM_HEADERS": "x-proxy-key: ${customSecret}\\nx-department: Engineering"
+    "ANTHROPIC_CUSTOM_HEADERS": "x-proxy-key: ${customSecret}\\nx-department: Engineering\\nx-user-email: \${PROXY_USER_EMAIL}"
   }
 }`;
 
@@ -107,6 +107,7 @@ const message = await client.messages.create({
   -H "x-api-key: \$ANTHROPIC_API_KEY" \\
   -H "x-proxy-key: ${customSecret}" \\
   -H "x-department: Engineering" \\
+  -H "x-user-email: \$PROXY_USER_EMAIL" \\
   -H "anthropic-version: 2023-06-01" \\
   -d '{
     "model": "claude-sonnet-4-20250514",
@@ -137,6 +138,7 @@ const completion = await client.chat.completions.create({
   -H "Authorization: Bearer \$OPENAI_API_KEY" \\
   -H "x-proxy-key: ${customSecret}" \\
   -H "x-department: Marketing" \\
+  -H "x-user-email: \$PROXY_USER_EMAIL" \\
   -d '{
     "model": "gpt-4o",
     "messages": [{"role": "user", "content": "Hello"}]
@@ -349,6 +351,24 @@ completion = client.chat.completions.create(
               </p>
             </TabsContent>
           </Tabs>
+
+          {/* User attribution prerequisite */}
+          <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+              User Attribution Setup
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">
+              Both methods above reference <code className="bg-[var(--bg-elevated)] px-1 py-0.5 rounded text-[var(--accent)]">PROXY_USER_EMAIL</code> to attribute usage to individual users.
+              Each developer needs to add one line to their shell profile (<code className="bg-[var(--bg-elevated)] px-1 py-0.5 rounded text-[var(--accent)]">~/.zshrc</code> or <code className="bg-[var(--bg-elevated)] px-1 py-0.5 rounded text-[var(--accent)]">~/.bashrc</code>):
+            </p>
+            <CopyBlock code={'export PROXY_USER_EMAIL="$(git config user.email)"'} label="Add to shell profile" />
+            <p className="text-[10px] text-[var(--text-muted)]">
+              This reads the email from the developer&apos;s existing git config, so there&apos;s nothing extra to maintain. After adding, run <code className="bg-[var(--bg-elevated)] px-1 py-0.5 rounded text-[var(--accent)]">source ~/.zshrc</code> or open a new terminal. Distribute this via your onboarding script or dotfiles repo.
+            </p>
+            <p className="text-[10px] text-[var(--text-faint)]">
+              Without this variable set, usage will still be logged but will appear as &ldquo;Unattributed&rdquo; on the Oversight dashboards.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -420,6 +440,11 @@ completion = client.chat.completions.create(
                 <code className="text-[var(--accent)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded">x-user-email</code>
                 <span className="text-[var(--text-faint)]">optional</span>
                 <span className="text-[var(--text-muted)]">User email to link usage to a platform user</span>
+              </div>
+              <div className="grid grid-cols-[140px_60px_1fr] gap-2 items-start">
+                <code className="text-[var(--accent)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded">x-ai-system-id</code>
+                <span className="text-[var(--text-faint)]">optional</span>
+                <span className="text-[var(--text-muted)]">Links usage to a registered AI system in the registry</span>
               </div>
             </div>
           </div>
