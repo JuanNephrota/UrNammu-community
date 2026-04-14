@@ -490,24 +490,28 @@ export default async function DashboardPage() {
           title="AI Systems"
           value={systemCount}
           iconName="Database"
+          href="/registry"
           variant="info"
         />
         <StatCard
           title="AI Agents"
           value={agentCount}
           iconName="Bot"
+          href="/agents"
           variant="info"
         />
         <StatCard
           title="High Risk"
           value={highRiskCount}
           iconName="ShieldAlert"
+          href="/risk-center"
           variant="danger"
         />
         <StatCard
           title="Open Alerts"
           value={openAlerts}
           iconName="Bell"
+          href="/alerts"
           variant="warning"
         />
         <StatCard
@@ -515,12 +519,14 @@ export default async function DashboardPage() {
           value={discoveredTools}
           description="Unregistered"
           iconName="Eye"
+          href="/shadow-ai"
           variant="warning"
         />
         <StatCard
           title="Compliance"
           value={`${complianceRate}%`}
           iconName="FileCheck"
+          href="/compliance"
           variant={complianceRate >= 80 ? "success" : "warning"}
         />
       </div>
@@ -672,36 +678,36 @@ export default async function DashboardPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+            <Link href="/alerts" className="rounded-lg border border-[var(--border-subtle)] p-4 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)]">
               <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Alerts</p>
               <p className="mt-2 text-2xl font-semibold">{openAlerts}</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">{acknowledgedAlerts} acknowledged</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+            </Link>
+            <Link href="/oversight/investigations" className="rounded-lg border border-[var(--border-subtle)] p-4 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)]">
               <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Open Investigations</p>
               <p className="mt-2 text-2xl font-semibold">{openInvestigations}</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">Follow-through in progress</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+            </Link>
+            <Link href="/compliance" className="rounded-lg border border-[var(--border-subtle)] p-4 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)]">
               <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Compliance Issues</p>
               <p className="mt-2 text-2xl font-semibold">{openComplianceIssues}</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">Policy issues still open</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+            </Link>
+            <Link href="/risk-center" className="rounded-lg border border-[var(--border-subtle)] p-4 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)]">
               <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Risk Issues</p>
               <p className="mt-2 text-2xl font-semibold">{openRiskIssues}</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">Assessment remediations outstanding</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+            </Link>
+            <Link href="/alerts" className="rounded-lg border border-[var(--border-subtle)] p-4 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)]">
               <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Renewal Alerts</p>
               <p className="mt-2 text-2xl font-semibold">{renewalAutomationAlerts}</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">Review and exception reminders</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border-subtle)] p-4">
+            </Link>
+            <Link href="/alerts" className="rounded-lg border border-[var(--border-subtle)] p-4 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)]">
               <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Owner Escalations</p>
               <p className="mt-2 text-2xl font-semibold">{ownershipEscalationAlerts}</p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">Overdue or blocked systems escalated</p>
-            </div>
+            </Link>
           </div>
         </CardContent>
       </Card>

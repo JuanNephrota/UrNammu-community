@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 import {
   Database,
   Bot,
@@ -29,6 +30,7 @@ interface StatCardProps {
   value: string | number;
   description?: string;
   iconName: string;
+  href?: string;
   trend?: { value: number; label: string };
   variant?: "default" | "success" | "warning" | "danger" | "info";
 }
@@ -71,20 +73,15 @@ export function StatCard({
   value,
   description,
   iconName,
+  href,
   trend,
   variant = "default",
 }: StatCardProps) {
   const config = variantConfig[variant];
   const Icon = iconMap[iconName] ?? ShieldAlert;
 
-  return (
-    <div
-      className={cn(
-        "group relative rounded-xl bg-[var(--bg-surface)] p-5 transition-all duration-300 hover:-translate-y-0.5",
-        config.glow
-      )}
-      style={{ borderWidth: 1, borderStyle: "solid", borderColor: config.border }}
-    >
+  const content = (
+    <>
       {/* Top accent line */}
       <div
         className="absolute inset-x-0 top-0 h-px rounded-t-xl"
@@ -124,6 +121,27 @@ export function StatCard({
           <Icon className="h-5 w-5" />
         </div>
       </div>
+    </>
+  );
+
+  const sharedClassName = cn(
+    "group relative block rounded-xl bg-[var(--bg-surface)] p-5 transition-all duration-300 hover:-translate-y-0.5",
+    href && "cursor-pointer hover:bg-[var(--bg-hover)]",
+    config.glow
+  );
+  const sharedStyle = { borderWidth: 1, borderStyle: "solid" as const, borderColor: config.border };
+
+  if (href) {
+    return (
+      <Link href={href} className={sharedClassName} style={sharedStyle}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={sharedClassName} style={sharedStyle}>
+      {content}
     </div>
   );
 }
