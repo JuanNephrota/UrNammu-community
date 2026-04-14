@@ -45,6 +45,28 @@ export const HELP_HINTS = {
     "DISCOVERED → UNDER_REVIEW → REGISTERED / APPROVED / BLOCKED. Discoveries linked to a governed system are auto-suppressed.",
   shadow_ai_confidence:
     "How confident the scanner is that this is the named AI tool, based on name, vendor, domain, and scopes.",
+  shadow_ai_confidence_score:
+    "Numeric match score: 10+ = high, 6–9 = medium, < 6 = low. Based on domain, name, publisher, scope, and app ID signals.",
+  shadow_ai_promote:
+    "Promotes this candidate to the main review queue as a confirmed AI tool with high confidence.",
+  shadow_ai_dismiss:
+    "Permanently removes this candidate and prevents it from resurfacing on future scans. Requires a reason.",
+
+  // --- Alerts / Prompt Risk ---
+  dangerous_prompt:
+    "Proxy-detected risky prompt pattern. Categories include jailbreak, credential extraction, data exfiltration, malware, and unsafe autonomy.",
+  false_positive:
+    "Mark this alert as a benign detection. Optionally create an exception to suppress similar future alerts for the matched categories.",
+  prompt_risk_exception:
+    "A suppression rule that prevents future alerts for a specific prompt risk category. Exceptions match on stable rule keys and can be deactivated.",
+  prompt_risk_signals:
+    "The exact phrases from the user's prompt that matched a detection rule. Sanitized — emails, keys, and long numbers are redacted.",
+
+  // --- Proxy ---
+  proxy_attribution:
+    "Usage is attributed via optional headers: x-user-email (person), x-department (cost center), x-ai-system-id (registry link).",
+  proxy_user_email:
+    "Set PROXY_USER_EMAIL in your shell profile (from git config user.email) so Claude Code usage is attributed to you.",
 
   // --- Oversight ---
   spend_budget_scope:

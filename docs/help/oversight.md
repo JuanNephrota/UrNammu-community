@@ -20,6 +20,15 @@ With an Anthropic admin key, an OpenAI admin key, and/or Google Gemini billing e
 - **Vendors** — vendor profiles with contract lifecycle, security review, data residency, subprocessors, approved use cases.
 - **Investigations** — follow-up queue for alerts and incidents.
 - **Claude Code** — Claude Code sessions, tool accept/reject, lines added/removed.
+- **Provider Posture** — side-by-side provider comparison: cost, tokens, incidents, risk tier.
+
+## Dangerous prompt monitoring
+
+When traffic flows through the proxy, prompts are scanned for 5 risk categories: prompt injection, secret extraction, data exfiltration, malware/phishing generation, and dangerous autonomy. Findings appear as structured alerts with matched signals, sanitized excerpts, and related usage logs. False positives can be marked with exceptions that suppress similar future alerts.
+
+## Proxy attribution
+
+Proxy traffic is attributed via optional headers: `x-user-email` (per-user cost tracking), `x-department` (cost center), and `x-ai-system-id` (link to registry). Configure these in **Settings → Proxy Setup**.
 
 ## Spend budgets
 

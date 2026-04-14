@@ -8,22 +8,25 @@ Detect AI tools in use in your organization that are not yet in the Registry.
 - **Microsoft 365** — scans delegated app permissions against a known-AI-tools registry.
 - **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
 
-## Triage workflow
+## Confidence scoring
 
-Discoveries flow through: `DISCOVERED` → `UNDER_REVIEW` → `REGISTERED` / `APPROVED` / `BLOCKED`.
+Every discovered tool is assigned a match confidence based on how it was identified:
 
-On each row:
+- **High** (score 10+) — strong match via domain + name or multiple signals.
+- **Medium** (score 6–9) — partial match via name or publisher only.
+- **Low** (score < 6) — heuristic match via AI keywords (e.g. ".ai" domain, "gpt", "copilot") but no known registry entry.
 
-- **Link to system** — attach the discovery to an existing governed system.
-- **Mark approved** — permit without adding to the Registry.
-- **Mark blocked** — indicate it is not allowed; organizational signal, not a technical block.
-- **Add notes** — confidence reasoning and reviewer observations.
+## Page sections
+
+The page splits discoveries into three sections:
+
+1. **Needs Review** — high-confidence matches and legacy tools. These are confirmed AI tools that need a governance decision: **Convert to Governed System**, **Register & Assess**, **Approve**, or **Block**.
+2. **Low-Confidence Candidates** — medium and low-confidence matches. Each shows a confidence badge, score, and match reasons. Actions: **Promote** (move to main queue as high-confidence) or **Dismiss** (permanently suppress with a reason).
+3. **Resolved** — tools that have been registered, approved, or blocked.
 
 ## Automatic suppression
 
-Discoveries whose name (and vendor, when present) match an existing Registry system are auto-linked and suppressed. They do not appear in the shadow-AI queue and do not raise a new-discovery alert — the tool is already under governance.
-
-The reverse also runs: when a new system is registered, pre-existing unlinked discoveries that match are back-linked in the same transaction.
+Discoveries whose name (and vendor, when present) match an existing Registry system are auto-linked and suppressed. Dismissed candidates are also suppressed — the scanner checks the dismissed list before creating new records.
 
 ## Scan triggers
 

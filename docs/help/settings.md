@@ -6,7 +6,7 @@ Most settings require `ADMIN`. Secret values are encrypted in the database with 
 
 - **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization).
 - **Provider Admin APIs** — admin keys for org telemetry: Anthropic, OpenAI, Google Gemini billing export. Each has its own enable toggle and sync interval. Anomaly thresholds and governance-automation notice days live here too.
-- **Proxy Setup** — shared `PROXY_SECRET` for the transparent Claude / OpenAI proxy and the endpoint URLs developers route through.
+- **Proxy Setup** — shared `PROXY_SECRET` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: `x-user-email`, `x-department`, `x-ai-system-id`. For per-user attribution in Claude Code, developers add `export PROXY_USER_EMAIL="$(git config user.email)"` to their shell profile.
 - **Users & Identity** — manage users and roles. Configure Google OAuth and Microsoft / Entra ID sign-in.
 - **Shadow AI** — Google Workspace service account + admin email; Microsoft 365 Graph app credentials. DNS / proxy import lives here too.
 

@@ -38,12 +38,12 @@ The dashboard is your daily home screen for governance. Use it to triage open wo
 
 ## What you're looking at
 
-- **Stat cards** — total systems, agents, high-risk systems, and discovered shadow-AI tools.
+- **Stat cards** — total systems, agents, high-risk systems, open alerts, shadow AI discoveries, and compliance rate. Each card is **clickable** and navigates to the relevant module page (Registry, Agents, Risk Center, Alerts, Shadow AI, or Compliance).
+- **Executive posture chart** — rolling 12-month trend of approved systems vs. ungoverned discoveries.
 - **Governance queue** — next-best actions pulled from every system in the registry (systems without assessments, pending approvals, expiring exceptions).
-- **Compliance overview** — how many policy assignments are \`COMPLIANT\` / \`PARTIALLY_COMPLIANT\` / \`NON_COMPLIANT\` / \`NOT_ASSESSED\`.
-- **Risk heat map** — systems vs. the 6 risk dimensions, colored by score.
-- **Open alerts & investigations** — the active follow-up queue.
-- **Recent activity** — the latest governance actions from the audit log.
+- **Segment risk heat maps** — risk breakdowns by department, vendor, and data sensitivity.
+- **Remediation status** — clickable summary cards for open alerts, investigations, compliance issues, risk issues, renewal alerts, and ownership escalations. Each routes to the relevant page.
+- **Automated governance recommendations** — AI-generated next-best-action suggestions per system, linked to the registry.
 
 ## Where to start
 
@@ -53,7 +53,8 @@ The dashboard is your daily home screen for governance. Use it to triage open wo
 
 ## Tips
 
-- The **Needs Review** count only includes \`DISCOVERED\` shadow-AI tools — discoveries linked to a governed system are automatically suppressed.
+- Click any stat card or remediation card to drill into that module.
+- The **Needs Review** count only includes high-confidence \`DISCOVERED\` shadow-AI tools — low-confidence candidates have their own review queue.
 - The **Executive posture chart** reflects overall compliance + risk + approval health; drift shows up here first.
 `,
 
@@ -234,22 +235,25 @@ Detect AI tools in use in your organization that are not yet in the Registry.
 - **Microsoft 365** — scans delegated app permissions against a known-AI-tools registry.
 - **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
 
-## Triage workflow
+## Confidence scoring
 
-Discoveries flow through: \`DISCOVERED\` → \`UNDER_REVIEW\` → \`REGISTERED\` / \`APPROVED\` / \`BLOCKED\`.
+Every discovered tool is assigned a match confidence based on how it was identified:
 
-On each row:
+- **High** (score 10+) — strong match via domain + name or multiple signals.
+- **Medium** (score 6–9) — partial match via name or publisher only.
+- **Low** (score < 6) — heuristic match via AI keywords (e.g. ".ai" domain, "gpt", "copilot") but no known registry entry.
 
-- **Link to system** — attach the discovery to an existing governed system.
-- **Mark approved** — permit without adding to the Registry.
-- **Mark blocked** — indicate it is not allowed; organizational signal, not a technical block.
-- **Add notes** — confidence reasoning and reviewer observations.
+## Page sections
+
+The page splits discoveries into three sections:
+
+1. **Needs Review** — high-confidence matches and legacy tools. These are confirmed AI tools that need a governance decision: **Convert to Governed System**, **Register & Assess**, **Approve**, or **Block**.
+2. **Low-Confidence Candidates** — medium and low-confidence matches. Each shows a confidence badge, score, and match reasons. Actions: **Promote** (move to main queue as high-confidence) or **Dismiss** (permanently suppress with a reason).
+3. **Resolved** — tools that have been registered, approved, or blocked.
 
 ## Automatic suppression
 
-Discoveries whose name (and vendor, when present) match an existing Registry system are auto-linked and suppressed. They do not appear in the shadow-AI queue and do not raise a new-discovery alert — the tool is already under governance.
-
-The reverse also runs: when a new system is registered, pre-existing unlinked discoveries that match are back-linked in the same transaction.
+Discoveries whose name (and vendor, when present) match an existing Registry system are auto-linked and suppressed. Dismissed candidates are also suppressed — the scanner checks the dismissed list before creating new records.
 
 ## Scan triggers
 
@@ -279,6 +283,15 @@ With an Anthropic admin key, an OpenAI admin key, and/or Google Gemini billing e
 - **Vendors** — vendor profiles with contract lifecycle, security review, data residency, subprocessors, approved use cases.
 - **Investigations** — follow-up queue for alerts and incidents.
 - **Claude Code** — Claude Code sessions, tool accept/reject, lines added/removed.
+- **Provider Posture** — side-by-side provider comparison: cost, tokens, incidents, risk tier.
+
+## Dangerous prompt monitoring
+
+When traffic flows through the proxy, prompts are scanned for 5 risk categories: prompt injection, secret extraction, data exfiltration, malware/phishing generation, and dangerous autonomy. Findings appear as structured alerts with matched signals, sanitized excerpts, and related usage logs. False positives can be marked with exceptions that suppress similar future alerts.
+
+## Proxy attribution
+
+Proxy traffic is attributed via optional headers: \`x-user-email\` (per-user cost tracking), \`x-department\` (cost center), and \`x-ai-system-id\` (link to registry). Configure these in **Settings → Proxy Setup**.
 
 ## Spend budgets
 
@@ -300,7 +313,8 @@ Centralized alert inbox for governance signals.
 - **Acknowledge** — marks as seen / being worked.
 - **Create Investigation** — opens an Investigation pre-linked to this alert.
 - **Resolve** — addressed.
-- **Dismiss** — not a real issue.
+- **Dismiss** — not a real issue (for non-prompt-risk alerts).
+- **False Positive** — for dangerous prompt alerts only. Requires a reason and optionally creates suppression exceptions.
 
 ## Alert sources
 
@@ -315,6 +329,27 @@ Centralized alert inbox for governance signals.
 - \`data_exposure\` — restricted-sensitivity data observed in provider telemetry.
 - \`cost_anomaly\` — spend crossed a budget or anomaly threshold.
 - \`ownership_escalation\` — system has no owner assigned.
+- \`dangerous_prompt\` — proxy-scanned traffic matched a risky prompt pattern.
+
+## Dangerous prompt alerts
+
+When traffic flows through the proxy, prompts are analyzed for jailbreak attempts, credential extraction, data exfiltration, malware generation, and unsafe autonomy patterns. These alerts show structured investigation detail:
+
+- **Provider & model badges** — which AI provider and model were used.
+- **Category badges** — which risk rules triggered, color-coded by severity.
+- **Matched signals** — the exact phrases that matched, shown as code elements.
+- **Sanitized excerpt** — a redacted snippet of the prompt text (full prompts are never stored).
+- **Related usage logs** — expandable panel showing flagged API calls near the alert.
+
+## False positive marking
+
+If a dangerous prompt alert is benign (e.g. legitimate security testing), click **False Positive**:
+
+1. Enter a reason explaining why it is a false positive.
+2. Optionally check **Create exception** to suppress similar future alerts for the matched categories.
+3. The alert is dismissed and tagged with a "False Positive" badge.
+
+Manage exceptions at **Alerts → Manage prompt risk exceptions**. Exceptions can be deactivated or reactivated. The system only suppresses alert creation — usage is still logged for audit.
 
 ## Severity
 
@@ -329,7 +364,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 
 - **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization).
 - **Provider Admin APIs** — admin keys for org telemetry: Anthropic, OpenAI, Google Gemini billing export. Each has its own enable toggle and sync interval. Anomaly thresholds and governance-automation notice days live here too.
-- **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy and the endpoint URLs developers route through.
+- **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`. For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile.
 - **Users & Identity** — manage users and roles. Configure Google OAuth and Microsoft / Entra ID sign-in.
 - **Shadow AI** — Google Workspace service account + admin email; Microsoft 365 Graph app credentials. DNS / proxy import lives here too.
 

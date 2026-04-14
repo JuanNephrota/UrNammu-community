@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { HelpHint } from "@/components/help/help-hint";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -354,8 +355,9 @@ completion = client.chat.completions.create(
 
           {/* User attribution prerequisite */}
           <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)] flex items-center gap-1">
               User Attribution Setup
+              <HelpHint hint="proxy_attribution" />
             </p>
             <p className="text-xs text-[var(--text-muted)]">
               Both methods above reference <code className="bg-[var(--bg-elevated)] px-1 py-0.5 rounded text-[var(--accent)]">PROXY_USER_EMAIL</code> to attribute usage to individual users.
@@ -417,8 +419,9 @@ completion = client.chat.completions.create(
 
           {/* Headers reference */}
           <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-3 flex items-center gap-1">
               Request Headers Reference
+              <HelpHint hint="proxy_attribution" />
             </p>
             <div className="space-y-2 text-xs">
               <div className="grid grid-cols-[140px_60px_1fr] gap-2 items-start">

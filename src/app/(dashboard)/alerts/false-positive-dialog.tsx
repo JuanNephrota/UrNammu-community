@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { HelpHint } from "@/components/help/help-hint";
 
 interface Props {
   alertId: string;
@@ -63,7 +64,7 @@ export function FalsePositiveDialog({ alertId, ruleKeys, categories, open, onOpe
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Mark as False Positive</DialogTitle>
+          <DialogTitle className="flex items-center gap-1.5">Mark as False Positive <HelpHint hint="false_positive" /></DialogTitle>
           <DialogDescription>
             This alert will be dismissed. You can optionally create an exception to suppress similar future alerts.
           </DialogDescription>
@@ -100,8 +101,9 @@ export function FalsePositiveDialog({ alertId, ruleKeys, categories, open, onOpe
 
             {createException && ruleKeys.length > 0 && (
               <div className="ml-6 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 space-y-1.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] flex items-center gap-1">
                   Categories that will be excepted
+                  <HelpHint hint="prompt_risk_exception" />
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {categories.map((cat) => (

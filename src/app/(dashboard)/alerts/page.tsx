@@ -8,6 +8,7 @@ import { AlertActions } from "./alert-actions";
 import { InvestigationButton } from "@/components/oversight/investigation-button";
 import { AlertHighlight } from "./alert-highlight";
 import { RelatedUsageLogs } from "./related-usage-logs";
+import { HelpHint } from "@/components/help/help-hint";
 
 type PromptRiskMeta = {
   provider?: string;
@@ -144,7 +145,7 @@ export default async function AlertsPage() {
                         {/* Matched signals */}
                         {meta.matchedSignals && meta.matchedSignals.length > 0 && (
                           <div className="space-y-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Matched Signals</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] flex items-center gap-1">Matched Signals <HelpHint hint="prompt_risk_signals" /></p>
                             <div className="flex flex-wrap gap-1.5">
                               {meta.matchedSignals.map((signal) => (
                                 <code
