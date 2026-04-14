@@ -330,9 +330,9 @@ npm run db:reset
 
 ### Risk
 
-- [ ] Radar charts for per-system risk profile comparison
-- [ ] Risk trend line charts per system over assessment history
-- [ ] Residual-risk tracking alongside inherent risk
+- [x] Radar charts for per-system risk profile comparison
+- [x] Risk trend line charts per system over assessment history
+- [x] Residual-risk tracking alongside inherent risk
 - [ ] Portfolio views by department, vendor, owner, and use case
 - [ ] Scoring calibration controls for compliance admins
 - [ ] Reviewer guidance with examples for low, medium, and high scoring

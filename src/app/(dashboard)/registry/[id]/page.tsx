@@ -29,6 +29,8 @@ import {
   ComplianceEvidence,
 } from "@/components/compliance/compliance-status-editor";
 import { RiskAssessmentIssueStatusEditor } from "@/components/registry/risk-assessment-issue-status-editor";
+import { SystemRiskRadar } from "@/components/dashboard/system-risk-radar";
+import { SystemRiskTrendChart } from "@/components/dashboard/system-risk-trend-chart";
 import { AIAssessButton } from "@/components/compliance/ai-assess-button";
 import { ComplianceIssueStatusEditor } from "@/components/compliance/compliance-issue-status-editor";
 import { SystemLifecycleActions } from "@/components/registry/system-lifecycle-actions";
@@ -55,7 +57,6 @@ export default async function SystemDetailPage({
       },
       riskAssessments: {
         orderBy: { createdAt: "desc" },
-        take: 5,
         include: {
           issues: {
             orderBy: [{ status: "asc" }, { severity: "desc" }, { createdAt: "asc" }],
@@ -535,6 +536,40 @@ export default async function SystemDetailPage({
         </TabsContent>
 
         <TabsContent value="risk">
+          {system.riskAssessments.length > 0 && (
+            <div className="space-y-4 mb-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Risk Profile</CardTitle>
+                    {system.riskAssessments.length >= 2 && (
+                      <p className="text-xs text-[var(--text-muted)]">
+                        Current vs previous assessment
+                      </p>
+                    )}
+                  </CardHeader>
+                  <CardContent>
+                    <SystemRiskRadar
+                      current={system.riskAssessments[0]}
+                      previous={system.riskAssessments[1] ?? null}
+                    />
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Score History</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <SystemRiskTrendChart
+                      assessments={[...system.riskAssessments].reverse()}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
+
           <Card>
             <CardContent className="pt-6">
               {system.riskAssessments.length === 0 ? (
@@ -552,12 +587,12 @@ export default async function SystemDetailPage({
                         }>)
                       : [];
                     const dims = [
-                      { key: "biasScore", label: "Bias", score: ra.biasScore },
-                      { key: "securityScore", label: "Security", score: ra.securityScore },
-                      { key: "privacyScore", label: "Privacy", score: ra.privacyScore },
-                      { key: "fairnessScore", label: "Fairness", score: ra.fairnessScore },
-                      { key: "performanceScore", label: "Performance", score: ra.performanceScore },
-                      { key: "transparencyScore", label: "Transparency", score: ra.transparencyScore },
+                      { key: "biasScore", label: "Bias", score: ra.biasScore, residual: ra.residualBiasScore },
+                      { key: "securityScore", label: "Security", score: ra.securityScore, residual: ra.residualSecurityScore },
+                      { key: "privacyScore", label: "Privacy", score: ra.privacyScore, residual: ra.residualPrivacyScore },
+                      { key: "fairnessScore", label: "Fairness", score: ra.fairnessScore, residual: ra.residualFairnessScore },
+                      { key: "performanceScore", label: "Performance", score: ra.performanceScore, residual: ra.residualPerformanceScore },
+                      { key: "transparencyScore", label: "Transparency", score: ra.transparencyScore, residual: ra.residualTransparencyScore },
                     ];
                     return (
                       <div
@@ -565,21 +600,34 @@ export default async function SystemDetailPage({
                         className="rounded-lg border border-[var(--border-subtle)] p-4 space-y-3"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">
-                            Overall Score:{" "}
-                            <span
-                              className="font-bold"
-                              style={{
-                                color:
-                                  ra.overallScore >= 80 ? "var(--critical)" :
-                                  ra.overallScore >= 60 ? "var(--high)" :
-                                  ra.overallScore >= 40 ? "var(--medium)" :
-                                  ra.overallScore >= 20 ? "var(--low)" : "var(--success)",
-                              }}
-                            >
-                              {ra.overallScore.toFixed(1)}
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-medium">
+                              Inherent:{" "}
+                              <span
+                                className="font-bold"
+                                style={{
+                                  color:
+                                    ra.overallScore >= 80 ? "var(--critical)" :
+                                    ra.overallScore >= 60 ? "var(--high)" :
+                                    ra.overallScore >= 40 ? "var(--medium)" :
+                                    ra.overallScore >= 20 ? "var(--low)" : "var(--success)",
+                                }}
+                              >
+                                {ra.overallScore.toFixed(1)}
+                              </span>
                             </span>
-                          </span>
+                            {ra.residualOverallScore != null && (
+                              <span className="text-sm font-medium">
+                                Residual:{" "}
+                                <span className="font-bold" style={{ color: "var(--success)" }}>
+                                  {ra.residualOverallScore.toFixed(1)}
+                                </span>
+                                <span className="ml-1 text-xs text-[var(--success)]">
+                                  (−{(ra.overallScore - ra.residualOverallScore).toFixed(1)})
+                                </span>
+                              </span>
+                            )}
+                          </div>
                           <span className="text-xs text-[var(--text-faint)]">
                             {ra.assessedBy} &middot; {formatDate(ra.createdAt)}
                           </span>
@@ -596,9 +644,16 @@ export default async function SystemDetailPage({
                               <div key={dim.key} className="rounded-md bg-[var(--bg-base)] px-3 py-2">
                                 <div className="flex items-center justify-between">
                                   <span className="text-xs text-[var(--text-muted)]">{dim.label}</span>
-                                  <span className="text-xs font-bold tabular-nums" style={{ color }}>
-                                    {dim.score}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-bold tabular-nums" style={{ color }}>
+                                      {dim.score}
+                                    </span>
+                                    {dim.residual != null && (
+                                      <span className="text-xs text-[var(--success)] tabular-nums">
+                                        → {dim.residual}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                                 {justification && (
                                   <p className="text-[11px] text-[var(--text-secondary)] mt-1 leading-relaxed"

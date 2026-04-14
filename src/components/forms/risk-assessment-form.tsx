@@ -158,6 +158,15 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
   const [issues, setIssues] = useState<EditableRiskIssue[]>([]);
+  const [residualScores, setResidualScores] = useState<Record<string, number | undefined>>({
+    biasScore: undefined,
+    securityScore: undefined,
+    privacyScore: undefined,
+    fairnessScore: undefined,
+    performanceScore: undefined,
+    transparencyScore: undefined,
+  });
+  const [showResidual, setShowResidual] = useState(false);
 
   const requestedSystemId = searchParams.get("systemId");
 
@@ -449,9 +458,19 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
       if (value.trim()) cleanJustifications[key] = value.trim();
     }
 
+    // Include residual scores if the section was shown and at least one value set
+    const residualPayload: Record<string, number> = {};
+    if (showResidual) {
+      for (const dim of dimensions) {
+        const val = residualScores[dim.key];
+        if (val !== undefined) residualPayload[`residual${dim.key.charAt(0).toUpperCase() + dim.key.slice(1)}`] = val;
+      }
+    }
+
     const data = {
       aiSystemId: selectedSystemId,
       ...scores,
+      ...(Object.keys(residualPayload).length > 0 ? residualPayload : {}),
       justifications: Object.keys(cleanJustifications).length > 0 ? cleanJustifications : undefined,
       issues: issues.map((issue) => ({
         category: issue.category,
@@ -1000,6 +1019,85 @@ export function RiskAssessmentForm({ systems }: RiskAssessmentFormProps) {
             </div>
           )}
         </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div>
+              <span>Post-Control Assessment</span>
+              <span className="ml-2 text-xs font-normal text-[var(--text-muted)]">Optional</span>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowResidual((v) => !v)}
+              className="text-xs"
+            >
+              {showResidual ? <ChevronUp className="h-3 w-3 mr-1" /> : <ChevronDown className="h-3 w-3 mr-1" />}
+              {showResidual ? "Hide" : "Add residual scores"}
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        {showResidual && (
+          <CardContent className="space-y-2">
+            <p className="text-sm text-[var(--text-secondary)] mb-4">
+              Record the remaining risk for each dimension after your mitigations, controls, and safeguards are applied.
+              Residual scores appear alongside inherent scores on radar and trend charts.
+            </p>
+            {(() => {
+              const residualOverall =
+                dimensions.reduce((sum, dim) => sum + (residualScores[dim.key] ?? scores[dim.key]), 0) / 6;
+              return (
+                <div className="flex items-center justify-end gap-2 mb-2">
+                  <span className="text-xs text-[var(--text-muted)]">Residual overall</span>
+                  <span className="text-lg font-bold tabular-nums" style={{ color: scoreColor(residualOverall) }}>
+                    {residualOverall.toFixed(1)}
+                  </span>
+                </div>
+              );
+            })()}
+            {dimensions.map((dim) => {
+              const residual = residualScores[dim.key] ?? scores[dim.key];
+              const inherent = scores[dim.key];
+              const color = scoreColor(residual);
+              const reduction = inherent - residual;
+              return (
+                <div key={`residual-${dim.key}`} className="rounded-lg border border-[var(--border-subtle)] p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-medium">{dim.label}</Label>
+                      <p className="text-xs text-[var(--text-faint)]">Inherent: {inherent}</p>
+                    </div>
+                    <div className="flex items-center gap-3 text-right">
+                      {reduction > 0 && (
+                        <span className="text-xs text-[var(--success)]">−{reduction} reduced</span>
+                      )}
+                      <span className="text-lg font-bold tabular-nums" style={{ color }}>
+                        {residual}
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={residual}
+                    onChange={(e) =>
+                      setResidualScores((prev) => ({ ...prev, [dim.key]: Number(e.target.value) }))
+                    }
+                    className="w-full"
+                    style={{ accentColor: "#4ade80" }}
+                  />
+                  <div className="flex justify-between text-[10px] text-[var(--text-faint)]">
+                    <span>Low Risk</span>
+                    <span>High Risk</span>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        )}
       </Card>
 
       <Card>

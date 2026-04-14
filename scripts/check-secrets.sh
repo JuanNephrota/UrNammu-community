@@ -69,7 +69,7 @@ declare -a pattern_names=(
 )
 declare -a pattern_regexes=(
   'sk-ant-[a-zA-Z0-9_-]{20,}'
-  'sk-(proj-)?[a-zA-Z0-9_-]{20,}'
+  'sk-(proj-)?[a-zA-Z0-9_]{20,}'
   'sk-proj-[a-zA-Z0-9_-]{20,}'
   '"private_key":[[:space:]]*"-----BEGIN PRIVATE KEY-----'
   'AKIA[0-9A-Z]{16}'

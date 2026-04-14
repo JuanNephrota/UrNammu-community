@@ -517,6 +517,14 @@ model RiskAssessment {
   performanceScore  Float    @default(0)
   transparencyScore Float    @default(0)
   overallScore      Float    @default(0)
+  // Residual risk (after controls/mitigations) — all optional
+  residualBiasScore         Float?
+  residualSecurityScore     Float?
+  residualPrivacyScore      Float?
+  residualFairnessScore     Float?
+  residualPerformanceScore  Float?
+  residualTransparencyScore Float?
+  residualOverallScore      Float?
   justifications    Json?    // { biasScore: "reason", securityScore: "reason", ... }
   contextualAnswers Json?    // [{ id, category, prompt, answer }]
   assessedBy        String

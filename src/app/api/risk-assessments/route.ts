@@ -30,8 +30,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { biasScore, securityScore, privacyScore, fairnessScore, performanceScore, transparencyScore } = parsed.data;
+    const {
+      biasScore, securityScore, privacyScore, fairnessScore, performanceScore, transparencyScore,
+      residualBiasScore, residualSecurityScore, residualPrivacyScore,
+      residualFairnessScore, residualPerformanceScore, residualTransparencyScore,
+    } = parsed.data;
     const overallScore = (biasScore + securityScore + privacyScore + fairnessScore + performanceScore + transparencyScore) / 6;
+    const residualScores = [
+      residualBiasScore, residualSecurityScore, residualPrivacyScore,
+      residualFairnessScore, residualPerformanceScore, residualTransparencyScore,
+    ].filter((s): s is number => s !== undefined);
+    const residualOverallScore = residualScores.length > 0
+      ? Math.round((residualScores.reduce((a, b) => a + b, 0) / residualScores.length) * 10) / 10
+      : undefined;
     const derivedIssues =
       parsed.data.issues && parsed.data.issues.length > 0
         ? parsed.data.issues
@@ -53,6 +64,7 @@ export async function POST(req: NextRequest) {
         ...parsed.data,
         contextualAnswers: parsed.data.contextualAnswers as Prisma.InputJsonValue | undefined,
         overallScore: Math.round(overallScore * 10) / 10,
+        residualOverallScore,
         assessedBy: session.user.name ?? session.user.email ?? "Unknown",
         issues: derivedIssues.length
           ? {

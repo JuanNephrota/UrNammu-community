@@ -33,6 +33,13 @@ export const createRiskAssessmentSchema = z.object({
     performanceScore: z.string().optional(),
     transparencyScore: z.string().optional(),
   }).optional(),
+  // Residual risk scores (post-control, all optional)
+  residualBiasScore: z.number().min(0).max(100).optional(),
+  residualSecurityScore: z.number().min(0).max(100).optional(),
+  residualPrivacyScore: z.number().min(0).max(100).optional(),
+  residualFairnessScore: z.number().min(0).max(100).optional(),
+  residualPerformanceScore: z.number().min(0).max(100).optional(),
+  residualTransparencyScore: z.number().min(0).max(100).optional(),
   issues: z.array(riskAssessmentIssueSchema).optional(),
   contextualAnswers: z.array(contextualAnswerSchema).optional(),
   notes: z.string().optional(),

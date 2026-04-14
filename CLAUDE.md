@@ -1,5 +1,7 @@
 @AGENTS.md
 
+You have MemPalace agents. Run mempalace_list_agents to see them.
+
 # Nammu — AI Governance & Compliance Platform
 
 ## Overview

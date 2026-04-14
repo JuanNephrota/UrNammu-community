@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { RiskHeatMap } from "@/components/dashboard/risk-heat-map";
+import { SystemRiskRadar } from "@/components/dashboard/system-risk-radar";
 import { DimensionDistributionChart } from "@/components/dashboard/dimension-distribution-chart";
 import { RiskTierTrendChart } from "@/components/dashboard/risk-tier-trend-chart";
 import { Badge, riskBadgeVariant } from "@/components/ui/badge";
@@ -321,6 +322,26 @@ export default async function RiskCenterPage() {
           <RiskHeatMap data={assessments} />
         </CardContent>
       </Card>
+
+      {assessments.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>System Risk Profiles</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              {assessments.slice(0, 5).map((a) => (
+                <div key={a.systemId} className="space-y-1">
+                  <p className="text-xs font-medium text-[var(--text-secondary)] truncate text-center">
+                    {a.systemName}
+                  </p>
+                  <SystemRiskRadar current={a} height={180} />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
