@@ -6,6 +6,7 @@ import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/bad
 import { formatDateTime } from "@/lib/utils";
 import { AlertActions } from "./alert-actions";
 import { InvestigationButton } from "@/components/oversight/investigation-button";
+import { AlertHighlight } from "./alert-highlight";
 
 export default async function AlertsPage() {
   const alerts = await prisma.alert.findMany({
@@ -38,6 +39,7 @@ export default async function AlertsPage() {
 
   return (
     <div className="space-y-6">
+      <AlertHighlight />
       <PageHeader
         title="Alerts"
         description="Monitor governance alerts across all modules"
@@ -51,7 +53,7 @@ export default async function AlertsPage() {
           <CardContent>
             <div className="space-y-3">
               {openAlerts.map((alert) => (
-                <div key={alert.id} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-4">
+                <div key={alert.id} id={`alert-${alert.id}`} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-4 transition-all">
                   <div className="flex items-center gap-3">
                     <Badge variant={riskBadgeVariant(alert.severity)}>{alert.severity}</Badge>
                     <div>
@@ -110,7 +112,7 @@ export default async function AlertsPage() {
           <CardContent>
             <div className="space-y-2">
               {otherAlerts.map((alert) => (
-                <div key={alert.id} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+                <div key={alert.id} id={`alert-${alert.id}`} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3 transition-all">
                   <div className="flex items-center gap-3">
                     <Badge variant={riskBadgeVariant(alert.severity)}>{alert.severity}</Badge>
                     <div>

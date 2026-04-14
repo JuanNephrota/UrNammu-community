@@ -25,8 +25,10 @@ const PROMPT_RISK_RULES: PromptRiskRule[] = [
     label: "Secret or credential extraction attempt",
     severity: "critical",
     patterns: [
-      /\b(api keys?|access tokens?|passwords?|private keys?|secret keys?|ssh keys?|credentials?)\b.{0,40}\b(reveal|extract|dump|list|show|steal|copy|find)\b/i,
-      /\b(reveal|extract|dump|list|show|steal|copy|find)\b.{0,40}\b(api keys?|access tokens?|passwords?|private keys?|secret keys?|ssh keys?|credentials?)\b/i,
+      // Require imperative/command framing — "reveal my api keys", "steal the credentials"
+      // Exclude: "show" and "find" and "list" which are common in legit debugging/security contexts
+      /\b(api keys?|access tokens?|passwords?|private keys?|secret keys?|ssh keys?|credentials?)\b.{0,40}\b(reveal|extract|dump|steal|copy|exfiltrate)\b/i,
+      /\b(reveal|extract|dump|steal|copy|exfiltrate)\b.{0,40}\b(api keys?|access tokens?|passwords?|private keys?|secret keys?|ssh keys?|credentials?)\b/i,
     ],
   },
   {
@@ -34,8 +36,10 @@ const PROMPT_RISK_RULES: PromptRiskRule[] = [
     label: "Sensitive data exfiltration attempt",
     severity: "critical",
     patterns: [
-      /\b(export|dump|extract|copy|list|download)\b.{0,60}\b(customer data|employee data|database|records|pii|phi|ssn|social security|passport|credit card)\b/i,
-      /\b(ssn|social security|passport|credit card|patient|medical record|pii|phi)\b.{0,60}\b(export|dump|extract|copy|list|download|send)\b/i,
+      // Require explicit exfil verbs paired with sensitive data types.
+      // Removed "export", "copy", "list", "download" which are common in legit data work.
+      /\b(dump|extract|exfiltrate|steal)\b.{0,60}\b(customer data|employee data|pii|phi|ssn|social security|passport|credit card)\b/i,
+      /\b(ssn|social security|passport|credit card|patient|medical record|pii|phi)\b.{0,60}\b(dump|extract|exfiltrate|steal|send to)\b/i,
     ],
   },
   {
@@ -43,8 +47,10 @@ const PROMPT_RISK_RULES: PromptRiskRule[] = [
     label: "Malware, exploit, or phishing generation",
     severity: "critical",
     patterns: [
-      /\b(malware|ransomware|keylogger|stealer|credential harvester|phishing|exploit|payload|reverse shell)\b/i,
-      /\b(create|write|generate|build)\b.{0,40}\b(phishing email|malware|ransomware|exploit|keylogger)\b/i,
+      // Require generation intent — bare mentions of "phishing" or "exploit" in security
+      // discussions should not flag. "payload" alone is far too common in API/testing contexts.
+      /\b(create|write|generate|build|code|develop)\b.{0,40}\b(phishing email|phishing page|malware|ransomware|exploit|keylogger|credential harvester|reverse shell)\b/i,
+      /\b(malware|ransomware|keylogger|credential harvester)\b.{0,40}\b(that|which|to)\b/i,
     ],
   },
   {
@@ -52,8 +58,10 @@ const PROMPT_RISK_RULES: PromptRiskRule[] = [
     label: "Unsafe autonomous or impersonation behavior",
     severity: "warning",
     patterns: [
-      /\b(without human review|without approval|without asking|autonomously)\b/i,
-      /\b(send emails|modify records|delete records|impersonate|take action on my behalf|approve requests)\b/i,
+      // Require explicit instruction to act without oversight — not just mentioning the concept.
+      /\b(act|proceed|go ahead|do it|execute|run)\b.{0,30}\b(without (human review|approval|asking|oversight|permission))\b/i,
+      // Require impersonation framing — "impersonate the CEO", "pretend to be the admin"
+      /\b(impersonate|pretend to be|pose as)\b.{0,40}\b(admin|ceo|manager|user|employee|customer)\b/i,
     ],
   },
 ];

@@ -618,9 +618,10 @@ export default async function DashboardPage() {
             ) : (
               <div className="space-y-2">
                 {recentAlerts.map((alert, i) => (
-                  <div
+                  <Link
                     key={alert.id}
-                    className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 transition-all hover:bg-[var(--bg-hover)]"
+                    href={`/alerts?highlight=${alert.id}`}
+                    className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 transition-all hover:bg-[var(--bg-hover)] cursor-pointer"
                     style={{ animationDelay: `${400 + i * 60}ms` }}
                   >
                     <div className="flex items-center gap-3 min-w-0">
@@ -648,7 +649,7 @@ export default async function DashboardPage() {
                     <Badge variant={riskBadgeVariant(alert.severity)} className="shrink-0 ml-2">
                       {alert.severity}
                     </Badge>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
