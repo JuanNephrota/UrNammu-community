@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Terminal,
   Building2,
+  Presentation,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -26,6 +27,7 @@ const navItems = [
     label: "Overview",
     items: [
       { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { name: "Executive", href: "/executive", icon: Presentation },
     ],
   },
   {

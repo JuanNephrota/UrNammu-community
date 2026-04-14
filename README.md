@@ -346,4 +346,4 @@ npm run db:reset
 ### Strategic
 
 - [ ] Bulk governance operations across many systems at once
-- [ ] Executive dashboards with posture deltas, trend storytelling, and board-ready summaries
+- [x] Executive dashboards with posture deltas, trend storytelling, and board-ready summaries
