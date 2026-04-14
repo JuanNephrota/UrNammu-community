@@ -24,8 +24,12 @@ interface BucketMetadata {
   estimated_cost_cents?: number;
 }
 
+function getSevenDaysAgo() {
+  return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
+
 export default async function ClaudeCodePage() {
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = getSevenDaysAgo();
 
   const [usageBuckets, latestSyncRun, latestFailedRun] = await Promise.all([
     prisma.usageBucket.findMany({

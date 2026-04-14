@@ -17,22 +17,24 @@ const HelpContext = createContext<HelpContextValue | null>(null);
 export function HelpProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
   const [open, setOpen] = useState(false);
-  const [overrideKey, setOverrideKey] = useState<HelpKey | null>(null);
-  const helpKey = overrideKey ?? helpKeyForPath(pathname);
+  // Store the override key together with the pathname it was set for.
+  // When pathname changes, the override is stale and ignored — no effect needed.
+  const [override, setOverride] = useState<{ key: HelpKey; forPath: string } | null>(null);
+  const helpKey = (override && override.forPath === pathname) ? override.key : helpKeyForPath(pathname);
 
   const closeHelp = useCallback(() => {
     setOpen(false);
-    setOverrideKey(null);
+    setOverride(null);
   }, []);
 
   const openHelp = useCallback((key?: HelpKey) => {
-    if (key) setOverrideKey(key);
+    if (key) setOverride({ key, forPath: pathname });
     setOpen(true);
-  }, []);
+  }, [pathname]);
 
   const toggleHelp = useCallback(() => {
     setOpen((prev) => {
-      if (prev) setOverrideKey(null);
+      if (prev) setOverride(null);
       return !prev;
     });
   }, []);
@@ -57,11 +59,6 @@ export function HelpProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [toggleHelp]);
-
-  // Reset any override when the route changes.
-  useEffect(() => {
-    setOverrideKey(null);
-  }, [pathname]);
 
   const value = useMemo(
     () => ({ open, helpKey, openHelp, closeHelp, toggleHelp }),
