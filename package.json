@@ -16,7 +16,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test 'src/**/*.test.ts'",
+    "test": "tsx --test src/**/*.test.ts",
     "check:secrets": "bash scripts/check-secrets.sh",
     "db:migrate": "npx prisma migrate dev",
     "db:seed": "npx tsx prisma/seed.ts",
