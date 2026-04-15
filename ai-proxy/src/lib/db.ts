@@ -5,7 +5,24 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+// Azure Functions on Consumption Plan spawn many instances under load. Match
+// the main app's serverless pooling pattern so proxy traffic doesn't starve
+// the shared 100-connection Azure Postgres cap.
+function appendPoolLimit(url: string): string {
+  if (!url) return url;
+  const parts: string[] = [];
+  if (!url.includes("connection_limit")) parts.push("connection_limit=1");
+  if (!url.includes("pool_timeout")) parts.push("pool_timeout=15");
+  if (parts.length === 0) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${parts.join("&")}`;
+}
+
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    datasources: { db: { url: appendPoolLimit(process.env.DATABASE_URL ?? "") } },
+  });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
