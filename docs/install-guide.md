@@ -249,8 +249,10 @@ UrNammu uses Prisma ORM and PostgreSQL. The schema is in `prisma/schema.prisma`;
 | Environment | Recommended |
 |-------------|-------------|
 | Local dev | Homebrew / Docker Postgres. |
-| Production | **Vercel Postgres** (turnkey integration), Neon, Supabase, or any managed Postgres 14+. |
+| Production | **Azure Database for PostgreSQL (Flexible Server)**, Neon, Supabase, or any managed Postgres 14+. |
 | Self-hosted | PostgreSQL 14+ with SSL. |
+
+> **Note**: Prisma Accelerate (`db.prisma.io`) is **not** recommended. The platform has strict plan limits that can result in production outages when tripped. Use a directly-managed Postgres instance instead.
 
 ### 4.2 Connection string format
 
@@ -321,7 +323,7 @@ The main Next.js app is designed for Vercel. Other Node-compatible hosts (Fly.io
 ### 6.1 One-time setup
 
 1. **Create a Vercel project** linked to your Git repo.
-2. **Add a Postgres database** via Vercel → Storage → Create → Postgres. Vercel auto-wires `DATABASE_URL`, but verify it points to the same instance across Preview and Production.
+2. **Provision a managed Postgres** (Azure Database for PostgreSQL Flexible Server, Neon, Supabase, or similar). Add `DATABASE_URL` as a Vercel environment variable across **Production, Preview, and Development**. The connection string should include `?sslmode=require`. Ensure the database firewall allows connections from Vercel's serverless runtime (typically by allowing all IPs with SSL required as the mitigation, or by using a provider that supports Vercel IP allowlisting).
 3. **Set environment variables** in Vercel → Settings → Environment Variables. At minimum:
    - `NEXTAUTH_URL` — your production URL (e.g., `https://urnammu.example.com`).
    - `NEXTAUTH_SECRET`, `SETTINGS_ENCRYPTION_KEY`, `CRON_SECRET`.
