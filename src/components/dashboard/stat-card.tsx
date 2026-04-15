@@ -68,6 +68,17 @@ const variantConfig = {
   },
 };
 
+// Auto-scale the value's font size so long numbers (e.g. formatted token counts
+// like "2,145,678,901") don't overrun narrow cards in dense grids such as
+// oversight's lg:grid-cols-8 layout.
+function valueSizeClass(value: string | number): string {
+  const len = String(value).length;
+  if (len <= 6) return "text-3xl";
+  if (len <= 9) return "text-2xl";
+  if (len <= 12) return "text-xl";
+  return "text-lg";
+}
+
 export function StatCard({
   title,
   value,
@@ -91,14 +102,18 @@ export function StatCard({
         }}
       />
 
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 space-y-1">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
             {title}
           </p>
           <p
-            className="text-3xl font-bold tracking-tight text-[var(--text-primary)] tabular-nums"
+            className={cn(
+              "font-bold tracking-tight text-[var(--text-primary)] tabular-nums truncate",
+              valueSizeClass(value)
+            )}
             style={{ fontFamily: "var(--font-display)" }}
+            title={String(value)}
           >
             {value}
           </p>
