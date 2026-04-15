@@ -8,7 +8,14 @@ import { AlertActions } from "./alert-actions";
 import { InvestigationButton } from "@/components/oversight/investigation-button";
 import { AlertHighlight } from "./alert-highlight";
 import { RelatedUsageLogs } from "./related-usage-logs";
-import { HelpHint } from "@/components/help/help-hint";
+import { DangerousPromptDetail } from "./dangerous-prompt-detail";
+
+type RuleMatchMeta = {
+  key: string;
+  label: string;
+  severity: "critical" | "warning";
+  signals: string[];
+};
 
 type PromptRiskMeta = {
   provider?: string;
@@ -18,14 +25,14 @@ type PromptRiskMeta = {
   categories?: string[];
   ruleKeys?: string[];
   matchedSignals?: string[];
-  excerpt?: string;
+  ruleMatches?: RuleMatchMeta[];
+  excerpt?: string | null;
+  fullExcerpt?: string | null;
 };
 
 function isPromptRiskMeta(value: unknown): value is PromptRiskMeta {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-const CRITICAL_RULE_KEYS = new Set(["secret_extraction", "data_exfiltration", "malware_or_phishing"]);
 
 export default async function AlertsPage() {
   const alerts = await prisma.alert.findMany({
@@ -131,46 +138,14 @@ export default async function AlertsPage() {
                           )}
                         </div>
 
-                        {/* Categories as badges */}
-                        {meta.categories && meta.categories.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {meta.categories.map((cat, i) => (
-                              <Badge
-                                key={cat}
-                                variant={meta.ruleKeys?.[i] && CRITICAL_RULE_KEYS.has(meta.ruleKeys[i]) ? "critical" : "warning"}
-                              >
-                                {cat}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Matched signals */}
-                        {meta.matchedSignals && meta.matchedSignals.length > 0 && (
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)] flex items-center gap-1">Matched Signals <HelpHint hint="prompt_risk_signals" /></p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {meta.matchedSignals.map((signal) => (
-                                <code
-                                  key={signal}
-                                  className="rounded bg-[var(--bg-base)] px-2 py-0.5 text-xs text-[var(--text-secondary)] border border-[var(--border-subtle)]"
-                                >
-                                  {signal}
-                                </code>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Excerpt */}
-                        {meta.excerpt && (
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">Sanitized Excerpt</p>
-                            <pre className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 text-xs text-[var(--text-secondary)] font-mono whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
-                              {meta.excerpt}
-                            </pre>
-                          </div>
-                        )}
+                        <DangerousPromptDetail
+                          categories={meta.categories}
+                          ruleKeys={meta.ruleKeys}
+                          matchedSignals={meta.matchedSignals}
+                          ruleMatches={meta.ruleMatches}
+                          excerpt={meta.excerpt ?? null}
+                          fullExcerpt={meta.fullExcerpt ?? null}
+                        />
 
                         {/* Related system / incident */}
                         {(alert.aiSystem || alert.governanceIncident) && (

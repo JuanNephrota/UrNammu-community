@@ -68,15 +68,29 @@ async function loadActiveRules(): Promise<CompiledRule[]> {
   }
 }
 
+/**
+ * A single rule's match detail — preserves the grouping lost by the flat
+ * `matchedSignals` list so investigators can see which signals triggered
+ * which rule without having to cross-reference by index.
+ */
+export type RuleMatch = {
+  key: string;
+  label: string;
+  severity: PromptRiskSeverity;
+  signals: string[];
+};
+
 export type PromptRiskAnalysis = {
   flagged: boolean;
   severity: PromptRiskSeverity | null;
   flagReason: string | null;
   summary: string | null;
-  categories: string[];
-  ruleKeys: string[];
-  matchedSignals: string[];
-  excerpt: string | null;
+  categories: string[];        // legacy flat list, kept for backward compat
+  ruleKeys: string[];          // legacy flat list, kept for backward compat
+  matchedSignals: string[];    // legacy flat list, kept for backward compat
+  ruleMatches: RuleMatch[];    // NEW: per-rule grouping for investigation UI
+  excerpt: string | null;      // short sanitized excerpt (≤220 chars)
+  fullExcerpt: string | null;  // longer sanitized excerpt (≤2000 chars)
 };
 
 /**
@@ -149,7 +163,7 @@ function extractPromptText(requestBody: Record<string, unknown> | null | undefin
   return parts.join("\n").slice(0, 8000);
 }
 
-function sanitizeExcerpt(value: string | null): string | null {
+function sanitizeText(value: string | null): string | null {
   if (!value) return null;
   const cleaned = value
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
@@ -158,8 +172,13 @@ function sanitizeExcerpt(value: string | null): string | null {
     .replace(/\s+/g, " ")
     .trim();
 
+  return cleaned || null;
+}
+
+function sanitizeExcerpt(value: string | null, maxLength = 220): string | null {
+  const cleaned = sanitizeText(value);
   if (!cleaned) return null;
-  return cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
+  return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength - 3)}...` : cleaned;
 }
 
 export async function analyzePromptRisk(
@@ -175,7 +194,9 @@ export async function analyzePromptRisk(
       categories: [],
       ruleKeys: [],
       matchedSignals: [],
+      ruleMatches: [],
       excerpt: null,
+      fullExcerpt: null,
     };
   }
 
@@ -184,6 +205,7 @@ export async function analyzePromptRisk(
   const categories: string[] = [];
   const ruleKeys: string[] = [];
   const matchedSignals: string[] = [];
+  const ruleMatches: RuleMatch[] = [];
   let severity: PromptRiskSeverity | null = null;
 
   for (const rule of rules) {
@@ -193,9 +215,16 @@ export async function analyzePromptRisk(
 
     if (matches.length === 0) continue;
 
+    const uniqueMatches = [...new Set(matches)].slice(0, 5);
     categories.push(rule.label);
     ruleKeys.push(rule.key);
-    matchedSignals.push(...matches.slice(0, 3));
+    matchedSignals.push(...uniqueMatches.slice(0, 3));
+    ruleMatches.push({
+      key: rule.key,
+      label: rule.label,
+      severity: rule.severity,
+      signals: uniqueMatches,
+    });
     if (severity !== "critical") {
       severity = rule.severity === "critical" ? "critical" : severity ?? "warning";
     }
@@ -210,7 +239,9 @@ export async function analyzePromptRisk(
       categories: [],
       ruleKeys: [],
       matchedSignals: [],
+      ruleMatches: [],
       excerpt: sanitizeExcerpt(promptText),
+      fullExcerpt: sanitizeExcerpt(promptText, 2000),
     };
   }
 
@@ -227,7 +258,9 @@ export async function analyzePromptRisk(
     categories,
     ruleKeys,
     matchedSignals: [...new Set(matchedSignals)].slice(0, 6),
+    ruleMatches,
     excerpt: sanitizeExcerpt(promptText),
+    fullExcerpt: sanitizeExcerpt(promptText, 2000),
   };
 }
 
@@ -319,7 +352,9 @@ export async function createPromptRiskAlert(input: {
     categories: input.analysis.categories,
     ruleKeys: input.analysis.ruleKeys,
     matchedSignals: input.analysis.matchedSignals,
+    ruleMatches: input.analysis.ruleMatches,
     excerpt: input.analysis.excerpt,
+    fullExcerpt: input.analysis.fullExcerpt,
   };
 
   if (recentDuplicate) {
