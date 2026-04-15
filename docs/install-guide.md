@@ -263,6 +263,40 @@ postgresql://<user>:<password>@<host>:<port>/<database>?schema=public&sslmode=re
 - Add `&sslmode=require` for managed providers.
 - Use a **dedicated database** per environment (dev / staging / prod).
 
+### 4.2.1 Connection pooling (serverless)
+
+Serverless platforms (Vercel, Azure Functions) spawn many short-lived isolates, each of which opens its own Prisma pool. Without a server-side pooler, the database connection cap is easy to exhaust. Two approaches:
+
+**Option A: App-side connection_limit (small deployments)**
+
+`src/lib/prisma.ts` appends `connection_limit=1&pool_timeout=15` to the URL. With a managed Postgres that allows ~100 concurrent connections, this supports ~90 concurrent Vercel isolates before contention. Good for demo / small production workloads.
+
+**Option B: Server-side pooler (recommended for production)**
+
+Use a transaction-mode pooler (PgBouncer) in front of Postgres. Point `DATABASE_URL` at the pooler port (6432 on Azure PG Flexible Server GP/MO tiers) and set `DIRECT_URL` to the direct database port (5432) for migrations and introspection:
+
+```
+DATABASE_URL=postgresql://user:pass@host:6432/db?sslmode=require&pgbouncer=true
+DIRECT_URL=postgresql://user:pass@host:5432/db?sslmode=require
+```
+
+- `pgbouncer=true` tells Prisma to disable prepared statements (required for PgBouncer transaction pool mode).
+- `DIRECT_URL` is declared in `prisma/schema.prisma` as `directUrl = env("DIRECT_URL")`. Prisma uses it automatically for `prisma migrate deploy`, `prisma db pull`, and other session-level commands that PgBouncer transaction mode can't handle.
+
+On Azure PG Flexible Server:
+
+```bash
+# Enable PgBouncer (requires GeneralPurpose or MemoryOptimized tier — NOT Burstable)
+az postgres flexible-server parameter set --server-name <srv> --resource-group <rg> \
+  --name pgbouncer.enabled --value true
+
+# Recommended: allow common driver startup params
+az postgres flexible-server parameter set --server-name <srv> --resource-group <rg> \
+  --name pgbouncer.ignore_startup_parameters --value "extra_float_digits,search_path"
+
+# Sanity-check: `pool_mode` defaults to `transaction`; `max_client_conn` to 5000.
+```
+
 ### 4.3 Running migrations
 
 ```bash
@@ -323,7 +357,7 @@ The main Next.js app is designed for Vercel. Other Node-compatible hosts (Fly.io
 ### 6.1 One-time setup
 
 1. **Create a Vercel project** linked to your Git repo.
-2. **Provision a managed Postgres** (Azure Database for PostgreSQL Flexible Server, Neon, Supabase, or similar). Add `DATABASE_URL` as a Vercel environment variable across **Production, Preview, and Development**. The connection string should include `?sslmode=require`. Ensure the database firewall allows connections from Vercel's serverless runtime (typically by allowing all IPs with SSL required as the mitigation, or by using a provider that supports Vercel IP allowlisting).
+2. **Provision a managed Postgres** (Azure Database for PostgreSQL Flexible Server, Neon, Supabase, or similar). Add `DATABASE_URL` as a Vercel environment variable across **Production, Preview, and Development**. The connection string should include `?sslmode=require`. Ensure the database firewall allows connections from Vercel's serverless runtime (typically by allowing all IPs with SSL required as the mitigation, or by using a provider that supports Vercel IP allowlisting). If you are using a server-side pooler (recommended — see [Section 4.2.1](#421-connection-pooling-serverless)), point `DATABASE_URL` at the pooler port (e.g. `:6432?...&pgbouncer=true` on Azure PG) and add a `DIRECT_URL` env var on port `:5432` so `prisma migrate` can bypass the pooler.
 3. **Set environment variables** in Vercel → Settings → Environment Variables. At minimum:
    - `NEXTAUTH_URL` — your production URL (e.g., `https://urnammu.example.com`).
    - `NEXTAUTH_SECRET`, `SETTINGS_ENCRYPTION_KEY`, `CRON_SECRET`.

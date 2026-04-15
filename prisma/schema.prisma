@@ -3,8 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // DIRECT_URL bypasses the PgBouncer pooler (port 5432 instead of 6432) for
+  // prisma migrate / db pull / introspection, which need session-level semantics
+  // that transaction-pool mode doesn't support. Falls back to DATABASE_URL in dev.
+  directUrl = env("DIRECT_URL")
 }
 
 // ─── Enums ──────────────────────────────────────────────
