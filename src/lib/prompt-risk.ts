@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { safeCompileRegex } from "./regex-validator";
+import { BUILTIN_PROMPT_RISK_RULES } from "./prompt-risk-defaults";
 
 type PromptRiskSeverity = "critical" | "warning";
 
@@ -14,21 +15,17 @@ type CompiledRule = {
 // invalidateRuleCache() is called (after a mutation).
 let ruleCache: { rules: CompiledRule[]; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 30_000;
+// When the DB is unreachable we serve built-in rules, but only briefly — so
+// that admins' overrides take effect as soon as Postgres is back.
+const FALLBACK_TTL_MS = 5_000;
 
 export function invalidateRuleCache() {
   ruleCache = null;
 }
 
-async function loadActiveRules(): Promise<CompiledRule[]> {
-  if (ruleCache && ruleCache.expiresAt > Date.now()) {
-    return ruleCache.rules;
-  }
-
-  const rows = await prisma.promptRiskRule.findMany({
-    where: { enabled: true },
-    orderBy: { key: "asc" },
-  });
-
+function compileRules(
+  rows: Array<{ key: string; label: string; severity: string; patterns: string[] }>
+): CompiledRule[] {
   const compiled: CompiledRule[] = [];
   for (const row of rows) {
     const patterns = row.patterns
@@ -44,9 +41,31 @@ async function loadActiveRules(): Promise<CompiledRule[]> {
       patterns,
     });
   }
-
-  ruleCache = { rules: compiled, expiresAt: Date.now() + CACHE_TTL_MS };
   return compiled;
+}
+
+async function loadActiveRules(): Promise<CompiledRule[]> {
+  if (ruleCache && ruleCache.expiresAt > Date.now()) {
+    return ruleCache.rules;
+  }
+
+  // Fall back to built-in rules if the DB is unreachable (CI without
+  // Postgres, cold starts, transient outages). Admin edits in the DB still
+  // win whenever it's reachable; this path only covers the failure case so
+  // the proxy doesn't 500 and unit tests don't require a live database.
+  try {
+    const rows = await prisma.promptRiskRule.findMany({
+      where: { enabled: true },
+      orderBy: { key: "asc" },
+    });
+    const compiled = compileRules(rows);
+    ruleCache = { rules: compiled, expiresAt: Date.now() + CACHE_TTL_MS };
+    return compiled;
+  } catch {
+    const fallback = compileRules(BUILTIN_PROMPT_RISK_RULES);
+    ruleCache = { rules: fallback, expiresAt: Date.now() + FALLBACK_TTL_MS };
+    return fallback;
+  }
 }
 
 export type PromptRiskAnalysis = {
