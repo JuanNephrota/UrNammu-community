@@ -86,12 +86,18 @@ function makeDimensionKey(parts: Record<string, string | null | undefined>): str
 }
 
 async function createSyncRun(provider: SyncProvider, triggeredByUserId: string) {
+  // "system" is the sentinel the scheduler passes for cron-triggered runs. It
+  // isn't a real User id, so inserting it directly violates the
+  // ProviderSyncRun_triggeredByUserId_fkey foreign key and silently breaks
+  // every scheduled sync. Map the sentinel to null (the column is nullable).
+  // Human-triggered runs still carry their real user id for attribution.
+  const resolvedUserId = triggeredByUserId === "system" ? null : triggeredByUserId;
   return prisma.providerSyncRun.create({
     data: {
       provider,
       syncType: "telemetry",
       status: "RUNNING",
-      triggeredByUserId,
+      triggeredByUserId: resolvedUserId,
     },
   });
 }
