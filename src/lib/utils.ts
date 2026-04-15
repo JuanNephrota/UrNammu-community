@@ -27,3 +27,22 @@ export function formatDateForInput(date: Date | string | null | undefined): stri
   if (!date) return "";
   return new Date(date).toISOString().slice(0, 10);
 }
+
+// Compact decimal notation for large counts (tokens, requests, etc).
+//   999        -> "999"
+//   1,234      -> "1.23K"
+//   456,237    -> "456K"
+//   1,234,567  -> "1.23M"
+//   345,678,987 -> "346M"
+//   1.2e9      -> "1.2B"
+// Values under 1,000 render as plain integers with thousands separators.
+const compactFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 0,
+});
+export function formatCompactNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (Math.abs(value) < 1000) return value.toLocaleString();
+  return compactFormatter.format(value);
+}

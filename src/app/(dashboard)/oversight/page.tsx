@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDateTime } from "@/lib/utils";
+import { formatCompactNumber, formatDateTime } from "@/lib/utils";
 import { UsageChart } from "@/components/dashboard/usage-chart";
 import { OrgDataPanel } from "@/components/dashboard/org-data-panel";
 import { OversightActionQueue } from "@/components/dashboard/governance-action-queue";
@@ -301,7 +301,13 @@ export default async function OversightPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-8">
         <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" />
-        <StatCard title="Total Tokens" value={totalTokens.toLocaleString()} iconName="Eye" variant="default" />
+        <StatCard
+          title="Total Tokens"
+          value={formatCompactNumber(totalTokens)}
+          description={totalTokens.toLocaleString() + " total"}
+          iconName="Eye"
+          variant="default"
+        />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" />
         <StatCard
           title="Tracked Entities"
