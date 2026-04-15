@@ -351,6 +351,21 @@ If a dangerous prompt alert is benign (e.g. legitimate security testing), click 
 
 Manage exceptions at **Alerts → Manage prompt risk exceptions**. Exceptions can be deactivated or reactivated. The system only suppresses alert creation — usage is still logged for audit.
 
+## Tuning the detection engine
+
+The dangerous-prompt engine is rule-based and fully tunable at **Alerts → Tune detection rules**. Each rule has:
+
+- A stable **key** (\`prompt_injection\`, \`secret_extraction\`, etc.) — this is the identifier referenced by exceptions, so it is **immutable** once created.
+- A **label** and optional **description**.
+- A **severity** — \`critical\` → CRITICAL alerts, \`warning\` → HIGH alerts.
+- Up to 10 **regex patterns**, matched case-insensitively against user-authored prompt text only (assistant, tool, and system content are never scanned).
+
+Five built-in rules are seeded on install. Built-ins can be edited, disabled, or reset to their original definition, but cannot be deleted. Custom rules can be created with fresh keys and deleted when no longer needed.
+
+Patterns are validated on save: they must compile as JavaScript regex, fit within 500 chars, and not contain obvious ReDoS shapes (e.g. \`(.*)+\`). A short probe string is run against each pattern; patterns that take more than 50 ms are rejected.
+
+Use the **Test a prompt** panel on the rules page to dry-run a prompt against the current enabled ruleset without creating an alert. Rule changes take effect within 30 seconds (runtime cache) or immediately on mutation.
+
 ## Severity
 
 \`CRITICAL\` / \`HIGH\` / \`MEDIUM\` / \`LOW\` / \`INFO\` — drives the badge color and sort order.

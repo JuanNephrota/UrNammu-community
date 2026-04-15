@@ -844,6 +844,30 @@ model PromptRiskException {
   @@index([createdByUserId])
 }
 
+// ─── Prompt Risk Detection Rules ───────────────────────
+
+model PromptRiskRule {
+  id          String   @id @default(cuid())
+  key         String   @unique // stable identifier, referenced by exceptions (prompt_injection, etc.)
+  label       String
+  severity    String   // "critical" | "warning"
+  patterns    String[] // array of regex source strings (flags forced to "i")
+  description String?  @db.Text
+  enabled     Boolean  @default(true)
+  builtIn     Boolean  @default(false) // seeded defaults: cannot be deleted, can be disabled/edited, can be reset
+
+  // Snapshots of the default definition for built-in rules. Used by the "reset to default"
+  // action so the original label/patterns/severity are recoverable.
+  defaultLabel    String?
+  defaultSeverity String?
+  defaultPatterns String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+}
+
 model SpendBudget {
   id                  String          @id @default(cuid())
   scopeType           BudgetScopeType

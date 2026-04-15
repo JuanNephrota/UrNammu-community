@@ -69,6 +69,9 @@ export default async function AlertsPage() {
         {falsePositiveCount > 0 && (
           <Badge variant="outline">{falsePositiveCount} marked as false positive</Badge>
         )}
+        <Link href="/alerts/prompt-rules" className="text-xs text-[var(--accent)] hover:underline">
+          Tune detection rules
+        </Link>
         <Link href="/alerts/exceptions" className="text-xs text-[var(--accent)] hover:underline">
           Manage prompt risk exceptions
         </Link>

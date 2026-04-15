@@ -116,7 +116,7 @@ export async function handleAnthropicProxy(
   const mcpResult = applyMcpPassthrough(forwardHeaders, req.headers, bodyJson);
 
   const model = (bodyJson?.model as string) ?? "unknown";
-  const promptRisk = analyzePromptRisk(bodyJson);
+  const promptRisk = await analyzePromptRisk(bodyJson);
   const isStreaming = bodyJson?.stream === true;
   const startTime = Date.now();
 
@@ -314,7 +314,7 @@ async function extractStreamUsage(
     latencyMs: number;
     subpath: string;
     aiSystemId: string | null;
-    promptRisk: ReturnType<typeof analyzePromptRisk>;
+    promptRisk: Awaited<ReturnType<typeof analyzePromptRisk>>;
     mcp: import("./mcp-passthrough").McpPassthroughResult;
   }
 ) {

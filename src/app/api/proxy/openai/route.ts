@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
   }
 
   const model = (body.model as string) ?? "unknown";
-  const promptRisk = analyzePromptRisk(body);
+  const promptRisk = await analyzePromptRisk(body);
   const startTime = Date.now();
   let openaiResponse: Response;
 

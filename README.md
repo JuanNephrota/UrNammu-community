@@ -317,6 +317,7 @@ npm run db:reset
 - Database indexes added on `AuditLog` and `Alert` foreign keys for query performance. `AuditLog` cascade deletes properly when users are removed.
 - Dangerous prompt alerts now store structured metadata (provider, model, categories, matched signals, excerpt) and render as investigation cards with category badges, signal evidence, and related usage logs.
 - False positive marking for prompt risk alerts: dismiss with required reason, optionally create `PromptRiskException` records that suppress similar future alerts. Exceptions are managed at `/alerts/exceptions` and support activation/deactivation.
+- Dangerous-prompt detection is a tunable rule engine backed by the `PromptRiskRule` table. Admins can edit, disable, or reset the five built-in rules (`prompt_injection`, `secret_extraction`, `data_exfiltration`, `malware_or_phishing`, `dangerous_autonomy`) and create their own custom rules at `/alerts/prompt-rules`. Patterns are validated against ReDoS shapes and a 50 ms runtime probe before save; rule changes propagate through a 30-second runtime cache. A "Test a prompt" panel dry-runs input against the current enabled ruleset without creating an alert.
 - Shadow AI discovery now persists match confidence (high/medium/low), numeric score, and match reasons as first-class fields on `DiscoveredAITool`. Low-confidence candidates are shown in a dedicated review queue with promote and dismiss actions. Dismissed candidates are permanently suppressed via `DismissedCandidate` records so they don't resurface on future scans.
 
 ## TODO / Roadmap

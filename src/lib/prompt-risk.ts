@@ -1,70 +1,53 @@
 import { prisma } from "./prisma";
+import { safeCompileRegex } from "./regex-validator";
 
 type PromptRiskSeverity = "critical" | "warning";
 
-type PromptRiskRule = {
+type CompiledRule = {
   key: string;
   label: string;
   severity: PromptRiskSeverity;
   patterns: RegExp[];
 };
 
-const PROMPT_RISK_RULES: PromptRiskRule[] = [
-  {
-    key: "prompt_injection",
-    label: "Prompt injection or system prompt exfiltration",
-    severity: "warning",
-    patterns: [
-      /\bignore (all |any |the )?(previous|prior|earlier) instructions\b/i,
-      /\b(reveal|show|print|dump|expose).{0,40}(system prompt|hidden instructions|developer message|internal prompt)\b/i,
-      /\b(jailbreak|bypass (safety|guardrails|policy)|developer mode|dan mode)\b/i,
-    ],
-  },
-  {
-    key: "secret_extraction",
-    label: "Secret or credential extraction attempt",
-    severity: "critical",
-    patterns: [
-      // Require imperative/command framing — "reveal my api keys", "steal the credentials"
-      // Exclude: "show" and "find" and "list" which are common in legit debugging/security contexts
-      /\b(api keys?|access tokens?|passwords?|private keys?|secret keys?|ssh keys?|credentials?)\b.{0,40}\b(reveal|extract|dump|steal|copy|exfiltrate)\b/i,
-      /\b(reveal|extract|dump|steal|copy|exfiltrate)\b.{0,40}\b(api keys?|access tokens?|passwords?|private keys?|secret keys?|ssh keys?|credentials?)\b/i,
-    ],
-  },
-  {
-    key: "data_exfiltration",
-    label: "Sensitive data exfiltration attempt",
-    severity: "critical",
-    patterns: [
-      // Require explicit exfil verbs paired with sensitive data types.
-      // Removed "export", "copy", "list", "download" which are common in legit data work.
-      /\b(dump|extract|exfiltrate|steal)\b.{0,60}\b(customer data|employee data|pii|phi|ssn|social security|passport|credit card)\b/i,
-      /\b(ssn|social security|passport|credit card|patient|medical record|pii|phi)\b.{0,60}\b(dump|extract|exfiltrate|steal|send to)\b/i,
-    ],
-  },
-  {
-    key: "malware_or_phishing",
-    label: "Malware, exploit, or phishing generation",
-    severity: "critical",
-    patterns: [
-      // Require generation intent — bare mentions of "phishing" or "exploit" in security
-      // discussions should not flag. "payload" alone is far too common in API/testing contexts.
-      /\b(create|write|generate|build|code|develop)\b.{0,40}\b(phishing email|phishing page|malware|ransomware|exploit|keylogger|credential harvester|reverse shell)\b/i,
-      /\b(malware|ransomware|keylogger|credential harvester)\b.{0,40}\b(that|which|to)\b/i,
-    ],
-  },
-  {
-    key: "dangerous_autonomy",
-    label: "Unsafe autonomous or impersonation behavior",
-    severity: "warning",
-    patterns: [
-      // Require explicit instruction to act without oversight — not just mentioning the concept.
-      /\b(act|proceed|go ahead|do it|execute|run)\b.{0,30}\b(without (human review|approval|asking|oversight|permission))\b/i,
-      // Require impersonation framing — "impersonate the CEO", "pretend to be the admin"
-      /\b(impersonate|pretend to be|pose as)\b.{0,40}\b(admin|ceo|manager|user|employee|customer)\b/i,
-    ],
-  },
-];
+// In-memory cache for compiled rules. Refreshed on TTL expiry or when
+// invalidateRuleCache() is called (after a mutation).
+let ruleCache: { rules: CompiledRule[]; expiresAt: number } | null = null;
+const CACHE_TTL_MS = 30_000;
+
+export function invalidateRuleCache() {
+  ruleCache = null;
+}
+
+async function loadActiveRules(): Promise<CompiledRule[]> {
+  if (ruleCache && ruleCache.expiresAt > Date.now()) {
+    return ruleCache.rules;
+  }
+
+  const rows = await prisma.promptRiskRule.findMany({
+    where: { enabled: true },
+    orderBy: { key: "asc" },
+  });
+
+  const compiled: CompiledRule[] = [];
+  for (const row of rows) {
+    const patterns = row.patterns
+      .map((src) => safeCompileRegex(src))
+      .filter((p): p is RegExp => p !== null);
+    if (patterns.length === 0) continue; // skip rules with all-broken patterns
+    const severity: PromptRiskSeverity =
+      row.severity === "critical" ? "critical" : "warning";
+    compiled.push({
+      key: row.key,
+      label: row.label,
+      severity,
+      patterns,
+    });
+  }
+
+  ruleCache = { rules: compiled, expiresAt: Date.now() + CACHE_TTL_MS };
+  return compiled;
+}
 
 export type PromptRiskAnalysis = {
   flagged: boolean;
@@ -160,7 +143,9 @@ function sanitizeExcerpt(value: string | null): string | null {
   return cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
 }
 
-export function analyzePromptRisk(requestBody: Record<string, unknown> | null | undefined): PromptRiskAnalysis {
+export async function analyzePromptRisk(
+  requestBody: Record<string, unknown> | null | undefined
+): Promise<PromptRiskAnalysis> {
   const promptText = extractPromptText(requestBody);
   if (!promptText) {
     return {
@@ -175,12 +160,14 @@ export function analyzePromptRisk(requestBody: Record<string, unknown> | null | 
     };
   }
 
+  const rules = await loadActiveRules();
+
   const categories: string[] = [];
   const ruleKeys: string[] = [];
   const matchedSignals: string[] = [];
   let severity: PromptRiskSeverity | null = null;
 
-  for (const rule of PROMPT_RISK_RULES) {
+  for (const rule of rules) {
     const matches = rule.patterns
       .map((pattern) => promptText.match(pattern)?.[0] ?? null)
       .filter((value): value is string => !!value);

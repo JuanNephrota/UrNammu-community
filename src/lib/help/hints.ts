@@ -61,6 +61,16 @@ export const HELP_HINTS = {
     "A suppression rule that prevents future alerts for a specific prompt risk category. Exceptions match on stable rule keys and can be deactivated.",
   prompt_risk_signals:
     "The exact phrases from the user's prompt that matched a detection rule. Sanitized — emails, keys, and long numbers are redacted.",
+  prompt_risk_rules:
+    "The detection engine scans proxy traffic with these rules. Each rule has a stable key (used by exceptions), severity, and regex patterns. Built-in rules can be edited, disabled, or reset to defaults; custom rules can be created or deleted.",
+  prompt_risk_rule_key:
+    "A stable identifier referenced by exceptions (prompt_injection, secret_extraction, etc.). Cannot be changed after creation — rename by creating a new rule and retiring the old one.",
+  prompt_risk_rule_severity:
+    "`critical` produces CRITICAL alerts (credential theft, malware). `warning` produces HIGH alerts (prompt injection, autonomy abuse).",
+  prompt_risk_rule_patterns:
+    "Regex sources matched case-insensitively against user-authored prompt text only. Assistant, tool, and system content are skipped. ReDoS-prone shapes (nested quantifiers) are rejected on save.",
+  prompt_risk_rule_test:
+    "Paste a prompt and dry-run it against the current enabled ruleset without creating an alert. Useful before tightening or loosening detection.",
 
   // --- Proxy ---
   proxy_attribution:

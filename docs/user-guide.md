@@ -603,6 +603,52 @@ When investigating a dangerous prompt alert, if the signal is benign (e.g. a leg
 
 Exceptions are managed at **Alerts → Manage prompt risk exceptions** (`/alerts/exceptions`). Each exception can be deactivated or reactivated. Exceptions suppress alert creation only — the full prompt risk analysis is still logged on every APIUsageLog record for audit purposes. An alert is only suppressed when all its matched categories are covered by active exceptions.
 
+### Tuning Detection Rules
+
+The dangerous-prompt engine is fully tunable at **Alerts → Tune detection rules** (`/alerts/prompt-rules`). Admins can edit built-in rules, create custom ones, and dry-run prompts against the live ruleset before saving changes.
+
+Five built-in rules are seeded on install:
+
+| Key | Default Severity | What it matches |
+| --- | --- | --- |
+| `prompt_injection` | warning | jailbreak and system-prompt exfiltration attempts |
+| `secret_extraction` | critical | credential / API-key / secret extraction |
+| `data_exfiltration` | critical | attempts to pull restricted or regulated data |
+| `malware_or_phishing` | critical | malware, phishing, or attack-tool generation |
+| `dangerous_autonomy` | warning | unsafe autonomy, unchecked tool use, escalation |
+
+Each rule has:
+
+- A stable **key** (e.g. `prompt_injection`) — referenced by `PromptRiskException` rows, so it is **immutable** once created.
+- A **label** shown to reviewers and a free-form **description**.
+- A **severity** — `critical` produces `CRITICAL` alerts, `warning` produces `HIGH` alerts.
+- Up to **10 regex patterns**, matched case-insensitively against user-authored prompt text only. Assistant, tool, and system content are never scanned.
+
+**Built-ins** can be edited, disabled, or reset to their original definition, but cannot be deleted. The "Reset" action restores the seeded label, severity, and patterns from snapshot columns on the rule row.
+
+**Custom rules** can be created with fresh keys (lowercase alphanumeric + underscore, 3–40 chars) and deleted when no longer needed.
+
+#### Pattern Safety
+
+Patterns are validated on save:
+
+- Each pattern must compile as a JavaScript regex.
+- Each pattern is limited to 500 characters.
+- Obvious ReDoS shapes (e.g. `(.*)+`, `(\w+)+`, `(a|a)+`) are rejected.
+- A short probe string is run against each pattern; any pattern that takes longer than 50 ms is rejected.
+
+#### Rule Propagation
+
+The proxy loads active rules via a 30-second in-memory cache. Mutations (create, update, delete, reset, enable/disable) invalidate the cache immediately, so new rules take effect on the next proxy request. In the worst case — no mutations — a rule change takes at most 30 seconds to propagate.
+
+#### Test a Prompt
+
+The **Test a prompt** panel on the rules page dry-runs a prompt against the current enabled ruleset without creating an alert. It wraps the input as a user message and applies the same extractor guards the proxy uses, so the result exactly mirrors what would happen at runtime. Use it to:
+
+- Confirm a new pattern fires on intended prompts.
+- Verify an edited built-in still catches the baseline cases.
+- Check that an exception, disabled rule, or redacted phrase no longer triggers.
+
 ### Vendor Governance
 
 **Oversight → Vendors** tracks each vendor's lifecycle. A `VendorProfile` is auto-created for every vendor name in the Registry. On each profile:
@@ -675,6 +721,11 @@ Inline actions per alert:
 - **Resolve** — marks the alert as addressed.
 - **Dismiss** — marks as not a real issue (for non-prompt-risk alerts).
 - **False Positive** — for dangerous prompt alerts only. Requires a reason and optionally creates suppression exceptions (see False Positive Marking above).
+
+Top-of-page links on `/alerts`:
+
+- **Tune detection rules** (`/alerts/prompt-rules`) — manage the rule engine that produces `dangerous_prompt` alerts. See [Tuning Detection Rules](#tuning-detection-rules).
+- **Manage prompt risk exceptions** (`/alerts/exceptions`) — review and deactivate per-rule suppression exceptions created via False Positive marking.
 
 ---
 
@@ -928,6 +979,8 @@ Runs on every maintenance call. Produces alerts for:
 | **VendorProfile** | Vendor lifecycle data: contract status, dates, security review, data residency, subprocessors, approved use cases. |
 | **Investigation** | Follow-up workflow for an alert or incident, with owner and resolution summary. |
 | **Alert** | Governance signal with severity, status, and source; feeds the Alerts inbox. |
+| **PromptRiskRule** | A tunable detection rule (key, label, severity, up to 10 regex patterns) used by the proxy to flag dangerous prompts. Editable at `/alerts/prompt-rules`. |
+| **PromptRiskException** | Per-rule-key suppression record created via False Positive marking. Suppresses alert creation when all matched categories of a candidate alert are covered. |
 | **Audit Log** | Append-only record of every governance action. |
 | **AppSetting** | Encrypted key-value store holding runtime configuration (provider keys, scan schedules, anomaly thresholds, etc). |
 
