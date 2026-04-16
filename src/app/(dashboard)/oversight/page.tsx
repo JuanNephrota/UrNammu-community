@@ -39,6 +39,7 @@ export default async function OversightPage() {
     providerStats,
     recentUsageBuckets,
     dailyUsage,
+    attributionAgg,
     costBuckets,
     syncRuns,
     spendBudgets,
@@ -62,7 +63,7 @@ export default async function OversightPage() {
     }),
     prisma.usageBucket.findMany({
       where: { bucketStart: { gte: thirtyDaysAgo } },
-      take: 120,
+      take: 500,
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       include: {
         aiSystem: {
@@ -88,6 +89,17 @@ export default async function OversightPage() {
       WHERE "bucketStart" > NOW() - INTERVAL '30 days'
       GROUP BY DATE("bucketStart")
       ORDER BY date ASC
+    `,
+    // Attribution aggregate: exact 30-day totals for attributed vs total
+    // tokens. This avoids the time-window mismatch (providerStats is
+    // all-time) and the row-cap bias (recentUsageBuckets has a take limit).
+    prisma.$queryRaw<{ total_tokens: number; attributed_tokens: number; attributed_systems: number }[]>`
+      SELECT
+        COALESCE(SUM("totalTokens"), 0)::int AS total_tokens,
+        COALESCE(SUM(CASE WHEN "aiSystemId" IS NOT NULL THEN "totalTokens" ELSE 0 END), 0)::int AS attributed_tokens,
+        COUNT(DISTINCT "aiSystemId")::int AS attributed_systems
+      FROM "UsageBucket"
+      WHERE "bucketStart" > NOW() - INTERVAL '30 days'
     `,
     prisma.costBucket.findMany({
       where: {
@@ -182,10 +194,13 @@ export default async function OversightPage() {
   const exposureSummary = summarizeDataExposureFindings(exposureFindings);
   const totalCost = costBuckets.reduce((s: number, bucket) => s + bucket.amount, 0);
   const totalTokens = providerStats.reduce((s: number, p) => s + (p._sum.totalTokens ?? 0), 0);
-  const attributedTokens = recentUsageBuckets
-    .filter((bucket) => bucket.aiSystemId)
-    .reduce((sum: number, bucket) => sum + bucket.totalTokens, 0);
-  const attributedCoverage = totalTokens > 0 ? Math.round((attributedTokens / totalTokens) * 100) : 0;
+
+  // Attribution uses the dedicated 30-day aggregate so numerator and
+  // denominator share the same time window and aren't capped by row limits.
+  const attrRow = attributionAgg[0] ?? { total_tokens: 0, attributed_tokens: 0, attributed_systems: 0 };
+  const recentTotalTokens = Number(attrRow.total_tokens);
+  const attributedTokens = Number(attrRow.attributed_tokens);
+  const attributedCoverage = recentTotalTokens > 0 ? Math.round((attributedTokens / recentTotalTokens) * 100) : 0;
   const trackedEntities = new Set(
     recentUsageBuckets.map((bucket) => getTelemetryAttributionLabel(bucket))
   ).size;
