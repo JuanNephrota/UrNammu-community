@@ -732,7 +732,7 @@ export default function ShadowAIPage() {
                           {run.status}
                         </Badge>
                         <p className="mt-1 text-xs text-[var(--text-faint)]">
-                          {new Date(run.createdAt).toLocaleString()}
+                          {new Date(run.createdAt).toLocaleString("en-US")}
                         </p>
                       </div>
                     </div>

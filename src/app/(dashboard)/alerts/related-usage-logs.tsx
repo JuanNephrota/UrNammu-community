@@ -75,7 +75,7 @@ export function RelatedUsageLogs({ alertId }: { alertId: string }) {
                 )}
               </div>
               <div className="flex items-center gap-3 text-xs text-[var(--text-muted)] shrink-0">
-                <span>{log.totalTokens.toLocaleString()} tokens</span>
+                <span>{log.totalTokens.toLocaleString("en-US")} tokens</span>
                 <span>${log.cost.toFixed(4)}</span>
                 <span className="text-[var(--text-faint)]">
                   {new Date(log.createdAt).toLocaleTimeString()}

@@ -54,7 +54,7 @@ export function UsageChart({ data }: UsageChartProps) {
           }}
           formatter={(value, name) => {
             const num = Number(value);
-            return name === "cost" ? `$${num.toFixed(2)}` : num.toLocaleString();
+            return name === "cost" ? `$${num.toFixed(2)}` : num.toLocaleString("en-US");
           }}
         />
         <Area

@@ -275,7 +275,7 @@ export function OrgDataPanel() {
                     ${(data.gemini.totalCost ?? 0).toFixed(2)}
                   </p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    {(data.gemini.rowCount ?? 0).toLocaleString()} Gemini / Vertex billing rows summarized
+                    {(data.gemini.rowCount ?? 0).toLocaleString("en-US")} Gemini / Vertex billing rows summarized
                   </p>
                 </div>
 
@@ -333,7 +333,7 @@ export function OrgDataPanel() {
                   <div>
                     <p className="text-sm font-medium capitalize">{run.provider}</p>
                     <p className="text-xs text-[var(--text-muted)]">
-                      Started {new Date(run.startedAt).toLocaleString()} · {run.recordsProcessed} records
+                      Started {new Date(run.startedAt).toLocaleString("en-US")} · {run.recordsProcessed} records
                     </p>
                     {run.errorMessage && (
                       <p className="text-xs text-[var(--critical)]">{run.errorMessage}</p>

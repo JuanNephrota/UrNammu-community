@@ -352,8 +352,8 @@ export default async function OversightPage() {
           title="Total Tokens"
           value={formatCompactNumber(totalTokens)}
           description={totalCacheTokens > 0
-            ? `${totalTokens.toLocaleString()} excl. ${formatCompactNumber(totalCacheTokens)} cached`
-            : `${totalTokens.toLocaleString()} in 30 days`}
+            ? `${totalTokens.toLocaleString("en-US")} excl. ${formatCompactNumber(totalCacheTokens)} cached`
+            : `${totalTokens.toLocaleString("en-US")} in 30 days`}
           iconName="Eye"
           variant="default"
           href="/oversight/usage"
@@ -443,7 +443,7 @@ export default async function OversightPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-bold">${(costByProvider[p.provider] ?? 0).toFixed(2)}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{uncachedTokens.toLocaleString()} tokens</p>
+                      <p className="text-xs text-[var(--text-muted)]">{uncachedTokens.toLocaleString("en-US")} tokens</p>
                     </div>
                   </Link>
                   );
@@ -490,7 +490,7 @@ export default async function OversightPage() {
                 Unattributed Gap
               </p>
               <p className="mt-2 text-2xl font-semibold">
-                {(100 - attributedCoverage).toLocaleString()}%
+                {(100 - attributedCoverage).toLocaleString("en-US")}%
               </p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">
                 Remaining recent token volume to map to governed systems
@@ -528,9 +528,9 @@ export default async function OversightPage() {
                     </p>
                   </div>
                   <div className="text-right text-sm">
-                    <p className="font-semibold">{summary.tokens.toLocaleString()} tokens</p>
+                    <p className="font-semibold">{summary.tokens.toLocaleString("en-US")} tokens</p>
                     <p className="text-xs text-[var(--text-muted)]">
-                      {summary.requests.toLocaleString()} requests · ${summary.cost.toFixed(2)}
+                      {summary.requests.toLocaleString("en-US")} requests · ${summary.cost.toFixed(2)}
                     </p>
                   </div>
                 </Link>
@@ -864,7 +864,7 @@ export default async function OversightPage() {
                         </p>
                       </div>
                       <div className="text-right text-xs text-[var(--text-faint)]">
-                        <p>{anomaly.recentTokens.toLocaleString()} recent tokens</p>
+                        <p>{anomaly.recentTokens.toLocaleString("en-US")} recent tokens</p>
                         <p>${anomaly.recentCost.toFixed(2)} recent cost</p>
                       </div>
                     </div>
@@ -1016,7 +1016,7 @@ export default async function OversightPage() {
                     <div>
                       <p className="text-sm">{row.attribution} &middot; {row.model}</p>
                       <p className="text-xs text-[var(--text-muted)]">
-                        {row.tokens.toLocaleString()} tokens &middot; ${row.cost.toFixed(4)} &middot; {row.requests.toLocaleString()} requests
+                        {row.tokens.toLocaleString("en-US")} tokens &middot; ${row.cost.toFixed(4)} &middot; {row.requests.toLocaleString("en-US")} requests
                       </p>
                     </div>
                   </div>
@@ -1130,7 +1130,7 @@ export default async function OversightPage() {
                     </div>
                     <div className="text-right text-xs text-[var(--text-faint)]">
                       <p>{formatDateTime(finding.date)}</p>
-                      <p className="mt-1">{finding.tokens.toLocaleString()} tokens</p>
+                      <p className="mt-1">{finding.tokens.toLocaleString("en-US")} tokens</p>
                       <p className="mt-1">${finding.cost.toFixed(4)}</p>
                     </div>
                   </div>

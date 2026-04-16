@@ -156,10 +156,10 @@ export function ProviderPostureTable({ rows }: ProviderPostureTableProps) {
                   {row.costPct.toFixed(1)}%
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums">
-                  {row.tokenVolume.toLocaleString()}
+                  {row.tokenVolume.toLocaleString("en-US")}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums">
-                  {row.requestCount.toLocaleString()}
+                  {row.requestCount.toLocaleString("en-US")}
                 </td>
                 <td className="px-3 py-3 text-right tabular-nums">
                   {row.systemCount}

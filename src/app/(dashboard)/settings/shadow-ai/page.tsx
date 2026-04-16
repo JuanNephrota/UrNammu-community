@@ -74,7 +74,7 @@ export default async function ShadowAISettingsPage() {
               <div>
                 <p className="text-xs uppercase tracking-wider text-[var(--text-faint)]">Completed</p>
                 <p className="mt-1 text-sm text-[var(--text-primary)]">
-                  {lastSuccessfulScan.completedAt?.toLocaleString()}
+                  {lastSuccessfulScan.completedAt?.toLocaleString("en-US")}
                 </p>
               </div>
               <div>
@@ -113,7 +113,7 @@ export default async function ShadowAISettingsPage() {
           <CardContent>
             {lastGoogleScan ? (
               <p className="text-sm text-[var(--text-secondary)]">
-                Last completed {lastGoogleScan.completedAt?.toLocaleString()} with{" "}
+                Last completed {lastGoogleScan.completedAt?.toLocaleString("en-US")} with{" "}
                 {lastGoogleScan.toolsFound} tools found and {lastGoogleScan.newToolsAdded} new.
               </p>
             ) : (
@@ -134,7 +134,7 @@ export default async function ShadowAISettingsPage() {
           <CardContent>
             {lastMicrosoftScan ? (
               <p className="text-sm text-[var(--text-secondary)]">
-                Last completed {lastMicrosoftScan.completedAt?.toLocaleString()} with{" "}
+                Last completed {lastMicrosoftScan.completedAt?.toLocaleString("en-US")} with{" "}
                 {lastMicrosoftScan.toolsFound} tools found and {lastMicrosoftScan.newToolsAdded} new.
               </p>
             ) : (

@@ -387,9 +387,9 @@ export default async function SystemDetailPage({
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                       Last 30 days
                     </p>
-                    <p className="mt-2 text-2xl font-semibold">{telemetryTokens.toLocaleString()}</p>
+                    <p className="mt-2 text-2xl font-semibold">{telemetryTokens.toLocaleString("en-US")}</p>
                     <p className="mt-1 text-xs text-[var(--text-muted)]">
-                      {telemetryRequests.toLocaleString()} requests · ${telemetryCost.toFixed(2)}
+                      {telemetryRequests.toLocaleString("en-US")} requests · ${telemetryCost.toFixed(2)}
                     </p>
                   </div>
                   <div className="rounded-lg border border-[var(--border-subtle)] p-3">
@@ -424,7 +424,7 @@ export default async function SystemDetailPage({
                             </span>
                           </div>
                           <p className="mt-1 text-xs text-[var(--text-muted)]">
-                            {row.tokens.toLocaleString()} tokens · {row.requests.toLocaleString()} requests · ${row.cost.toFixed(4)}
+                            {row.tokens.toLocaleString("en-US")} tokens · {row.requests.toLocaleString("en-US")} requests · ${row.cost.toFixed(4)}
                           </p>
                         </div>
                         <span className="text-xs text-[var(--text-faint)]">

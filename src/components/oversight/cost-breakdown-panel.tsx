@@ -58,7 +58,7 @@ export function CostBreakdownPanel({
               ${summary.inputTokenCost.toFixed(2)}
             </p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {summary.totalInputTokens.toLocaleString()} input tokens
+              {summary.totalInputTokens.toLocaleString("en-US")} input tokens
             </p>
           </CardContent>
         </Card>
@@ -71,7 +71,7 @@ export function CostBreakdownPanel({
               ${summary.outputTokenCost.toFixed(2)}
             </p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {summary.totalOutputTokens.toLocaleString()} output tokens
+              {summary.totalOutputTokens.toLocaleString("en-US")} output tokens
             </p>
           </CardContent>
         </Card>
@@ -84,7 +84,7 @@ export function CostBreakdownPanel({
               ${summary.costPerRequest.toFixed(4)}
             </p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {summary.totalRequests.toLocaleString()} total requests
+              {summary.totalRequests.toLocaleString("en-US")} total requests
             </p>
           </CardContent>
         </Card>

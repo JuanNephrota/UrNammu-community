@@ -191,7 +191,7 @@ async function AuditTrailPreview() {
             <span className="text-[var(--text-primary)]">{log.entityType}</span>
           </span>
           <span className="text-xs text-[var(--text-faint)]">
-            {new Date(log.createdAt).toLocaleString()}
+            {new Date(log.createdAt).toLocaleString("en-US")}
           </span>
         </div>
       ))}

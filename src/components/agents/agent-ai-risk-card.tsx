@@ -163,7 +163,7 @@ export function AgentAIRiskCard({ agent, parentSystem, initialReview = null }: P
 
             {(review.createdAt || review.generatedBy) && (
               <p className="text-xs text-[var(--text-muted)]">
-                Saved {review.createdAt ? new Date(review.createdAt).toLocaleString() : "recently"}
+                Saved {review.createdAt ? new Date(review.createdAt).toLocaleString("en-US") : "recently"}
                 {review.generatedBy ? ` by ${review.generatedBy}` : ""}
               </p>
             )}

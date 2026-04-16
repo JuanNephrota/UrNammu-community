@@ -150,7 +150,7 @@ export function UsageDashboard({
           </span>
           {includeCached && (
             <Badge variant="info">
-              {(summary.totalCacheTokens ?? 0).toLocaleString()} cache tokens included
+              {(summary.totalCacheTokens ?? 0).toLocaleString("en-US")} cache tokens included
             </Badge>
           )}
         </div>
@@ -164,11 +164,11 @@ export function UsageDashboard({
               Token Volume
             </p>
             <p className="mt-2 text-3xl font-semibold">
-              {displayTokens.toLocaleString()}
+              {displayTokens.toLocaleString("en-US")}
             </p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {displayInputTokens.toLocaleString()} in /{" "}
-              {summary.totalOutputTokens.toLocaleString()} out
+              {displayInputTokens.toLocaleString("en-US")} in /{" "}
+              {summary.totalOutputTokens.toLocaleString("en-US")} out
               {hasCacheData && !includeCached && (
                 <span className="text-[var(--text-faint)]"> (excl. cache)</span>
               )}
@@ -181,7 +181,7 @@ export function UsageDashboard({
               Requests
             </p>
             <p className="mt-2 text-3xl font-semibold">
-              {summary.totalRequests.toLocaleString()}
+              {summary.totalRequests.toLocaleString("en-US")}
             </p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
               Total tracked requests
@@ -325,10 +325,10 @@ export function UsageDashboard({
                           {row.attribution}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums">
-                          {row.requests.toLocaleString()}
+                          {row.requests.toLocaleString("en-US")}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums">
-                          {row.tokens.toLocaleString()}
+                          {row.tokens.toLocaleString("en-US")}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums">
                           ${row.cost.toFixed(2)}
@@ -366,12 +366,12 @@ export function UsageDashboard({
                       <div>
                         <p className="text-sm font-medium">{item.label}</p>
                         <p className="text-xs text-[var(--text-faint)] capitalize">
-                          {item.provider} · {item.requests.toLocaleString()} req
+                          {item.provider} · {item.requests.toLocaleString("en-US")} req
                         </p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold">
-                          {displayModelTokens.toLocaleString()}
+                          {displayModelTokens.toLocaleString("en-US")}
                         </p>
                         <p className="text-xs text-[var(--text-muted)]">
                           ${item.cost.toFixed(2)}
@@ -413,7 +413,7 @@ export function UsageDashboard({
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold">
-                          {displayProjTokens.toLocaleString()}
+                          {displayProjTokens.toLocaleString("en-US")}
                         </p>
                         <p className="text-xs text-[var(--text-muted)]">
                           ${item.cost.toFixed(2)}

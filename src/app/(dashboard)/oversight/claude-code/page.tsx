@@ -194,7 +194,7 @@ export default async function ClaudeCodePage() {
         return (
           <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-1">
             <p className="text-xs text-[var(--text-faint)]">
-              Last sync: {latestSyncRun.completedAt.toLocaleString()}
+              Last sync: {latestSyncRun.completedAt.toLocaleString("en-US")}
             </p>
             {meta && (
               <p className="text-xs text-[var(--text-muted)]">
@@ -228,7 +228,7 @@ export default async function ClaudeCodePage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard title="Sessions" value={totalSessions} iconName="Terminal" />
-        <StatCard title="Lines Added" value={totalLinesAdded.toLocaleString()} iconName="Plus" variant="success" />
+        <StatCard title="Lines Added" value={totalLinesAdded.toLocaleString("en-US")} iconName="Plus" variant="success" />
         <StatCard title="Commits" value={totalCommits} iconName="GitCommitHorizontal" />
         <StatCard title="Pull Requests" value={totalPRs} iconName="GitPullRequest" variant="info" />
         <StatCard title="Est. Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="warning" />
@@ -252,7 +252,7 @@ export default async function ClaudeCodePage() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">Lines Removed</p>
-            <p className="text-2xl font-bold tabular-nums mt-1" style={{ fontFamily: "var(--font-display)" }}>{totalLinesRemoved.toLocaleString()}</p>
+            <p className="text-2xl font-bold tabular-nums mt-1" style={{ fontFamily: "var(--font-display)" }}>{totalLinesRemoved.toLocaleString("en-US")}</p>
           </CardContent>
         </Card>
         <Card>
@@ -300,9 +300,9 @@ export default async function ClaudeCodePage() {
                         <td className="px-3 py-3 font-medium text-[var(--text-primary)]">{u.email}</td>
                         <td className="px-3 py-3 tabular-nums">{u.sessions}</td>
                         <td className="px-3 py-3 tabular-nums">
-                          <span className="text-[var(--success)]">+{u.linesAdded.toLocaleString()}</span>
+                          <span className="text-[var(--success)]">+{u.linesAdded.toLocaleString("en-US")}</span>
                           {" / "}
-                          <span className="text-[var(--critical)]">-{u.linesRemoved.toLocaleString()}</span>
+                          <span className="text-[var(--critical)]">-{u.linesRemoved.toLocaleString("en-US")}</span>
                         </td>
                         <td className="px-3 py-3 tabular-nums">{u.commits}</td>
                         <td className="px-3 py-3 tabular-nums">{u.prs}</td>
