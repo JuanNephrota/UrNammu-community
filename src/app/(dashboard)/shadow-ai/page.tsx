@@ -97,6 +97,10 @@ export default function ShadowAIPage() {
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
+  // Tracks which tool is currently in-flight for a register action so we can
+  // disable its buttons and surface "Classifying..." feedback — AI
+  // classification on the server can add several seconds of latency.
+  const [pendingRegisterId, setPendingRegisterId] = useState<string | null>(null);
   const [ingestionRuns, setIngestionRuns] = useState<IngestionRun[]>([]);
 
   const fetchTools = useCallback(() => {
@@ -195,32 +199,34 @@ export default function ShadowAIPage() {
   }
 
   async function handleAction(id: string, action: string) {
-    const res = await fetch(`/api/discovered-tools/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        action === "register" || action === "register_and_assess"
-          ? { action }
-          : { status: action }
-      ),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setTools((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                status: action === "register" || action === "register_and_assess" ? "REGISTERED" : action,
-                linkedSystemId: data.tool?.linkedSystemId ?? t.linkedSystemId,
-              }
-            : t
-        )
-      );
-      if (action === "register" || action === "register_and_assess") {
-        if (data.nextHref) router.push(data.nextHref);
-        router.refresh();
+    const isRegister = action === "register" || action === "register_and_assess";
+    if (isRegister) setPendingRegisterId(id);
+    try {
+      const res = await fetch(`/api/discovered-tools/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isRegister ? { action } : { status: action }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTools((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? {
+                  ...t,
+                  status: isRegister ? "REGISTERED" : action,
+                  linkedSystemId: data.tool?.linkedSystemId ?? t.linkedSystemId,
+                }
+              : t
+          )
+        );
+        if (isRegister) {
+          if (data.nextHref) router.push(data.nextHref);
+          router.refresh();
+        }
       }
+    } finally {
+      if (isRegister) setPendingRegisterId(null);
     }
   }
 
@@ -563,8 +569,14 @@ export default function ShadowAIPage() {
                             Convert to Governed System
                           </Link>
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "register_and_assess")}>
-                          <Shield className="mr-1 h-3 w-3" /> Register & Assess
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pendingRegisterId === tool.id}
+                          onClick={() => handleAction(tool.id, "register_and_assess")}
+                        >
+                          <Shield className="mr-1 h-3 w-3" />
+                          {pendingRegisterId === tool.id ? "Classifying..." : "Register & Assess"}
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "APPROVED")}>
                           Approve
@@ -696,9 +708,11 @@ export default function ShadowAIPage() {
                             <Button
                               size="sm"
                               variant="outline"
+                              disabled={pendingRegisterId === tool.id}
                               onClick={() => handleAction(tool.id, "register_and_assess")}
                             >
-                              <Shield className="mr-1 h-3 w-3" /> Register & Assess
+                              <Shield className="mr-1 h-3 w-3" />
+                              {pendingRegisterId === tool.id ? "Classifying..." : "Register & Assess"}
                             </Button>
                           </>
                         )}

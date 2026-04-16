@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { withRole } from "@/lib/auth-guard";
 import { createAuditLog } from "@/lib/audit";
+import { classifyDiscoveredTool } from "@/lib/ai-classification";
 
 const updateDiscoveredToolSchema = z.object({
   status: z.enum([
@@ -92,15 +93,35 @@ export async function PUT(
       const tool = await prisma.discoveredAITool.findUnique({ where: { id } });
       if (!tool) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+      // Attempt AI-assisted classification so the new governed system starts
+      // with sensible defaults (use case, model type, data inputs/outputs,
+      // risk level, sensitivity). Best-effort: returns null on failure or
+      // when the AI provider isn't configured; we fall back to plain defaults.
+      const enrichment = await classifyDiscoveredTool({
+        toolName: tool.toolName,
+        vendor: tool.vendor,
+        detectedDomain: tool.detectedDomain,
+        department: tool.department,
+        notes: tool.notes,
+      });
+
+      const fallbackDescription =
+        `Registered from shadow AI discovery. ${tool.notes ?? ""}`.trim();
+
       const system = await prisma.aISystem.create({
         data: {
           name: tool.toolName,
-          description: `Registered from shadow AI discovery. ${tool.notes ?? ""}`.trim(),
+          description: enrichment?.description ?? fallbackDescription,
+          useCase: enrichment?.useCase ?? null,
+          modelType: enrichment?.modelType ?? null,
+          dataInputs: enrichment?.dataInputs ?? null,
+          dataOutputs: enrichment?.dataOutputs ?? null,
           department: tool.department ?? "Unknown",
           vendor: tool.vendor,
           ownerId: session.user.userId,
           status: "UNDER_REVIEW",
-          riskLevel: "MEDIUM",
+          riskLevel: enrichment?.riskLevel ?? "MEDIUM",
+          dataSensitivity: enrichment?.dataSensitivity ?? "INTERNAL",
         },
       });
 
@@ -115,11 +136,19 @@ export async function PUT(
         entityType: "DiscoveredAITool",
         entityId: id,
         aiSystemId: system.id,
+        changes: enrichment
+          ? {
+              aiAssisted: true,
+              inferredFields: Object.keys(enrichment).filter((k) => k !== "reasoning"),
+              reasoning: enrichment.reasoning ?? null,
+            }
+          : { aiAssisted: false },
       });
 
       return NextResponse.json({
         system,
         tool: { id, status: "REGISTERED", linkedSystemId: system.id },
+        aiAssisted: !!enrichment,
         nextHref:
           body.action === "register_and_assess"
             ? `/risk-center/assessments/new?systemId=${system.id}`
