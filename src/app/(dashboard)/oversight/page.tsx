@@ -55,9 +55,10 @@ export default async function OversightPage() {
     openComplianceIssues,
     openRiskIssues,
   ] = await Promise.all([
-    prisma.usageBucket.count(),
+    prisma.usageBucket.count({ where: { bucketStart: { gte: thirtyDaysAgo } } }),
     prisma.usageBucket.groupBy({
       by: ["provider"],
+      where: { bucketStart: { gte: thirtyDaysAgo } },
       _sum: { totalTokens: true },
       _count: true,
     }),
@@ -315,16 +316,16 @@ export default async function OversightPage() {
       </PageHeader>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-8">
-        <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" href="/oversight/usage" />
+        <StatCard title="Usage Buckets" value={totalUsageBuckets} description="Last 30 days" iconName="Eye" variant="info" href="/oversight/usage" />
         <StatCard
           title="Total Tokens"
           value={formatCompactNumber(totalTokens)}
-          description={totalTokens.toLocaleString() + " total"}
+          description={totalTokens.toLocaleString() + " in 30 days"}
           iconName="Eye"
           variant="default"
           href="/oversight/usage"
         />
-        <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" href="/oversight/usage" />
+        <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} description="Last 30 days" iconName="DollarSign" variant="info" href="/oversight/usage" />
         <StatCard
           title="Tracked Entities"
           value={trackedEntities}
