@@ -18,8 +18,13 @@ type UsageApiResponse = {
     inputTokenCost: number;
     outputTokenCost: number;
     projectedMonthEndSpend: number | null;
+    totalCacheTokens?: number;
+    totalTokensWithCache?: number;
+    totalInputTokensWithCache?: number;
+    totalCacheReadTokens?: number;
+    totalCacheCreationTokens?: number;
   };
-  dailyUsage: { date: string; tokens: number; cost: number }[];
+  dailyUsage: { date: string; tokens: number; cost: number; cacheTokens?: number }[];
   dailyCostBreakdown: {
     date: string;
     inputCost: number;
@@ -34,12 +39,14 @@ type UsageApiResponse = {
     requests: number;
     inputTokens: number;
     outputTokens: number;
+    cacheTokens?: number;
   }[];
   topProjects: {
     label: string;
     tokens: number;
     cost: number;
     providers: string[];
+    cacheTokens?: number;
   }[];
   activityRows: {
     id: string;
@@ -78,6 +85,7 @@ export function UsageDashboard({
   const [data, setData] = useState<UsageApiResponse>(initialData);
   const [filters, setFilters] = useState<UsageFilters>(initialFilters);
   const [loading, setLoading] = useState(false);
+  const [includeCached, setIncludeCached] = useState(false);
 
   const fetchData = useCallback(async (newFilters: UsageFilters) => {
     setFilters(newFilters);
@@ -100,6 +108,16 @@ export function UsageDashboard({
   }, []);
 
   const { summary } = data;
+  const hasCacheData = (summary.totalCacheTokens ?? 0) > 0;
+
+  // When the "Include cached" toggle is on, show full totals;
+  // otherwise show uncached only (the server-side default).
+  const displayTokens = includeCached
+    ? (summary.totalTokensWithCache ?? summary.totalTokens)
+    : summary.totalTokens;
+  const displayInputTokens = includeCached
+    ? (summary.totalInputTokensWithCache ?? summary.totalInputTokens)
+    : summary.totalInputTokens;
 
   return (
     <div className="space-y-6">
@@ -111,6 +129,33 @@ export function UsageDashboard({
         loading={loading}
       />
 
+      {/* Cache toggle — only shown when cache data exists */}
+      {hasCacheData && (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIncludeCached(!includeCached)}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+              includeCached ? "bg-[var(--accent)]" : "bg-[var(--bg-surface)]"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                includeCached ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+          <span className="text-sm text-[var(--text-secondary)]">
+            Include cached tokens
+          </span>
+          {includeCached && (
+            <Badge variant="info">
+              {(summary.totalCacheTokens ?? 0).toLocaleString()} cache tokens included
+            </Badge>
+          )}
+        </div>
+      )}
+
       {/* Summary stats */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Card>
@@ -119,11 +164,14 @@ export function UsageDashboard({
               Token Volume
             </p>
             <p className="mt-2 text-3xl font-semibold">
-              {summary.totalTokens.toLocaleString()}
+              {displayTokens.toLocaleString()}
             </p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {summary.totalInputTokens.toLocaleString()} in /{" "}
+              {displayInputTokens.toLocaleString()} in /{" "}
               {summary.totalOutputTokens.toLocaleString()} out
+              {hasCacheData && !includeCached && (
+                <span className="text-[var(--text-faint)]"> (excl. cache)</span>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -189,7 +237,16 @@ export function UsageDashboard({
           <CardTitle>Usage Trend</CardTitle>
         </CardHeader>
         <CardContent>
-          <UsageChart data={data.dailyUsage} />
+          <UsageChart
+            data={
+              includeCached
+                ? data.dailyUsage.map((d) => ({
+                    ...d,
+                    tokens: d.tokens + (d.cacheTokens ?? 0),
+                  }))
+                : data.dailyUsage
+            }
+          />
         </CardContent>
       </Card>
 
@@ -296,7 +353,11 @@ export function UsageDashboard({
                   No model-level telemetry.
                 </p>
               ) : (
-                data.topModels.map((item) => (
+                data.topModels.map((item) => {
+                  const displayModelTokens = includeCached
+                    ? item.tokens + (item.cacheTokens ?? 0)
+                    : item.tokens;
+                  return (
                   <div
                     key={`${item.provider}:${item.label}`}
                     className="rounded-lg border border-[var(--border-subtle)] p-3"
@@ -310,7 +371,7 @@ export function UsageDashboard({
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold">
-                          {item.tokens.toLocaleString()}
+                          {displayModelTokens.toLocaleString()}
                         </p>
                         <p className="text-xs text-[var(--text-muted)]">
                           ${item.cost.toFixed(2)}
@@ -318,7 +379,8 @@ export function UsageDashboard({
                       </div>
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </CardContent>
           </Card>
@@ -333,7 +395,11 @@ export function UsageDashboard({
                   No project or actor attribution.
                 </p>
               ) : (
-                data.topProjects.map((item) => (
+                data.topProjects.map((item) => {
+                  const displayProjTokens = includeCached
+                    ? item.tokens + (item.cacheTokens ?? 0)
+                    : item.tokens;
+                  return (
                   <div
                     key={item.label}
                     className="rounded-lg border border-[var(--border-subtle)] p-3"
@@ -347,7 +413,7 @@ export function UsageDashboard({
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold">
-                          {item.tokens.toLocaleString()}
+                          {displayProjTokens.toLocaleString()}
                         </p>
                         <p className="text-xs text-[var(--text-muted)]">
                           ${item.cost.toFixed(2)}
@@ -355,7 +421,8 @@ export function UsageDashboard({
                       </div>
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </CardContent>
           </Card>

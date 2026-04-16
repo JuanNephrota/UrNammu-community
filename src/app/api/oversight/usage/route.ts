@@ -89,10 +89,18 @@ export async function GET(req: NextRequest) {
 
     const costMap = buildCostLookup(costBuckets);
 
-    // Summary aggregations
-    const totalTokens = usageBuckets.reduce((s, b) => s + b.totalTokens, 0);
-    const totalInputTokens = usageBuckets.reduce((s, b) => s + b.inputTokens, 0);
+    // Summary aggregations — default totals exclude cache tokens so the
+    // headline numbers reflect actual new token processing.
+    const totalCacheReadTokens = usageBuckets.reduce((s, b) => s + b.cacheReadTokens, 0);
+    const totalCacheCreationTokens = usageBuckets.reduce((s, b) => s + b.cacheCreationTokens, 0);
+    const totalCacheTokens = totalCacheReadTokens + totalCacheCreationTokens;
+
+    const totalTokens = usageBuckets.reduce((s, b) => s + b.totalTokens, 0) - totalCacheTokens;
+    const totalInputTokens = usageBuckets.reduce((s, b) => s + b.inputTokens, 0) - totalCacheTokens;
     const totalOutputTokens = usageBuckets.reduce((s, b) => s + b.outputTokens, 0);
+
+    const totalTokensWithCache = totalTokens + totalCacheTokens;
+    const totalInputTokensWithCache = totalInputTokens + totalCacheTokens;
     const totalRequests = usageBuckets.reduce(
       (s, b) => s + (b.requestCount ?? 0),
       0
@@ -125,23 +133,27 @@ export async function GET(req: NextRequest) {
     const projectedMonthEndSpend =
       isCurrentMonth && elapsedPct > 0 ? totalCost / elapsedPct : null;
 
-    // Daily usage for chart (grouped by date)
+    // Daily usage for chart (grouped by date) — uncached tokens by default,
+    // with cacheTokens available for the client-side toggle.
     const dailyMap = new Map<
       string,
-      { date: string; tokens: number; cost: number; inputTokens: number; outputTokens: number }
+      { date: string; tokens: number; cost: number; inputTokens: number; outputTokens: number; cacheTokens: number }
     >();
     for (const bucket of usageBuckets) {
       const dateKey = bucket.bucketStart.toISOString().slice(0, 10);
+      const bucketCacheTokens = bucket.cacheReadTokens + bucket.cacheCreationTokens;
       const existing = dailyMap.get(dateKey) ?? {
         date: dateKey,
         tokens: 0,
         cost: 0,
         inputTokens: 0,
         outputTokens: 0,
+        cacheTokens: 0,
       };
-      existing.tokens += bucket.totalTokens;
-      existing.inputTokens += bucket.inputTokens;
+      existing.tokens += bucket.totalTokens - bucketCacheTokens;
+      existing.inputTokens += bucket.inputTokens - bucketCacheTokens;
       existing.outputTokens += bucket.outputTokens;
+      existing.cacheTokens += bucketCacheTokens;
       existing.cost += costMap.get(getBucketIdentityKey(bucket)) ?? 0;
       dailyMap.set(dateKey, existing);
     }
@@ -171,10 +183,11 @@ export async function GET(req: NextRequest) {
     // Top models
     const modelMap = new Map<
       string,
-      { label: string; provider: string; tokens: number; cost: number; requests: number; inputTokens: number; outputTokens: number }
+      { label: string; provider: string; tokens: number; cost: number; requests: number; inputTokens: number; outputTokens: number; cacheTokens: number }
     >();
     for (const bucket of usageBuckets) {
       const key = `${bucket.provider}:${bucket.model ?? "unknown"}`;
+      const bucketCacheTokens = bucket.cacheReadTokens + bucket.cacheCreationTokens;
       const item = modelMap.get(key) ?? {
         label: bucket.model ?? "Unspecified model",
         provider: bucket.provider,
@@ -183,10 +196,12 @@ export async function GET(req: NextRequest) {
         requests: 0,
         inputTokens: 0,
         outputTokens: 0,
+        cacheTokens: 0,
       };
-      item.tokens += bucket.totalTokens;
-      item.inputTokens += bucket.inputTokens;
+      item.tokens += bucket.totalTokens - bucketCacheTokens;
+      item.inputTokens += bucket.inputTokens - bucketCacheTokens;
       item.outputTokens += bucket.outputTokens;
+      item.cacheTokens += bucketCacheTokens;
       item.cost += costMap.get(getBucketIdentityKey(bucket)) ?? 0;
       item.requests += bucket.requestCount ?? 0;
       modelMap.set(key, item);
@@ -198,17 +213,20 @@ export async function GET(req: NextRequest) {
     // Top projects
     const projectMap = new Map<
       string,
-      { label: string; tokens: number; cost: number; providers: string[] }
+      { label: string; tokens: number; cost: number; providers: string[]; cacheTokens: number }
     >();
     for (const bucket of usageBuckets) {
       const label = getTelemetryAttributionLabel(bucket, bucket.aiSystem?.name);
+      const bucketCacheTokens = bucket.cacheReadTokens + bucket.cacheCreationTokens;
       const item = projectMap.get(label) ?? {
         label,
         tokens: 0,
         cost: 0,
         providers: [],
+        cacheTokens: 0,
       };
-      item.tokens += bucket.totalTokens;
+      item.tokens += bucket.totalTokens - bucketCacheTokens;
+      item.cacheTokens += bucketCacheTokens;
       item.cost += costMap.get(getBucketIdentityKey(bucket)) ?? 0;
       if (!item.providers.includes(bucket.provider)) {
         item.providers.push(bucket.provider);
@@ -233,6 +251,11 @@ export async function GET(req: NextRequest) {
         inputTokenCost,
         outputTokenCost,
         projectedMonthEndSpend,
+        totalCacheTokens,
+        totalTokensWithCache,
+        totalInputTokensWithCache,
+        totalCacheReadTokens,
+        totalCacheCreationTokens,
       },
       dailyUsage,
       dailyCostBreakdown,

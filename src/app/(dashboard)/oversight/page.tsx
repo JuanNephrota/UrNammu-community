@@ -59,7 +59,7 @@ export default async function OversightPage() {
     prisma.usageBucket.groupBy({
       by: ["provider"],
       where: { bucketStart: { gte: thirtyDaysAgo } },
-      _sum: { totalTokens: true },
+      _sum: { totalTokens: true, cacheReadTokens: true, cacheCreationTokens: true },
       _count: true,
     }),
     prisma.usageBucket.findMany({
@@ -81,10 +81,11 @@ export default async function OversightPage() {
         },
       },
     }),
-    prisma.$queryRaw<{ date: string; tokens: number; cost: number }[]>`
+    prisma.$queryRaw<{ date: string; tokens: number; cache_tokens: number; cost: number }[]>`
       SELECT
         DATE("bucketStart") as date,
-        SUM("totalTokens")::int as tokens,
+        SUM("totalTokens" - "cacheReadTokens" - "cacheCreationTokens")::int as tokens,
+        SUM("cacheReadTokens" + "cacheCreationTokens")::int as cache_tokens,
         0::float as cost
       FROM "UsageBucket"
       WHERE "bucketStart" > NOW() - INTERVAL '30 days'
@@ -94,10 +95,12 @@ export default async function OversightPage() {
     // Attribution aggregate: exact 30-day totals for attributed vs total
     // tokens. This avoids the time-window mismatch (providerStats is
     // all-time) and the row-cap bias (recentUsageBuckets has a take limit).
-    prisma.$queryRaw<{ total_tokens: number; attributed_tokens: number; attributed_systems: number }[]>`
+    // Uses uncached tokens (total minus cache) as the default metric.
+    prisma.$queryRaw<{ total_tokens: number; cache_tokens: number; attributed_tokens: number; attributed_systems: number }[]>`
       SELECT
-        COALESCE(SUM("totalTokens"), 0)::int AS total_tokens,
-        COALESCE(SUM(CASE WHEN "aiSystemId" IS NOT NULL THEN "totalTokens" ELSE 0 END), 0)::int AS attributed_tokens,
+        COALESCE(SUM("totalTokens" - "cacheReadTokens" - "cacheCreationTokens"), 0)::int AS total_tokens,
+        COALESCE(SUM("cacheReadTokens" + "cacheCreationTokens"), 0)::int AS cache_tokens,
+        COALESCE(SUM(CASE WHEN "aiSystemId" IS NOT NULL THEN "totalTokens" - "cacheReadTokens" - "cacheCreationTokens" ELSE 0 END), 0)::int AS attributed_tokens,
         COUNT(DISTINCT "aiSystemId")::int AS attributed_systems
       FROM "UsageBucket"
       WHERE "bucketStart" > NOW() - INTERVAL '30 days'
@@ -194,11 +197,22 @@ export default async function OversightPage() {
   const exposureFindings = buildDataExposureFindings(recentUsageBuckets, costLookup, 8);
   const exposureSummary = summarizeDataExposureFindings(exposureFindings);
   const totalCost = costBuckets.reduce((s: number, bucket) => s + bucket.amount, 0);
-  const totalTokens = providerStats.reduce((s: number, p) => s + (p._sum.totalTokens ?? 0), 0);
+  // Default token total excludes cache tokens (cache reads + cache creation)
+  // so the headline number reflects actual new token processing. Cache tokens
+  // are available via filter on the detailed usage page.
+  const totalTokens = providerStats.reduce((s: number, p) => {
+    const total = p._sum.totalTokens ?? 0;
+    const cacheRead = p._sum.cacheReadTokens ?? 0;
+    const cacheCreation = p._sum.cacheCreationTokens ?? 0;
+    return s + (total - cacheRead - cacheCreation);
+  }, 0);
+  const totalCacheTokens = providerStats.reduce((s: number, p) => {
+    return s + (p._sum.cacheReadTokens ?? 0) + (p._sum.cacheCreationTokens ?? 0);
+  }, 0);
 
   // Attribution uses the dedicated 30-day aggregate so numerator and
   // denominator share the same time window and aren't capped by row limits.
-  const attrRow = attributionAgg[0] ?? { total_tokens: 0, attributed_tokens: 0, attributed_systems: 0 };
+  const attrRow = attributionAgg[0] ?? { total_tokens: 0, cache_tokens: 0, attributed_tokens: 0, attributed_systems: 0 };
   const recentTotalTokens = Number(attrRow.total_tokens);
   const attributedTokens = Number(attrRow.attributed_tokens);
   const attributedCoverage = recentTotalTokens > 0 ? Math.round((attributedTokens / recentTotalTokens) * 100) : 0;
@@ -320,7 +334,9 @@ export default async function OversightPage() {
         <StatCard
           title="Total Tokens"
           value={formatCompactNumber(totalTokens)}
-          description={totalTokens.toLocaleString() + " in 30 days"}
+          description={totalCacheTokens > 0
+            ? `${totalTokens.toLocaleString()} excl. ${formatCompactNumber(totalCacheTokens)} cached`
+            : `${totalTokens.toLocaleString()} in 30 days`}
           iconName="Eye"
           variant="default"
           href="/oversight/usage"
@@ -396,7 +412,9 @@ export default async function OversightPage() {
               <p className="text-sm text-[var(--text-muted)]">No usage data yet.</p>
             ) : (
               <div className="space-y-3">
-                {providerStats.map((p: { provider: string; _count: number; _sum: { totalTokens: number | null } }) => (
+                {providerStats.map((p: { provider: string; _count: number; _sum: { totalTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null } }) => {
+                  const uncachedTokens = (p._sum.totalTokens ?? 0) - (p._sum.cacheReadTokens ?? 0) - (p._sum.cacheCreationTokens ?? 0);
+                  return (
                   <Link
                     key={p.provider}
                     href={`/oversight/usage?provider=${encodeURIComponent(p.provider)}`}
@@ -408,10 +426,11 @@ export default async function OversightPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-bold">${(costByProvider[p.provider] ?? 0).toFixed(2)}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{(p._sum.totalTokens ?? 0).toLocaleString()} tokens</p>
+                      <p className="text-xs text-[var(--text-muted)]">{uncachedTokens.toLocaleString()} tokens</p>
                     </div>
                   </Link>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
