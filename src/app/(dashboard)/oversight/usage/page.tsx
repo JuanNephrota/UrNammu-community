@@ -8,15 +8,29 @@ import {
 } from "@/lib/oversight-telemetry";
 import { UsageDashboard } from "@/components/oversight/usage-dashboard";
 
-export default async function UsageLogsPage() {
+export default async function UsageLogsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ provider?: string; model?: string; project?: string }>;
+}) {
+  const params = await searchParams;
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  // Build optional where-clause filters from URL search params so the
+  // initial server-rendered data matches the pre-selected filter state.
+  const bucketWhere: Record<string, unknown> = {
+    bucketStart: { gte: thirtyDaysAgo },
+  };
+  if (params.provider) bucketWhere.provider = params.provider;
+  if (params.model) bucketWhere.model = params.model;
+  if (params.project) bucketWhere.projectName = params.project;
 
   // Fetch initial 30-day data + filter options in parallel
   const [usageBuckets, costBuckets, allProviders, allModels, allProjects] =
     await Promise.all([
       prisma.usageBucket.findMany({
-        where: { bucketStart: { gte: thirtyDaysAgo } },
+        where: bucketWhere,
         orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
         take: 500,
         include: {
@@ -31,7 +45,10 @@ export default async function UsageLogsPage() {
         },
       }),
       prisma.costBucket.findMany({
-        where: { bucketStart: { gte: thirtyDaysAgo } },
+        where: {
+          bucketStart: { gte: thirtyDaysAgo },
+          ...(params.provider ? { provider: params.provider } : {}),
+        },
         orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
         take: 500,
       }),
@@ -260,9 +277,9 @@ export default async function UsageLogsPage() {
         initialFilters={{
           startDate: defaultStartDate,
           endDate: defaultEndDate,
-          provider: "",
-          model: "",
-          project: "",
+          provider: params.provider ?? "",
+          model: params.model ?? "",
+          project: params.project ?? "",
         }}
       />
     </div>

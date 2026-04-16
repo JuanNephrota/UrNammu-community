@@ -375,7 +375,11 @@ export default async function OversightPage() {
             ) : (
               <div className="space-y-3">
                 {providerStats.map((p: { provider: string; _count: number; _sum: { totalTokens: number | null } }) => (
-                  <div key={p.provider} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+                  <Link
+                    key={p.provider}
+                    href={`/oversight/usage?provider=${encodeURIComponent(p.provider)}`}
+                    className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3 transition-colors hover:border-[var(--accent)] hover:bg-[var(--bg-base)]"
+                  >
                     <div>
                       <p className="text-sm font-medium capitalize">{p.provider}</p>
                       <p className="text-xs text-[var(--text-muted)]">{p._count} normalized usage buckets</p>
@@ -384,7 +388,7 @@ export default async function OversightPage() {
                       <p className="text-sm font-bold">${(costByProvider[p.provider] ?? 0).toFixed(2)}</p>
                       <p className="text-xs text-[var(--text-muted)]">{(p._sum.totalTokens ?? 0).toLocaleString()} tokens</p>
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
