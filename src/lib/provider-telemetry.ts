@@ -421,8 +421,10 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
     // date) because the bucket table is for rollup reporting — line-item
     // detail is preserved in the raw ProviderRawSnapshot.
     //
-    // IMPORTANT: `amount` is in USD (not cents). Earlier code incorrectly
-    // divided by 100, under-reporting costs by ~100×.
+    // IMPORTANT: `amount` is in CENTS (not USD). Verified empirically by
+    // comparing API-reported costs against manual price-book calculations
+    // on live token-count data: dividing by 100 yields an exact match with
+    // published Anthropic pricing.
     for (const bucket of asArray(asRecord(costReport).data)) {
       const bucketStart = new Date(asString(bucket.starting_at) ?? startingAt);
       const bucketEnd = new Date(asString(bucket.ending_at) ?? endingAt);
@@ -430,22 +432,23 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
 
       // Aggregate entries by (model, cost_type) to avoid dimension-key
       // collisions where later entries silently overwrote earlier ones.
-      const costAgg = new Map<string, { model: string | null; lineItem: string; amount: number; currency: string }>();
+      // Sum in cents first, then convert to dollars once at the end.
+      const costAgg = new Map<string, { model: string | null; lineItem: string; amountCents: number; currency: string }>();
       for (const entry of asArray(bucket.results)) {
-        const amount = parseFloat(String(entry.amount) || "0");
-        if (amount <= 0) continue;
+        const amountCents = parseFloat(String(entry.amount) || "0");
+        if (amountCents <= 0) continue;
 
         const model = asString(entry.model);
         const lineItem = asString(entry.cost_type) ?? "tokens";
         const aggKey = `${model ?? ""}|${lineItem}`;
         const existing = costAgg.get(aggKey);
         if (existing) {
-          existing.amount += amount;
+          existing.amountCents += amountCents;
         } else {
           costAgg.set(aggKey, {
             model,
             lineItem,
-            amount,
+            amountCents,
             currency: asString(entry.currency) ?? "usd",
           });
         }
@@ -453,6 +456,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
 
       for (const agg of costAgg.values()) {
         const dimensionKey = makeDimensionKey({ model: agg.model, lineItem: agg.lineItem, date });
+        const amount = agg.amountCents / 100;
 
         await prisma.costBucket.upsert({
           where: {
@@ -465,7 +469,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             },
           },
           update: {
-            amount: agg.amount,
+            amount,
             currency: agg.currency,
             model: agg.model,
             lineItem: agg.lineItem,
@@ -477,7 +481,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             bucketEnd,
             granularity: "day",
             dimensionKey,
-            amount: agg.amount,
+            amount,
             currency: agg.currency,
             model: agg.model,
             lineItem: agg.lineItem,
