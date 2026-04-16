@@ -4,6 +4,7 @@ import { getSetting } from "./settings";
 export type ClassifiedSystemFields = {
   description?: string;
   useCase?: string;
+  vendor?: string;
   modelType?: string;
   dataInputs?: string;
   dataOutputs?: string;
@@ -26,6 +27,7 @@ Return STRICT JSON matching this schema (no markdown, no code fences):
 {
   "description": string,         // 1-2 sentence plain-English summary of what the tool is
   "useCase": string,             // typical enterprise use cases (1-2 sentences)
+  "vendor": string,              // the company or organization that publishes the tool (e.g. "OpenAI", "Anthropic", "Google"). Omit if unknown.
   "modelType": string,           // e.g. "LLM", "Image generation", "Code completion", "Speech-to-text", "Agentic workflow", "RAG platform", "Computer vision"
   "dataInputs": string,          // what data users typically send to it (1-2 sentences)
   "dataOutputs": string,         // what the tool produces (1-2 sentences)
@@ -98,6 +100,7 @@ function sanitize(obj: Record<string, unknown>): ClassifiedSystemFields {
 
   out.description = str("description", 500);
   out.useCase = str("useCase", 500);
+  out.vendor = str("vendor", 200);
   out.modelType = str("modelType", 100);
   out.dataInputs = str("dataInputs", 500);
   out.dataOutputs = str("dataOutputs", 500);

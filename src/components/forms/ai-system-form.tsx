@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HelpHint } from "@/components/help/help-hint";
@@ -40,6 +42,105 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fields that can be autofilled by the AI assistant are tracked in
+  // controlled state so the button's result can flow back into the inputs.
+  // The untracked fields (name, department, version, status, review dates,
+  // approval checkboxes) stay uncontrolled with defaultValue.
+  const [name, setName] = useState<string>(initialData?.name ?? "");
+  const [description, setDescription] = useState<string>(initialData?.description ?? "");
+  const [useCase, setUseCase] = useState<string>(initialData?.useCase ?? "");
+  const [vendor, setVendor] = useState<string>(initialData?.vendor ?? "");
+  const [modelType, setModelType] = useState<string>(initialData?.modelType ?? "");
+  const [dataInputs, setDataInputs] = useState<string>(initialData?.dataInputs ?? "");
+  const [dataOutputs, setDataOutputs] = useState<string>(initialData?.dataOutputs ?? "");
+  const [riskLevel, setRiskLevel] = useState<string>(initialData?.riskLevel ?? "MEDIUM");
+  const [dataSensitivity, setDataSensitivity] = useState<string>(
+    initialData?.dataSensitivity ?? "INTERNAL"
+  );
+
+  const [autofillLoading, setAutofillLoading] = useState(false);
+  const [autofillError, setAutofillError] = useState<string | null>(null);
+  const [autofillReasoning, setAutofillReasoning] = useState<string | null>(null);
+  const [autofillFilledFields, setAutofillFilledFields] = useState<string[] | null>(null);
+
+  async function handleAutofill() {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setAutofillError("Enter a system name first so the AI knows what to look up.");
+      return;
+    }
+
+    setAutofillLoading(true);
+    setAutofillError(null);
+    setAutofillReasoning(null);
+    setAutofillFilledFields(null);
+
+    try {
+      const res = await fetch("/api/ai-systems/classify-by-name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          vendor: vendor.trim() || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          typeof body?.error === "string"
+            ? body.error
+            : "Couldn't autofill — the AI service didn't return a classification."
+        );
+      }
+
+      const result = await res.json();
+      const filled: string[] = [];
+      if (typeof result.description === "string") {
+        setDescription(result.description);
+        filled.push("description");
+      }
+      if (typeof result.useCase === "string") {
+        setUseCase(result.useCase);
+        filled.push("use case");
+      }
+      if (typeof result.modelType === "string") {
+        setModelType(result.modelType);
+        filled.push("model type");
+      }
+      if (typeof result.dataInputs === "string") {
+        setDataInputs(result.dataInputs);
+        filled.push("data inputs");
+      }
+      if (typeof result.dataOutputs === "string") {
+        setDataOutputs(result.dataOutputs);
+        filled.push("data outputs");
+      }
+      if (typeof result.riskLevel === "string") {
+        setRiskLevel(result.riskLevel);
+        filled.push("risk level");
+      }
+      if (typeof result.dataSensitivity === "string") {
+        setDataSensitivity(result.dataSensitivity);
+        filled.push("data sensitivity");
+      }
+      // Only fill vendor if empty — don't overwrite an explicit user entry.
+      if (typeof result.vendor === "string" && !vendor.trim()) {
+        setVendor(result.vendor);
+        filled.push("vendor");
+      }
+
+      setAutofillFilledFields(filled);
+      if (typeof result.reasoning === "string") {
+        setAutofillReasoning(result.reasoning);
+      }
+    } catch (err) {
+      setAutofillError(err instanceof Error ? err.message : "Autofill failed");
+    } finally {
+      setAutofillLoading(false);
+    }
+  }
 
   const isEditing = !!initialData?.id;
   const requiredApprovalStages: Array<{
@@ -139,11 +240,30 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
             <CardContent className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="name">System Name *</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="name">System Name *</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAutofill}
+                      disabled={autofillLoading || !name.trim()}
+                      className="gap-1.5 text-xs"
+                      title="Use the AI assistant to look up this tool and fill in the details below"
+                    >
+                      {autofillLoading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" />
+                      )}
+                      {autofillLoading ? "Analyzing..." : "Autofill with AI"}
+                    </Button>
+                  </div>
                   <Input
                     id="name"
                     name="name"
-                    defaultValue={initialData?.name ?? ""}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                     required
                   />
                 </div>
@@ -157,12 +277,43 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                   />
                 </div>
               </div>
+              {(autofillError || autofillFilledFields) && (
+                <div
+                  className={
+                    autofillError
+                      ? "rounded-md border border-[var(--critical)]/30 bg-[var(--critical)]/5 p-3 text-xs text-[var(--critical)]"
+                      : "rounded-md border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3 text-xs"
+                  }
+                >
+                  {autofillError ? (
+                    autofillError
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="flex items-center gap-2 font-medium text-[var(--text-primary)]">
+                        <Badge variant="info">AI-filled</Badge>
+                        Auto-filled {autofillFilledFields?.length ?? 0} field
+                        {autofillFilledFields && autofillFilledFields.length === 1 ? "" : "s"}
+                        {autofillFilledFields && autofillFilledFields.length > 0
+                          ? `: ${autofillFilledFields.join(", ")}`
+                          : ""}
+                      </p>
+                      {autofillReasoning && (
+                        <p className="text-[var(--text-muted)]">{autofillReasoning}</p>
+                      )}
+                      <p className="text-[var(--text-faint)]">
+                        Review each value before saving.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
                 <Textarea
                   id="description"
                   name="description"
-                  defaultValue={initialData?.description ?? ""}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
                   rows={3}
                 />
               </div>
@@ -171,7 +322,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                 <Textarea
                   id="useCase"
                   name="useCase"
-                  defaultValue={initialData?.useCase ?? ""}
+                  value={useCase}
+                  onChange={(e) => setUseCase(e.target.value)}
                   rows={2}
                 />
               </div>
@@ -180,7 +332,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                   <Label>Risk Level</Label>
                   <select
                     name="riskLevel"
-                    defaultValue={initialData?.riskLevel ?? "MEDIUM"}
+                    value={riskLevel}
+                    onChange={(e) => setRiskLevel(e.target.value)}
                     className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
                   >
                     <option value="MINIMAL">Minimal</option>
@@ -236,7 +389,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                   <Input
                     id="vendor"
                     name="vendor"
-                    defaultValue={initialData?.vendor ?? ""}
+                    value={vendor}
+                    onChange={(e) => setVendor(e.target.value)}
                     placeholder="e.g. Anthropic, OpenAI, Internal"
                   />
                 </div>
@@ -245,7 +399,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                   <Input
                     id="modelType"
                     name="modelType"
-                    defaultValue={initialData?.modelType ?? ""}
+                    value={modelType}
+                    onChange={(e) => setModelType(e.target.value)}
                     placeholder="e.g. LLM, Classification, Computer Vision"
                   />
                 </div>
@@ -267,7 +422,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                 </Label>
                 <select
                   name="dataSensitivity"
-                  defaultValue={initialData?.dataSensitivity ?? "INTERNAL"}
+                  value={dataSensitivity}
+                  onChange={(e) => setDataSensitivity(e.target.value)}
                   className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
                 >
                   <option value="PUBLIC">Public</option>
@@ -281,7 +437,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                 <Textarea
                   id="dataInputs"
                   name="dataInputs"
-                  defaultValue={initialData?.dataInputs ?? ""}
+                  value={dataInputs}
+                  onChange={(e) => setDataInputs(e.target.value)}
                   placeholder="Describe what data this system ingests"
                   rows={2}
                 />
@@ -291,7 +448,8 @@ export function AISystemForm({ initialData }: AISystemFormProps) {
                 <Textarea
                   id="dataOutputs"
                   name="dataOutputs"
-                  defaultValue={initialData?.dataOutputs ?? ""}
+                  value={dataOutputs}
+                  onChange={(e) => setDataOutputs(e.target.value)}
                   placeholder="Describe what data this system produces"
                   rows={2}
                 />
