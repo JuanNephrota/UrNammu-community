@@ -18,6 +18,7 @@ import {
   Terminal,
   Building2,
   Presentation,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -53,6 +54,7 @@ const navItems = [
     label: "System",
     items: [
       { name: "Alerts", href: "/alerts", icon: Bell },
+      { name: "Proxy Health", href: "/proxy-health", icon: Activity },
       { name: "Settings", href: "/settings", icon: Settings },
     ],
   },

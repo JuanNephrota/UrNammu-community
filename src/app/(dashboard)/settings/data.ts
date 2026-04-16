@@ -45,6 +45,13 @@ const SETTINGS_KEYS = [
   "anthropic_admin_key",
   "openai_admin_key",
   "policy_enforcement_mode",
+  "azure_subscription_id",
+  "azure_resource_group",
+  "azure_function_app_name",
+  "azure_function_app_region",
+  "azure_tenant_id",
+  "azure_client_id",
+  "azure_client_secret",
 ] as const;
 
 export async function getSettingsPageData() {
@@ -98,6 +105,16 @@ export async function getSettingsPageData() {
 
   const policyEnforcementMode = parseEnforcementMode(settingsMap.policy_enforcement_mode);
 
+  const azureMonitor = {
+    subscriptionId: settingsMap.azure_subscription_id ?? "",
+    resourceGroup: settingsMap.azure_resource_group ?? "",
+    functionAppName: settingsMap.azure_function_app_name ?? "",
+    region: settingsMap.azure_function_app_region ?? "",
+    hasTenantId: !!settingsMap.azure_tenant_id,
+    hasClientId: !!settingsMap.azure_client_id,
+    hasClientSecret: !!settingsMap.azure_client_secret,
+  };
+
   return {
     isAdmin,
     users,
@@ -110,6 +127,7 @@ export async function getSettingsPageData() {
     providerLabel,
     modelLabel,
     policyEnforcementMode,
+    azureMonitor,
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasOpenAIAdminKey: !!settingsMap.openai_admin_key,
     hasGeminiBillingConfig:

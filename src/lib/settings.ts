@@ -168,3 +168,18 @@ export function parseEnforcementMode(value: string | null | undefined): PolicyEn
   if (value === "dryrun" || value === "enforce") return value;
   return POLICY_ENFORCEMENT_MODE_DEFAULT;
 }
+
+// Azure Monitor access for the proxy-health sync. Service-principal values
+// are only needed when the host doesn't have ambient Azure CLI credentials
+// (i.e., production deploys). Locally, az login covers it.
+export const AZURE_MONITOR_SETTINGS_KEYS = {
+  SUBSCRIPTION_ID: "azure_subscription_id",
+  RESOURCE_GROUP: "azure_resource_group",
+  FUNCTION_APP_NAME: "azure_function_app_name",
+  // Region slug used to pick the Azure Monitor regional endpoint
+  // (https://{region}.metrics.monitor.azure.com). Defaults to "eastus".
+  REGION: "azure_function_app_region",
+  TENANT_ID: "azure_tenant_id",
+  CLIENT_ID: "azure_client_id",
+  CLIENT_SECRET: "azure_client_secret",
+} as const;

@@ -902,6 +902,31 @@ model PromptRiskRule {
   @@index([enabled])
 }
 
+// ─── Proxy Health Snapshots ────────────────────────────
+// One row per sync, holding the Azure Monitor metric values captured for the
+// Nammu AI proxy function app over a specific window. Drives the /proxy-health
+// live-ops page. Intentionally separate from `ProviderSyncRun` (which tracks
+// provider-upstream sync jobs, not proxy health).
+model ProxyHealthSnapshot {
+  id                String   @id @default(cuid())
+  capturedAt        DateTime @default(now())
+  windowStart       DateTime
+  windowEnd         DateTime
+  // Azure Monitor metrics (nullable — partial metric responses are common)
+  invocationCount   Int?
+  http2xxCount      Int?
+  http4xxCount      Int?
+  http5xxCount      Int?
+  avgResponseTimeMs Float?
+  // Raw metric payload for debugging / future fields
+  rawMetrics        Json?
+  // Error captured from the Monitor query, if any. Presence of a snapshot
+  // with syncError set = last sync attempt failed; counters may be stale.
+  syncError         String?  @db.Text
+
+  @@index([capturedAt])
+}
+
 model SpendBudget {
   id                  String          @id @default(cuid())
   scopeType           BudgetScopeType
