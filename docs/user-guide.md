@@ -168,18 +168,43 @@ Two segment heatmaps (reused from the Dashboard) show risk concentration by **de
 
 The Registry is the central inventory of every managed AI system. Navigate via **Sidebar → Registry**.
 
+### Filtering the Registry
+
+The registry table has a filter bar above it with five dropdowns:
+
+- **Department** — filter by the departments in use.
+- **Risk level** — `CRITICAL` → `MINIMAL` (sorted by severity).
+- **Status** — `DRAFT` → `RETIRED` (sorted by lifecycle order).
+- **Data sensitivity** — `RESTRICTED` → `PUBLIC`.
+- **Vendor** — filter by the vendors present in the data.
+
+Dropdowns only show values that actually appear in your data — options that would produce an empty result are hidden. Filters compose as AND and combine with the existing name search. A **Clear all** button appears when any filter is active, together with a "Showing N of M systems" counter.
+
 ### Registering a New System
 
 1. Click **Register AI System** in the top-right of the Registry page.
-2. Fill the form:
+2. Fill the form. You can either fill each field manually, or type the **System Name** and click the **Autofill with AI** button (sparkle icon) next to the Name field to have the AI assistant look up the tool and pre-populate:
+   - Description
+   - Use case
+   - Vendor (only filled if empty — an explicit entry is preserved)
+   - Model type (e.g. "LLM", "Code completion", "Image generation")
+   - Data inputs / outputs
+   - Risk level
+   - Data sensitivity
+
+   A small success banner below the Name field lists which fields were filled and shows the AI assistant's reasoning. Review each value before saving.
+
+3. The remaining fields you control:
    - **Name**, **description**, **version**.
    - **Owner** — the person accountable for the system (User picker).
    - **Department**, **vendor**, **model type**.
    - **Data sensitivity** — `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, or `RESTRICTED`. This drives downstream policy evaluation.
    - **Use case**, **data inputs**, **data outputs**.
    - **Review interval (days)** — how often the system must be re-assessed before an alert fires.
-3. **Set approval requirements** — four toggles (Owner / Security / Legal / Compliance) control which stages must sign off before the system can move to `APPROVED`. Leave a stage off if it is not required for this system's risk class.
-4. Click **Save**. The system is created with status `DRAFT`.
+4. **Set approval requirements** — four toggles (Owner / Security / Legal / Compliance) control which stages must sign off before the system can move to `APPROVED`. Leave a stage off if it is not required for this system's risk class.
+5. Click **Save**. The system is created with status `DRAFT`.
+
+> **Note** — the Autofill button requires the AI provider to be configured under **Settings → General**. If no provider is set, the button will surface a clear error message pointing there.
 
 ### System Detail Page
 
@@ -308,6 +333,16 @@ From Compliance → **New Policy**:
    - Model name allow / block patterns (regex)
    - **Enforcement**: `ADVISORY` (flag only) or `BLOCKING` (prevent approval)
    - Whether exceptions are permitted
+
+### Editing a Policy
+
+From the **policy detail page**, click **Edit Policy** (pencil icon in the header) to revise the policy after creation. The edit form is the same structure as the create form and is pre-populated from the stored policy — every field is editable, including:
+
+- Name, description, framework, version, status
+- Policy content (long-form text)
+- All machine-readable rules (vendors, sensitivities, stages, departments, model patterns, allowed statuses, review-interval / risk thresholds, enforcement, exceptions)
+
+Every edit is captured in the audit trail with the editor's user ID so reviewers can see who changed what. Assignments and compliance statuses are preserved across edits — only the policy definition changes. Role: ADMIN or COMPLIANCE_OFFICER.
 
 ### Assigning a Policy
 
@@ -497,12 +532,32 @@ The Shadow AI page splits discoveries into three sections:
 
 On a tool's row in "Needs Review":
 
-- **Convert to Governed System** — navigates to the full system creation form.
-- **Register & Assess** — auto-creates an AISystem and routes to risk assessment.
+- **Convert to Governed System** — navigates to the full system creation form with every field pre-populated (see *AI-assisted auto-fill* below).
+- **Register & Assess** — auto-creates an AISystem with AI-inferred fields (use case, model type, data inputs / outputs, risk level, sensitivity) and routes directly to the risk assessment form.
 - **Approve** — permit its use without adding to the Registry.
 - **Block** — indicate it is not allowed; this is an organizational signal, not a technical block.
+- **Dismiss** — suppress the discovery with a required reason (e.g. "false positive", "approved shadow usage", "not an AI tool"). Same mechanism as low-confidence dismissal — a `DismissedCandidate` record is created and future scans will not resurface it.
 
 New high-confidence discoveries auto-create alerts for admins to triage. Dismissed candidates are permanently suppressed — the scan executor checks the `DismissedCandidate` table before creating new records.
+
+### AI-assisted auto-fill on conversion
+
+When you click **Convert to Governed System** or **Register & Assess** on a discovered tool, UrNammu uses the configured AI provider to infer governance-relevant fields from the tool name, vendor, and domain:
+
+- Description
+- Use case
+- Model type (e.g. "LLM", "Code completion", "Image generation", "RAG platform")
+- Data inputs / outputs
+- Risk level (`CRITICAL` … `MINIMAL`)
+- Data sensitivity (`RESTRICTED` … `PUBLIC`)
+
+While the AI assistant is working, a floating "**Analyzing {toolName}**..." banner appears in the bottom-right of the Shadow AI page and the button label flips to "Analyzing..." / "Classifying..." (disabled to prevent double-clicks). The banner auto-dismisses when the destination page loads.
+
+For the **Convert to Governed System** path, the registration form renders with every inferred field pre-populated and a green "**AI-assisted**" banner at the top showing the model's reasoning. You can review and edit anything before saving.
+
+For the **Register & Assess** path, the system is created directly with the AI-inferred values. The audit log records which fields were AI-inferred plus the model's reasoning, so reviewers always know what was human- vs machine-decided.
+
+If the AI provider isn't configured, times out (12-second limit), or returns unparseable output, the create flow falls back to the previous defaults (generic description, blank optional fields, `MEDIUM` risk, `INTERNAL` sensitivity) — the operation never fails because of AI issues.
 
 ---
 
@@ -674,7 +729,15 @@ Create an investigation from an alert (preferred) or manually:
 
 ### Claude Code Oversight
 
-**Oversight → Claude Code** shows Claude Code-specific telemetry pulled via the Anthropic admin sync: session counts, tool accept/reject breakdown, lines added/removed, commits, PRs, model distribution, estimated cost.
+**Oversight → Claude Code** shows Claude Code-specific telemetry pulled via the Anthropic admin sync:
+
+- **Sessions**, **Lines Added / Removed**, **Commits**, **Pull Requests**, and **Estimated Cost** stat cards for the last 7 days.
+- **Token Volume** card showing input / output tokens with cache tokens called out separately.
+- **Tool Accept Rate**, **Active Users**.
+- **Users table** with per-user session counts, line diffs, commits, PRs, tool accept rate, token volume (with cache suffix), and estimated cost.
+- **Sync status banner** at the top showing the last successful sync, how many days of data were fetched, and any API errors from individual day ranges.
+
+Token counts are sourced from the `model_breakdown` metadata returned by the Anthropic analytics API so the Tokens column always reflects real usage. Token values are intentionally kept out of the aggregate oversight totals to avoid double-counting with the regular Anthropic usage sync (the same tokens are already captured there).
 
 ### Provider Posture Comparison
 

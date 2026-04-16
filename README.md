@@ -319,6 +319,16 @@ npm run db:reset
 - False positive marking for prompt risk alerts: dismiss with required reason, optionally create `PromptRiskException` records that suppress similar future alerts. Exceptions are managed at `/alerts/exceptions` and support activation/deactivation.
 - Dangerous-prompt detection is a tunable rule engine backed by the `PromptRiskRule` table. Admins can edit, disable, or reset the five built-in rules (`prompt_injection`, `secret_extraction`, `data_exfiltration`, `malware_or_phishing`, `dangerous_autonomy`) and create their own custom rules at `/alerts/prompt-rules`. Patterns are validated against ReDoS shapes and a 50 ms runtime probe before save; rule changes propagate through a 30-second runtime cache. A "Test a prompt" panel dry-runs input against the current enabled ruleset without creating an alert.
 - Shadow AI discovery now persists match confidence (high/medium/low), numeric score, and match reasons as first-class fields on `DiscoveredAITool`. Low-confidence candidates are shown in a dedicated review queue with promote and dismiss actions. Dismissed candidates are permanently suppressed via `DismissedCandidate` records so they don't resurface on future scans.
+- Shadow AI high-confidence discoveries now have the same **Dismiss** action as low-confidence candidates — useful for flagging false positives, approved shadow usage, or non-AI tools. A required reason is captured in the audit trail.
+- Converting a Shadow AI tool to a governed system is now **AI-assisted**: clicking "Convert to Governed System" or "Register & Assess" on a discovered tool calls the configured AI provider (Claude / GPT) to infer `description`, `useCase`, `vendor`, `modelType`, `dataInputs`, `dataOutputs`, `riskLevel`, and `dataSensitivity` from the tool name and metadata. A floating "Analyzing…" banner surfaces progress. Best-effort: if the AI provider isn't configured or the call fails/times out (12s limit) the operation falls back to sensible defaults.
+- Registering an AI system manually has a matching **"Autofill with AI"** button next to the System Name field. Type a name (e.g. "ChatGPT", "GitHub Copilot"), click the sparkle button, and the form populates with inferred fields plus a short reasoning note. Vendor is preserved if the user already entered one.
+- Policies can now be **edited after creation** — an Edit Policy button on the detail page opens a form pre-populated with every stored field (name, framework, version, status, content, and all machine-readable rules). The backend PUT route and audit logging were already in place; the UI now surfaces them.
+- AI System Registry view has a **filter bar** with five dropdowns (department, risk level, status, data sensitivity, vendor). Dropdowns only surface values present in the current dataset; enum filters are ordered by severity / lifecycle. Filters compose AND and combine with the existing name search.
+- Claude Code analytics page now extracts per-user token counts from `model_breakdown` metadata instead of reading zero-valued columns, and explicitly separates cache tokens in the display. A Token Volume stat card shows total input/output with the cache tokens called out.
+- Anthropic cost ingestion corrected: the admin `cost_report` API returns amounts in **cents**, not dollars (verified empirically against Anthropic's published pricing). Aggregate cost queries now match manual price-book calculations. A Map-based pre-upsert aggregation prevents dimensionKey collisions when the same `(model, cost_type, date)` has multiple line items.
+- Usage totals no longer double-count proxy traffic. Proxy writes happen at hourly granularity while the admin sync writes the same traffic at day granularity; the oversight queries now filter out the proxy-sourced rows so admin sync is the single source of truth for aggregate totals. Proxy data remains queryable for real-time views.
+- Cache tokens (cache_read + cache_creation) are separated from default token and cost totals across the oversight dashboard and usage page. A client-side toggle on the usage page shows or hides cache tokens on demand.
+- All `toLocaleString()` calls and number formatters are now pinned to `en-US` so numbers render consistently regardless of the Vercel runtime locale.
 
 ## TODO / Roadmap
 
@@ -350,6 +360,17 @@ npm run db:reset
 ### Shadow AI
 
 - [x] Low-confidence review queues and promotion workflows
+- [x] Dismiss option for high-confidence discoveries
+- [x] AI-assisted auto-fill when converting a discovered tool to a governed system
+
+### Registry
+
+- [x] "Autofill with AI" button on the manual registration form
+- [x] Filter bar with department, risk, status, sensitivity, and vendor dropdowns
+
+### Compliance
+
+- [x] Edit existing policies after creation
 
 ### Strategic
 
