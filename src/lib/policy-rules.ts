@@ -18,6 +18,23 @@ export type PolicyRuleActions = {
   >;
 };
 
+// Runtime rules evaluated per-request at the proxy, against the API request
+// body and recent usage windows. Distinct from the design-time `*ModelPatterns`
+// which match against AISystem.modelType.
+export type PolicyRuntimeRules = {
+  // Matched against the `model` field in the request body (substring, case-insensitive).
+  allowedModelsRuntime?: string[];
+  blockedModelsRuntime?: string[];
+  // Rejects if request's `max_tokens` exceeds this.
+  maxOutputTokens?: number;
+  // Rate limit per aiSystemId, measured over a 60s window.
+  maxRequestsPerMinute?: number;
+  // USD cap per aiSystemId, measured over the current local day.
+  maxCostPerDay?: number;
+  // Regex sources (flags forced to "i"). Matched against concatenated request content.
+  blockedPromptPatterns?: string[];
+};
+
 export type PolicyRuleSet = {
   allowedVendors?: string[];
   blockedVendors?: string[];
@@ -31,6 +48,7 @@ export type PolicyRuleSet = {
   allowedModelPatterns?: string[];
   blockedModelPatterns?: string[];
   allowedStatuses?: AISystemStatus[];
+  runtime?: PolicyRuntimeRules;
   actions?: PolicyRuleActions;
 };
 
@@ -47,6 +65,14 @@ type NormalizeInput = {
   allowedModelPatterns?: string;
   blockedModelPatterns?: string;
   allowedStatuses?: string[];
+  // Runtime (proxy-evaluated)
+  allowedModelsRuntime?: string;
+  blockedModelsRuntime?: string;
+  maxOutputTokens?: number;
+  maxRequestsPerMinute?: number;
+  maxCostPerDay?: number;
+  blockedPromptPatterns?: string;
+  // Actions
   enforcement?: string;
   allowException?: boolean;
   recommendedComplianceStatus?: string;
@@ -122,6 +148,17 @@ function parseCommaSeparatedList(input?: string): string[] | undefined {
   return values?.length ? values : undefined;
 }
 
+// Newline-separated — used for regex patterns, where commas are meaningful
+// inside quantifiers like `{20,}`.
+function parseLineSeparatedList(input?: string): string[] | undefined {
+  const values = input
+    ?.split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return values?.length ? values : undefined;
+}
+
 function normalizeActions(input: NormalizeInput): PolicyRuleActions | undefined {
   const actions: PolicyRuleActions = {};
 
@@ -143,6 +180,42 @@ function normalizeActions(input: NormalizeInput): PolicyRuleActions | undefined 
   return Object.keys(actions).length ? actions : undefined;
 }
 
+function normalizeRuntime(input: NormalizeInput): PolicyRuntimeRules | undefined {
+  const runtime: PolicyRuntimeRules = {};
+
+  const allowedModelsRuntime = parseCommaSeparatedList(input.allowedModelsRuntime);
+  const blockedModelsRuntime = parseCommaSeparatedList(input.blockedModelsRuntime);
+  const blockedPromptPatterns = parseLineSeparatedList(input.blockedPromptPatterns);
+
+  if (allowedModelsRuntime) runtime.allowedModelsRuntime = allowedModelsRuntime;
+  if (blockedModelsRuntime) runtime.blockedModelsRuntime = blockedModelsRuntime;
+  if (blockedPromptPatterns) {
+    // Drop any pattern that fails to compile — keeps bad form input from
+    // breaking the proxy later. Flags are forced to "i" at eval time.
+    const valid = blockedPromptPatterns.filter((source) => {
+      try {
+        new RegExp(source, "i");
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (valid.length) runtime.blockedPromptPatterns = valid;
+  }
+
+  if (typeof input.maxOutputTokens === "number" && input.maxOutputTokens > 0) {
+    runtime.maxOutputTokens = input.maxOutputTokens;
+  }
+  if (typeof input.maxRequestsPerMinute === "number" && input.maxRequestsPerMinute > 0) {
+    runtime.maxRequestsPerMinute = input.maxRequestsPerMinute;
+  }
+  if (typeof input.maxCostPerDay === "number" && input.maxCostPerDay > 0) {
+    runtime.maxCostPerDay = input.maxCostPerDay;
+  }
+
+  return Object.keys(runtime).length ? runtime : undefined;
+}
+
 export function normalizePolicyRules(input: NormalizeInput): PolicyRuleSet | null {
   const rules: PolicyRuleSet = {};
 
@@ -159,6 +232,9 @@ export function normalizePolicyRules(input: NormalizeInput): PolicyRuleSet | nul
   if (blockedDepartments) rules.blockedDepartments = blockedDepartments;
   if (allowedModelPatterns) rules.allowedModelPatterns = allowedModelPatterns;
   if (blockedModelPatterns) rules.blockedModelPatterns = blockedModelPatterns;
+
+  const runtime = normalizeRuntime(input);
+  if (runtime) rules.runtime = runtime;
 
   const blockedDataSensitivities = input.blockedDataSensitivities?.filter((value) =>
     validDataSensitivities.has(value as DataSensitivity)
@@ -270,6 +346,55 @@ export function parsePolicyRules(value: Prisma.JsonValue | null | undefined): Po
   ) {
     rules.minimumRiskLevel =
       input.minimumRiskLevel as NonNullable<PolicyRuleSet["minimumRiskLevel"]>;
+  }
+
+  if (input.runtime && typeof input.runtime === "object" && !Array.isArray(input.runtime)) {
+    const runtimeInput = input.runtime as Record<string, unknown>;
+    const runtime: PolicyRuntimeRules = {};
+
+    const copyRuntimeStringArray = (key: keyof PolicyRuntimeRules) => {
+      const candidate = runtimeInput[key];
+      if (Array.isArray(candidate)) {
+        const values = candidate.filter(
+          (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+        );
+        if (values.length) {
+          (runtime[key] as string[] | undefined) = values;
+        }
+      }
+    };
+
+    copyRuntimeStringArray("allowedModelsRuntime");
+    copyRuntimeStringArray("blockedModelsRuntime");
+
+    if (Array.isArray(runtimeInput.blockedPromptPatterns)) {
+      const valid = (runtimeInput.blockedPromptPatterns as unknown[]).filter(
+        (entry): entry is string => {
+          if (typeof entry !== "string" || !entry.trim().length) return false;
+          try {
+            new RegExp(entry, "i");
+            return true;
+          } catch {
+            return false;
+          }
+        }
+      );
+      if (valid.length) runtime.blockedPromptPatterns = valid;
+    }
+
+    const numericKeys: (keyof PolicyRuntimeRules)[] = [
+      "maxOutputTokens",
+      "maxRequestsPerMinute",
+      "maxCostPerDay",
+    ];
+    for (const key of numericKeys) {
+      const value = runtimeInput[key];
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+        (runtime[key] as number | undefined) = value;
+      }
+    }
+
+    if (Object.keys(runtime).length) rules.runtime = runtime;
   }
 
   if (input.actions && typeof input.actions === "object" && !Array.isArray(input.actions)) {

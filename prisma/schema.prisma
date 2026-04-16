@@ -609,6 +609,7 @@ model APIUsageLog {
   provider         String
   model            String?
   department       String?
+  aiSystemId       String?
   promptTokens     Int     @default(0)
   completionTokens Int     @default(0)
   totalTokens      Int     @default(0)
@@ -618,6 +619,33 @@ model APIUsageLog {
   flagReason       String?
 
   createdAt DateTime @default(now())
+
+  @@index([aiSystemId, createdAt])
+}
+
+// ─── Policy Denials (runtime enforcement log) ──────────
+// Separate from APIUsageLog because denials never hit the upstream provider
+// and have their own lifecycle (violation reasons, review state).
+model PolicyDenial {
+  id              String   @id @default(cuid())
+  provider        String
+  model           String?
+  aiSystemId      String?
+  userEmail       String?
+  department      String?
+  // "dryrun" = would have been blocked but request was allowed through;
+  // "enforced" = the proxy returned 403 to the client.
+  mode            String
+  policyIds       String[]
+  reasons         Json     // array of { ruleKey, message, recommendation? }
+  // Captured excerpt of the prompt for triage; truncated. Never the full body.
+  promptExcerpt   String?  @db.Text
+  requestMetadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([aiSystemId, createdAt])
+  @@index([mode, createdAt])
 }
 
 // ─── Compliance & Policy ────────────────────────────────

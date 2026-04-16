@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AIProviderSettings } from "../ai-provider-settings";
+import { PolicyEnforcementSettings } from "../policy-enforcement-settings";
 import { getSettingsPageData } from "../data";
 
 export default async function GeneralSettingsPage() {
@@ -10,6 +11,7 @@ export default async function GeneralSettingsPage() {
     currentProvider,
     currentModel,
     hasAiKey,
+    policyEnforcementMode,
   } = await getSettingsPageData();
 
   return (
@@ -37,11 +39,14 @@ export default async function GeneralSettingsPage() {
       </Card>
 
       {isAdmin && (
-        <AIProviderSettings
-          currentProvider={currentProvider}
-          currentModel={currentModel}
-          hasApiKey={hasAiKey}
-        />
+        <>
+          <AIProviderSettings
+            currentProvider={currentProvider}
+            currentModel={currentModel}
+            hasApiKey={hasAiKey}
+          />
+          <PolicyEnforcementSettings currentMode={policyEnforcementMode} />
+        </>
       )}
     </div>
   );

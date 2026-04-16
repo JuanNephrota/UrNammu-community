@@ -1,8 +1,13 @@
 import { app, HttpRequest, HttpResponseInit } from "@azure/functions";
 import { Readable, PassThrough } from "stream";
 import { calculateCost } from "../lib/pricing";
-import { logUsage } from "../lib/db";
+import { logPolicyDenial, logUsage } from "../lib/db";
 import { extractOpenAIStreamUsage } from "../lib/stream-parser";
+import {
+  loadEnforcementMode,
+  loadPoliciesForSystem,
+} from "../lib/policy-loader";
+import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -40,6 +45,62 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const model = (bodyJson.model as string) ?? "unknown";
   const isStreaming = bodyJson.stream === true;
   const startTime = Date.now();
+
+  // ── Policy enforcement gate ── see anthropic-proxy.ts for mode semantics.
+  if (aiSystemId) {
+    const mode = await loadEnforcementMode();
+    if (mode !== "off") {
+      const policies = await loadPoliciesForSystem(aiSystemId);
+      if (policies.length) {
+        const evaluation = await evaluateRequest({
+          policies,
+          aiSystemId,
+          model,
+          bodyJson,
+        });
+
+        if (evaluation.decision === "deny") {
+          const promptExcerpt = extractPromptText(bodyJson).slice(0, 1000);
+          const policyIds = Array.from(
+            new Set(evaluation.violations.map((v) => v.policyId))
+          );
+
+          void logPolicyDenial({
+            provider: "chatgpt",
+            model,
+            aiSystemId,
+            userEmail,
+            department,
+            mode: mode === "enforce" ? "enforced" : "dryrun",
+            policyIds,
+            reasons: evaluation.violations,
+            promptExcerpt: promptExcerpt || null,
+            requestMetadata: { isStreaming },
+          }).catch((err) => {
+            console.error("logPolicyDenial failed:", err);
+          });
+
+          if (mode === "enforce") {
+            return {
+              status: 403,
+              jsonBody: {
+                error: {
+                  type: "policy_denied",
+                  message:
+                    "Request blocked by governance policy. See `violations` for details.",
+                  violations: evaluation.violations.map((v) => ({
+                    rule: v.ruleKey,
+                    message: v.message,
+                    policy: v.policyName,
+                  })),
+                },
+              },
+            };
+          }
+        }
+      }
+    }
+  }
 
   let openaiRes: Response;
   try {

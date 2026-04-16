@@ -26,6 +26,7 @@ model APIUsageLog {
   provider         String
   model            String?
   department       String?
+  aiSystemId       String?
   promptTokens     Int     @default(0)
   completionTokens Int     @default(0)
   totalTokens      Int     @default(0)
@@ -34,6 +35,56 @@ model APIUsageLog {
   flagged          Boolean @default(false)
   flagReason       String?
 
+  createdAt DateTime @default(now())
+
+  @@index([aiSystemId, createdAt])
+}
+
+// Policy denials — proxy writes; main app owns migrations.
+model PolicyDenial {
+  id              String   @id @default(cuid())
+  provider        String
+  model           String?
+  aiSystemId      String?
+  userEmail       String?
+  department      String?
+  mode            String
+  policyIds       String[]
+  reasons         Json
+  promptExcerpt   String?
+  requestMetadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([aiSystemId, createdAt])
+  @@index([mode, createdAt])
+}
+
+// Policy + PolicyAssignment — proxy reads these to enforce at request time.
+// Must stay schema-compatible with the main app's definitions.
+model Policy {
+  id      String  @id @default(cuid())
+  name    String
+  rules   Json?
+  status  String  @default("DRAFT")
+
+  assignments PolicyAssignment[]
+}
+
+model PolicyAssignment {
+  id          String  @id @default(cuid())
+  policy      Policy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policyId    String
+  aiSystemId  String
+
+  @@unique([policyId, aiSystemId])
+  @@index([aiSystemId])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
 

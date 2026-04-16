@@ -24,6 +24,54 @@ test("normalizes richer policy rule inputs", () => {
   assert.deepEqual(rules, parsePolicyRules(rules));
 });
 
+test("normalizes runtime rules and round-trips through parsePolicyRules", () => {
+  const rules = normalizePolicyRules({
+    allowedModelsRuntime: "claude-sonnet-4, claude-opus-4",
+    blockedModelsRuntime: "preview",
+    maxOutputTokens: 4096,
+    maxRequestsPerMinute: 60,
+    maxCostPerDay: 50.0,
+    blockedPromptPatterns: "sk-[a-z0-9]{20,}\npassword\\s*=",
+  });
+
+  assert.ok(rules);
+  assert.ok(rules?.runtime);
+  assert.deepEqual(rules?.runtime?.allowedModelsRuntime, [
+    "claude-sonnet-4",
+    "claude-opus-4",
+  ]);
+  assert.equal(rules?.runtime?.maxOutputTokens, 4096);
+  assert.equal(rules?.runtime?.maxRequestsPerMinute, 60);
+  assert.equal(rules?.runtime?.maxCostPerDay, 50.0);
+  assert.deepEqual(rules?.runtime?.blockedPromptPatterns, [
+    "sk-[a-z0-9]{20,}",
+    "password\\s*=",
+  ]);
+
+  assert.deepEqual(rules, parsePolicyRules(rules));
+});
+
+test("drops invalid regex patterns from blockedPromptPatterns", () => {
+  const rules = normalizePolicyRules({
+    blockedPromptPatterns: "valid\\d+\n[unterminated\nalso-valid",
+  });
+
+  assert.deepEqual(rules?.runtime?.blockedPromptPatterns, [
+    "valid\\d+",
+    "also-valid",
+  ]);
+});
+
+test("ignores non-positive numeric runtime bounds", () => {
+  const rules = normalizePolicyRules({
+    maxOutputTokens: 0,
+    maxRequestsPerMinute: -1,
+    maxCostPerDay: 0,
+  });
+
+  assert.equal(rules, null);
+});
+
 test("waives blocking findings when policy allows exceptions and system has one", () => {
   const evaluation = evaluatePolicyRules(
     parsePolicyRules({

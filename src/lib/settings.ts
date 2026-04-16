@@ -153,3 +153,18 @@ export const PLATFORM_SETTINGS_KEYS = {
   PROXY_SECRET: "proxy_secret",
   PLATFORM_URL: "platform_url",
 } as const;
+
+// Runtime policy-as-code enforcement controls. Evaluated by the Azure Functions
+// proxy. Default is "off" — changing this is the explicit opt-in to prevention.
+export const POLICY_ENFORCEMENT_SETTINGS_KEYS = {
+  MODE: "policy_enforcement_mode",
+} as const;
+
+export type PolicyEnforcementMode = "off" | "dryrun" | "enforce";
+
+export const POLICY_ENFORCEMENT_MODE_DEFAULT: PolicyEnforcementMode = "off";
+
+export function parseEnforcementMode(value: string | null | undefined): PolicyEnforcementMode {
+  if (value === "dryrun" || value === "enforce") return value;
+  return POLICY_ENFORCEMENT_MODE_DEFAULT;
+}

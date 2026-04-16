@@ -4,6 +4,7 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { updateAISystemSchema } from "@/lib/validations/ai-system";
 import { createAuditLog } from "@/lib/audit";
 import { getRiskReassessmentDrift } from "@/lib/risk-center";
+import { syncAssignmentsForSystem } from "@/lib/policy-sync";
 
 export async function GET(
   _req: NextRequest,
@@ -121,6 +122,27 @@ export async function PUT(
       }))
       .filter((change) => change.after !== undefined && change.before !== change.after);
 
+    // Fields that change the outcome of evaluatePolicyRules. Superset of
+    // driftFields — adds reviewIntervalDays, status, and governance-stage
+    // flags which affect requiredStages checks.
+    const ruleEvalFields = [
+      "vendor",
+      "modelType",
+      "dataSensitivity",
+      "riskLevel",
+      "department",
+      "status",
+      "reviewIntervalDays",
+      "requireOwnerApproval",
+      "requireSecurityApproval",
+      "requireLegalApproval",
+      "requireComplianceApproval",
+    ] as const;
+    const ruleEvalChanged = ruleEvalFields.some((field) => {
+      const after = parsed.data[field];
+      return after !== undefined && existing[field] !== after;
+    });
+
     const system = await prisma.aISystem.update({
       where: { id },
       data: {
@@ -194,6 +216,12 @@ export async function PUT(
           },
         });
       }
+    }
+
+    if (ruleEvalChanged) {
+      await syncAssignmentsForSystem(system.id).catch((err) => {
+        console.error("syncAssignmentsForSystem failed:", err);
+      });
     }
 
     return NextResponse.json(system);

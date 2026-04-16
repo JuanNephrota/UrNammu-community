@@ -5,6 +5,7 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { updatePolicySchema, assignPolicySchema } from "@/lib/validations/policy";
 import { createAuditLog } from "@/lib/audit";
 import { parsePolicyRules } from "@/lib/policy-rules";
+import { syncAssignment, syncAssignmentsForPolicy } from "@/lib/policy-sync";
 
 export async function GET(
   _req: NextRequest,
@@ -63,6 +64,13 @@ export async function PUT(
         },
       });
 
+      // Deterministic rule evaluation may override the user-supplied
+      // complianceStatus if rules exist and are violated. Rule eval is the
+      // source of truth for fields the policy formally constrains.
+      await syncAssignment(assignment.id).catch((err) => {
+        console.error("syncAssignment failed:", err);
+      });
+
       return NextResponse.json(assignment);
     }
 
@@ -88,6 +96,13 @@ export async function PUT(
       entityType: "Policy",
       entityId: policy.id,
     });
+
+    // Rules may have changed — re-evaluate every assignment of this policy.
+    if (parsed.data.rules !== undefined) {
+      await syncAssignmentsForPolicy(policy.id).catch((err) => {
+        console.error("syncAssignmentsForPolicy failed:", err);
+      });
+    }
 
     return NextResponse.json(policy);
   });

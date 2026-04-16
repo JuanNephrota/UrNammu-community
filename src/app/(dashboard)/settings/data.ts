@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth-guard";
-import { getSettings } from "@/lib/settings";
+import { getSettings, parseEnforcementMode } from "@/lib/settings";
 
 const SETTINGS_KEYS = [
   "google_service_account_key",
@@ -44,6 +44,7 @@ const SETTINGS_KEYS = [
   "ai_api_key",
   "anthropic_admin_key",
   "openai_admin_key",
+  "policy_enforcement_mode",
 ] as const;
 
 export async function getSettingsPageData() {
@@ -95,6 +96,8 @@ export async function getSettingsPageData() {
     ? settingsMap.platform_url ?? process.env.NEXTAUTH_URL ?? "http://localhost:3001"
     : process.env.NEXTAUTH_URL ?? "http://localhost:3001";
 
+  const policyEnforcementMode = parseEnforcementMode(settingsMap.policy_enforcement_mode);
+
   return {
     isAdmin,
     users,
@@ -106,6 +109,7 @@ export async function getSettingsPageData() {
     hasAiKey,
     providerLabel,
     modelLabel,
+    policyEnforcementMode,
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasOpenAIAdminKey: !!settingsMap.openai_admin_key,
     hasGeminiBillingConfig:

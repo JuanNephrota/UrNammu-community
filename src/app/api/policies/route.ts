@@ -5,6 +5,7 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { createPolicySchema } from "@/lib/validations/policy";
 import { createAuditLog } from "@/lib/audit";
 import { parsePolicyRules } from "@/lib/policy-rules";
+import { syncAssignmentsForPolicy } from "@/lib/policy-sync";
 
 export async function GET() {
   return withAuth(async () => {
@@ -36,6 +37,11 @@ export async function POST(req: NextRequest) {
       action: "CREATE",
       entityType: "Policy",
       entityId: policy.id,
+    });
+
+    // Fan out to any assignments (none on create, but harmless).
+    await syncAssignmentsForPolicy(policy.id).catch((err) => {
+      console.error("syncAssignmentsForPolicy failed:", err);
     });
 
     return NextResponse.json(policy, { status: 201 });

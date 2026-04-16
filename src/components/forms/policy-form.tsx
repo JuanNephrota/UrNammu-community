@@ -49,6 +49,7 @@ export function PolicyForm({ initialData }: PolicyFormProps) {
   const isEditing = !!initialData?.id;
   const rules = initialData?.rules ?? null;
   const actions = rules?.actions ?? {};
+  const runtime = rules?.runtime ?? {};
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -75,6 +76,14 @@ export function PolicyForm({ initialData }: PolicyFormProps) {
         allowedModelPatterns: formData.get("allowedModelPatterns") as string,
         blockedModelPatterns: formData.get("blockedModelPatterns") as string,
         allowedStatuses: formData.getAll("allowedStatuses") as string[],
+        // Runtime (proxy-evaluated) rules
+        allowedModelsRuntime: formData.get("allowedModelsRuntime") as string,
+        blockedModelsRuntime: formData.get("blockedModelsRuntime") as string,
+        maxOutputTokens: Number(formData.get("maxOutputTokens") || 0),
+        maxRequestsPerMinute: Number(formData.get("maxRequestsPerMinute") || 0),
+        maxCostPerDay: Number(formData.get("maxCostPerDay") || 0),
+        blockedPromptPatterns: formData.get("blockedPromptPatterns") as string,
+        // Actions
         enforcement: formData.get("enforcement") as string,
         allowException: formData.get("allowException") === "on",
         recommendedComplianceStatus: formData.get("recommendedComplianceStatus") as string,
@@ -353,12 +362,15 @@ export function PolicyForm({ initialData }: PolicyFormProps) {
               <Label>Enforcement</Label>
               <select
                 name="enforcement"
-                defaultValue={actions.enforcement ?? "BLOCK"}
+                defaultValue={actions.enforcement ?? "ADVISORY"}
                 className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
               >
-                <option value="BLOCK">Blocking</option>
                 <option value="ADVISORY">Advisory</option>
+                <option value="BLOCK">Blocking</option>
               </select>
+              <p className="text-xs text-[var(--text-muted)]">
+                Advisory rules surface recommendations without blocking. Switch to Blocking to have the proxy reject violating requests (requires global enforcement mode to be enabled).
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Recommended Compliance Status</Label>
@@ -382,6 +394,98 @@ export function PolicyForm({ initialData }: PolicyFormProps) {
                 <span>Allow active governance exceptions to waive blocking findings</span>
               </label>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Runtime Rules</CardTitle>
+          <p className="text-xs text-[var(--text-muted)]">
+            Evaluated by the proxy on every API request from systems this policy is assigned to. Leave fields blank to impose no constraint. Only enforced when the global enforcement mode is set to Dry run or Enforce.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="allowedModelsRuntime">Allowed Models</Label>
+              <Input
+                id="allowedModelsRuntime"
+                name="allowedModelsRuntime"
+                placeholder="claude-sonnet-4, claude-opus-4"
+                defaultValue={arrayToCsv(runtime.allowedModelsRuntime)}
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Comma-separated. Matched as case-insensitive substrings against the model field in each request.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="blockedModelsRuntime">Blocked Models</Label>
+              <Input
+                id="blockedModelsRuntime"
+                name="blockedModelsRuntime"
+                placeholder="preview, beta"
+                defaultValue={arrayToCsv(runtime.blockedModelsRuntime)}
+              />
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="maxOutputTokens">Max Output Tokens</Label>
+              <Input
+                id="maxOutputTokens"
+                name="maxOutputTokens"
+                type="number"
+                min={0}
+                placeholder="4096"
+                defaultValue={runtime.maxOutputTokens ?? ""}
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Rejects requests asking for more than this many output tokens.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxRequestsPerMinute">Max Requests / Minute</Label>
+              <Input
+                id="maxRequestsPerMinute"
+                name="maxRequestsPerMinute"
+                type="number"
+                min={0}
+                placeholder="60"
+                defaultValue={runtime.maxRequestsPerMinute ?? ""}
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Per system, measured over the last 60 seconds.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxCostPerDay">Max Cost Per Day (USD)</Label>
+              <Input
+                id="maxCostPerDay"
+                name="maxCostPerDay"
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="50.00"
+                defaultValue={runtime.maxCostPerDay ?? ""}
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Per system, measured since midnight (local time).
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="blockedPromptPatterns">Blocked Prompt Patterns</Label>
+            <Textarea
+              id="blockedPromptPatterns"
+              name="blockedPromptPatterns"
+              rows={4}
+              placeholder={"One regex per line, e.g.\nsk-[a-z0-9]{20,}\npassword\\s*="}
+              defaultValue={(runtime.blockedPromptPatterns ?? []).join("\n")}
+              className="font-mono text-xs"
+            />
+            <p className="text-xs text-[var(--text-muted)]">
+              One JavaScript-flavor regex per line. Case-insensitive. Matched against concatenated request content. Invalid patterns are silently dropped on save.
+            </p>
           </div>
         </CardContent>
       </Card>
