@@ -300,21 +300,23 @@ export default async function OversightPage() {
       </PageHeader>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-8">
-        <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" />
+        <StatCard title="Telemetry Buckets" value={totalUsageBuckets} iconName="Eye" variant="info" href="/oversight/usage" />
         <StatCard
           title="Total Tokens"
           value={formatCompactNumber(totalTokens)}
           description={totalTokens.toLocaleString() + " total"}
           iconName="Eye"
           variant="default"
+          href="/oversight/usage"
         />
-        <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" />
+        <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="info" href="/oversight/usage" />
         <StatCard
           title="Tracked Entities"
           value={trackedEntities}
           description="Recent projects, actors, or API keys"
           iconName="Database"
           variant={trackedEntities > 0 ? "success" : "default"}
+          href="#attribution"
         />
         <StatCard
           title="Exposure Signals"
@@ -326,6 +328,7 @@ export default async function OversightPage() {
           }
           iconName="AlertTriangle"
           variant={exposureSummary.totalFindings > 0 ? "warning" : "success"}
+          href="#exposure"
         />
         <StatCard
           title="Dangerous Prompts"
@@ -337,6 +340,7 @@ export default async function OversightPage() {
           }
           iconName="ShieldAlert"
           variant={dangerousPromptAlerts > 0 ? "danger" : "success"}
+          href="/alerts"
         />
         <StatCard
           title="Anomalies"
@@ -350,6 +354,7 @@ export default async function OversightPage() {
                 ? "warning"
                 : "success"
           }
+          href="#anomalies"
         />
         <StatCard
           title="Model Drift"
@@ -363,6 +368,7 @@ export default async function OversightPage() {
                 ? "warning"
                 : "success"
           }
+          href="#model-drift"
         />
       </div>
 
@@ -403,7 +409,7 @@ export default async function OversightPage() {
         </Card>
       </div>
 
-      <Card>
+      <Card id="attribution">
         <CardHeader>
           <CardTitle>Governed System Telemetry Attribution</CardTitle>
         </CardHeader>
@@ -767,7 +773,7 @@ export default async function OversightPage() {
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
+        <Card id="anomalies">
           <CardHeader>
             <CardTitle>Telemetry Anomalies</CardTitle>
           </CardHeader>
@@ -817,7 +823,7 @@ export default async function OversightPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="model-drift">
           <CardHeader>
             <CardTitle>Model Drift Tracking</CardTitle>
           </CardHeader>
@@ -972,7 +978,7 @@ export default async function OversightPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="dangerous-prompts">
         <CardHeader>
           <CardTitle>Dangerous Prompt Alerts</CardTitle>
         </CardHeader>
@@ -1020,7 +1026,7 @@ export default async function OversightPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="exposure">
         <CardHeader>
           <CardTitle>Restricted-Data Exposure Monitoring</CardTitle>
         </CardHeader>
