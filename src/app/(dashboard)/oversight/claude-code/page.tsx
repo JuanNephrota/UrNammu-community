@@ -16,12 +16,24 @@ interface ToolActions {
   [tool: string]: { accepted?: number; rejected?: number };
 }
 
+interface ModelBreakdownEntry {
+  model: string;
+  tokens: {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_creation?: number;
+  };
+  estimated_cost?: { amount?: number; currency?: string };
+}
+
 interface BucketMetadata {
   bucket_type?: "summary" | "model";
   core_metrics?: CoreMetrics;
   tool_actions?: ToolActions;
   terminal_type?: string;
   estimated_cost_cents?: number;
+  model_breakdown?: ModelBreakdownEntry[];
 }
 
 function getSevenDaysAgo() {
@@ -67,6 +79,9 @@ export default async function ClaudeCodePage() {
   let totalPRs = 0;
   let totalToolAccepted = 0;
   let totalToolRejected = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheTokens = 0;
 
   // Per-user aggregation
   const userMap = new Map<string, {
@@ -78,6 +93,7 @@ export default async function ClaudeCodePage() {
     prs: number;
     inputTokens: number;
     outputTokens: number;
+    cacheTokens: number;
     toolAccepted: number;
     toolRejected: number;
     cost: number;
@@ -100,6 +116,18 @@ export default async function ClaudeCodePage() {
     const costCents = meta?.estimated_cost_cents ?? 0;
     const costDollars = costCents / 100;
 
+    // Extract token totals from model_breakdown metadata (the UsageBucket
+    // columns are intentionally left at 0 to avoid double-counting with the
+    // regular Anthropic usage sync — tokens live in metadata only here).
+    let bucketInput = 0;
+    let bucketOutput = 0;
+    let bucketCache = 0;
+    for (const mb of meta?.model_breakdown ?? []) {
+      bucketInput += mb.tokens?.input ?? 0;
+      bucketOutput += mb.tokens?.output ?? 0;
+      bucketCache += (mb.tokens?.cache_read ?? 0) + (mb.tokens?.cache_creation ?? 0);
+    }
+
     let toolAccepted = 0;
     let toolRejected = 0;
     if (ta) {
@@ -116,6 +144,9 @@ export default async function ClaudeCodePage() {
     totalPRs += prs;
     totalToolAccepted += toolAccepted;
     totalToolRejected += toolRejected;
+    totalInputTokens += bucketInput;
+    totalOutputTokens += bucketOutput;
+    totalCacheTokens += bucketCache;
     totalCost += costDollars;
 
     const existing = userMap.get(userId) ?? {
@@ -127,6 +158,7 @@ export default async function ClaudeCodePage() {
       prs: 0,
       inputTokens: 0,
       outputTokens: 0,
+      cacheTokens: 0,
       toolAccepted: 0,
       toolRejected: 0,
       cost: 0,
@@ -137,6 +169,9 @@ export default async function ClaudeCodePage() {
     existing.linesRemoved += linesRemoved;
     existing.commits += commits;
     existing.prs += prs;
+    existing.inputTokens += bucketInput;
+    existing.outputTokens += bucketOutput;
+    existing.cacheTokens += bucketCache;
     existing.toolAccepted += toolAccepted;
     existing.toolRejected += toolRejected;
     existing.cost += costDollars;
@@ -199,7 +234,21 @@ export default async function ClaudeCodePage() {
         <StatCard title="Est. Cost" value={`$${totalCost.toFixed(2)}`} iconName="DollarSign" variant="warning" />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">Token Volume</p>
+            <p className="text-2xl font-bold tabular-nums mt-1" style={{ fontFamily: "var(--font-display)" }}>
+              {((totalInputTokens + totalOutputTokens) / 1000).toFixed(0)}k
+            </p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              {(totalInputTokens / 1000).toFixed(0)}k in / {(totalOutputTokens / 1000).toFixed(0)}k out
+              {totalCacheTokens > 0 && (
+                <span className="text-[var(--text-faint)]"> + {(totalCacheTokens / 1000).toFixed(0)}k cached</span>
+              )}
+            </p>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">Lines Removed</p>
@@ -264,6 +313,9 @@ export default async function ClaudeCodePage() {
                         </td>
                         <td className="px-3 py-3 tabular-nums text-[var(--text-muted)]">
                           {((u.inputTokens + u.outputTokens) / 1000).toFixed(0)}k
+                          {u.cacheTokens > 0 && (
+                            <span className="text-[var(--text-faint)]"> +{(u.cacheTokens / 1000).toFixed(0)}k</span>
+                          )}
                         </td>
                         <td className="px-3 py-3 tabular-nums font-medium">${u.cost.toFixed(2)}</td>
                       </tr>
