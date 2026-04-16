@@ -1,7 +1,10 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Pencil } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
 import { AssignPolicyDialog } from "@/components/compliance/assign-policy-dialog";
@@ -57,7 +60,14 @@ export default async function PolicyDetailPage({
 
   return (
     <div className="space-y-6">
-      <PageHeader title={policy.name} description={policy.description ?? undefined} />
+      <PageHeader title={policy.name} description={policy.description ?? undefined}>
+        <Button asChild variant="outline" size="sm" className="gap-1.5">
+          <Link href={`/compliance/policies/${policy.id}/edit`}>
+            <Pencil className="h-3.5 w-3.5" />
+            Edit Policy
+          </Link>
+        </Button>
+      </PageHeader>
 
       <div className="flex gap-2">
         <Badge variant={statusBadgeVariant(policy.status)}>{policy.status}</Badge>
