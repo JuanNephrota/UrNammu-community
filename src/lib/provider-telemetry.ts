@@ -406,21 +406,49 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       }
     }
 
-    // Process cost report (separate API endpoint in new Anthropic API)
+    // Process cost report (separate API endpoint in new Anthropic API).
+    //
+    // The cost report returns many granular line items per (model, day):
+    //   { model, cost_type, token_type, context_window, amount, ... }
+    // e.g. opus may have 6+ entries for the same day (uncached input,
+    // cache_read, cache_creation 5m/1h, output, across context windows).
+    //
+    // We aggregate these into one CostBucket row per (model, cost_type,
+    // date) because the bucket table is for rollup reporting — line-item
+    // detail is preserved in the raw ProviderRawSnapshot.
+    //
+    // IMPORTANT: `amount` is in USD (not cents). Earlier code incorrectly
+    // divided by 100, under-reporting costs by ~100×.
     for (const bucket of asArray(asRecord(costReport).data)) {
       const bucketStart = new Date(asString(bucket.starting_at) ?? startingAt);
       const bucketEnd = new Date(asString(bucket.ending_at) ?? endingAt);
       const date = bucketStart.toISOString().split("T")[0];
 
+      // Aggregate entries by (model, cost_type) to avoid dimension-key
+      // collisions where later entries silently overwrote earlier ones.
+      const costAgg = new Map<string, { model: string | null; lineItem: string; amount: number; currency: string }>();
       for (const entry of asArray(bucket.results)) {
-        // amount is in cents as a decimal string, convert to dollars
-        const amountCents = parseFloat(String(entry.amount) || "0");
-        const amount = amountCents / 100;
+        const amount = parseFloat(String(entry.amount) || "0");
         if (amount <= 0) continue;
 
         const model = asString(entry.model);
-        const lineItem = asString(entry.cost_type) ?? "messages";
-        const dimensionKey = makeDimensionKey({ model, lineItem, date });
+        const lineItem = asString(entry.cost_type) ?? "tokens";
+        const aggKey = `${model ?? ""}|${lineItem}`;
+        const existing = costAgg.get(aggKey);
+        if (existing) {
+          existing.amount += amount;
+        } else {
+          costAgg.set(aggKey, {
+            model,
+            lineItem,
+            amount,
+            currency: asString(entry.currency) ?? "usd",
+          });
+        }
+      }
+
+      for (const agg of costAgg.values()) {
+        const dimensionKey = makeDimensionKey({ model: agg.model, lineItem: agg.lineItem, date });
 
         await prisma.costBucket.upsert({
           where: {
@@ -433,11 +461,10 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             },
           },
           update: {
-            amount,
-            currency: asString(entry.currency) ?? "usd",
-            model,
-            lineItem,
-            metadata: toJsonValue(entry),
+            amount: agg.amount,
+            currency: agg.currency,
+            model: agg.model,
+            lineItem: agg.lineItem,
             syncRunId: syncRun.id,
           },
           create: {
@@ -446,11 +473,10 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             bucketEnd,
             granularity: "day",
             dimensionKey,
-            amount,
-            currency: asString(entry.currency) ?? "usd",
-            model,
-            lineItem,
-            metadata: toJsonValue(entry),
+            amount: agg.amount,
+            currency: agg.currency,
+            model: agg.model,
+            lineItem: agg.lineItem,
             syncRunId: syncRun.id,
           },
         });
