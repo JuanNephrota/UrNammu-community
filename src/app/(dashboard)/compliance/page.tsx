@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, Shield } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { parseEnforcementMode } from "@/lib/settings";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
+import { formatDateTime } from "@/lib/utils";
 
 export default async function CompliancePage() {
   const [policies, assignments, frameworks, activeExceptions] = await Promise.all([
@@ -155,19 +157,111 @@ export default async function CompliancePage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Audit Trail</span>
-            <Link href="/compliance/audit-trail">
-              <Button variant="outline" size="sm">View All</Button>
-            </Link>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <AuditTrailPreview />
-        </CardContent>
-      </Card>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-[var(--accent)]" />
+                Policy Denials
+              </span>
+              <Link href="/compliance/denials">
+                <Button variant="outline" size="sm">View All</Button>
+              </Link>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PolicyDenialsPreview />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>Audit Trail</span>
+              <Link href="/compliance/audit-trail">
+                <Button variant="outline" size="sm">View All</Button>
+              </Link>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AuditTrailPreview />
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+async function PolicyDenialsPreview() {
+  const [recent, modeSetting] = await Promise.all([
+    prisma.policyDenial.findMany({
+      take: 5,
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
+  ]);
+
+  const mode = parseEnforcementMode(modeSetting?.value);
+
+  if (recent.length === 0) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-[var(--text-muted)]">
+          {mode === "off"
+            ? "Enforcement is off — no denials are being recorded."
+            : "No denials yet."}
+        </p>
+        <p className="text-xs text-[var(--text-faint)]">
+          Current mode: <span className="font-mono">{mode}</span>
+        </p>
+      </div>
+    );
+  }
+
+  const systemIds = Array.from(
+    new Set(recent.map((d) => d.aiSystemId).filter((id): id is string => !!id))
+  );
+  const systems = systemIds.length
+    ? await prisma.aISystem.findMany({
+        where: { id: { in: systemIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const systemNames = new Map(systems.map((s) => [s.id, s.name]));
+
+  return (
+    <div className="space-y-2">
+      {recent.map((denial) => (
+        <Link
+          key={denial.id}
+          href={`/compliance/denials/${denial.id}`}
+          className="flex items-center justify-between text-sm hover:underline"
+        >
+          <span className="truncate">
+            <Badge
+              variant="outline"
+              className={
+                denial.mode === "enforced"
+                  ? "mr-2 text-[var(--critical)] border-[var(--critical)]/30"
+                  : "mr-2 text-[var(--warning)] border-[var(--warning)]/30"
+              }
+            >
+              {denial.mode}
+            </Badge>
+            {denial.aiSystemId
+              ? systemNames.get(denial.aiSystemId) ?? denial.aiSystemId
+              : "—"}
+            {denial.model ? ` · ${denial.model}` : ""}
+          </span>
+          <span className="text-xs text-[var(--text-faint)] whitespace-nowrap ml-2">
+            {formatDateTime(denial.createdAt)}
+          </span>
+        </Link>
+      ))}
+      <p className="pt-2 text-xs text-[var(--text-faint)]">
+        Current mode: <span className="font-mono">{mode}</span>
+      </p>
     </div>
   );
 }

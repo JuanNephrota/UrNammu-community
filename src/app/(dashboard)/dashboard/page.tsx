@@ -17,6 +17,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
+import { parseEnforcementMode } from "@/lib/settings";
 import { isDemoModeEnabled } from "@/lib/demo-mode";
 import { ExecutivePostureChart } from "@/components/dashboard/executive-posture-chart";
 import { SegmentRiskHeatmap } from "@/components/dashboard/segment-risk-heatmap";
@@ -459,6 +460,31 @@ export default async function DashboardPage() {
     .sort((a, b) => b.recommendation.priority - a.recommendation.priority)
     .slice(0, 5);
 
+  // Policy enforcement posture — only fetch denial counts if enforcement is
+  // actually armed. When mode is "off", keep the dashboard quiet: no card,
+  // no DB hit.
+  const enforcementModeSetting = await prisma.appSetting.findUnique({
+    where: { key: "policy_enforcement_mode" },
+  });
+  const enforcementMode = parseEnforcementMode(enforcementModeSetting?.value);
+  const denialsLast7d =
+    enforcementMode === "off"
+      ? 0
+      : await prisma.policyDenial.count({
+          where: {
+            createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+          },
+        });
+  const denialsEnforced7d =
+    enforcementMode === "enforce"
+      ? await prisma.policyDenial.count({
+          where: {
+            mode: "enforced",
+            createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+          },
+        })
+      : 0;
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -483,6 +509,57 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      {enforcementMode !== "off" ? (
+        <Link
+          href="/compliance/denials"
+          className="block rounded-lg border p-4 transition-all hover:brightness-110"
+          style={{
+            borderColor:
+              enforcementMode === "enforce"
+                ? "var(--critical)"
+                : "var(--warning)",
+            backgroundColor:
+              enforcementMode === "enforce"
+                ? "color-mix(in srgb, var(--critical) 6%, var(--bg-base))"
+                : "color-mix(in srgb, var(--warning) 6%, var(--bg-base))",
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p
+                className="text-xs font-medium uppercase tracking-wide"
+                style={{
+                  color:
+                    enforcementMode === "enforce"
+                      ? "var(--critical)"
+                      : "var(--warning)",
+                }}
+              >
+                Policy Enforcement: {enforcementMode === "enforce" ? "Enforce" : "Dry run"}
+              </p>
+              <p className="mt-1 text-sm">
+                <span className="text-lg font-semibold">{denialsLast7d}</span>{" "}
+                <span className="text-[var(--text-muted)]">denials in the last 7 days</span>
+                {enforcementMode === "enforce" && denialsEnforced7d > 0 ? (
+                  <span className="text-[var(--text-muted)]">
+                    {" "}· <span className="font-semibold text-[var(--critical)]">{denialsEnforced7d}</span> blocked
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            <ArrowRight
+              className="h-4 w-4"
+              style={{
+                color:
+                  enforcementMode === "enforce"
+                    ? "var(--critical)"
+                    : "var(--warning)",
+              }}
+            />
+          </div>
+        </Link>
+      ) : null}
 
       {/* Stat Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 stagger-children">

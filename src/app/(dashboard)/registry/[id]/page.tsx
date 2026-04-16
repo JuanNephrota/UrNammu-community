@@ -38,6 +38,7 @@ import { ComplianceIssueStatusEditor } from "@/components/compliance/compliance-
 import { SystemLifecycleActions } from "@/components/registry/system-lifecycle-actions";
 import { getApprovalBlockers } from "@/lib/approval-blockers";
 import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
+import { parseEnforcementMode } from "@/lib/settings";
 import type { GovernanceReviewStage } from "@prisma/client";
 
 export default async function SystemDetailPage({
@@ -125,7 +126,8 @@ export default async function SystemDetailPage({
   });
   const now = new Date();
   const telemetryWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const [usageBuckets, costBuckets] = await Promise.all([
+  const denialsWindowStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const [usageBuckets, costBuckets, denials7d, latestDenial, enforcementModeSetting] = await Promise.all([
     prisma.usageBucket.findMany({
       where: {
         aiSystemId: system.id,
@@ -146,7 +148,17 @@ export default async function SystemDetailPage({
       orderBy: [{ bucketStart: "desc" }],
       take: 120,
     }),
+    prisma.policyDenial.count({
+      where: { aiSystemId: system.id, createdAt: { gte: denialsWindowStart } },
+    }),
+    prisma.policyDenial.findFirst({
+      where: { aiSystemId: system.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, createdAt: true, mode: true },
+    }),
+    prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
   ]);
+  const enforcementMode = parseEnforcementMode(enforcementModeSetting?.value);
   const exceptionSummaries = system.governanceExceptions.map((exception) => ({
     ...exception,
     status:
@@ -753,6 +765,36 @@ export default async function SystemDetailPage({
         </TabsContent>
 
         <TabsContent value="compliance">
+          {enforcementMode !== "off" && (denials7d > 0 || latestDenial) ? (
+            <Link
+              href={`/compliance/denials?aiSystemId=${system.id}`}
+              className="mb-4 block rounded-lg border p-3 transition-all hover:brightness-110"
+              style={{
+                borderColor:
+                  enforcementMode === "enforce"
+                    ? "var(--critical)"
+                    : "var(--warning)",
+                backgroundColor:
+                  enforcementMode === "enforce"
+                    ? "color-mix(in srgb, var(--critical) 6%, var(--bg-base))"
+                    : "color-mix(in srgb, var(--warning) 6%, var(--bg-base))",
+              }}
+            >
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <div>
+                  <span className="font-medium">
+                    {denials7d} policy{denials7d === 1 ? " denial" : " denials"} in the last 7 days
+                  </span>
+                  {latestDenial ? (
+                    <span className="ml-2 text-xs text-[var(--text-muted)]">
+                      · most recent: {latestDenial.mode}, {formatDate(latestDenial.createdAt)}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="text-xs text-[var(--text-muted)]">View all →</span>
+              </div>
+            </Link>
+          ) : null}
           <Card>
             <CardHeader className="flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm">Assigned Policies</CardTitle>
