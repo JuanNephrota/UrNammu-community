@@ -198,6 +198,16 @@ export default function ShadowAIPage() {
     setSubmitting(false);
   }
 
+  // Navigate to the full conversion form while surfacing the same
+  // "Analyzing..." banner users see for Register & Assess. The /registry/new
+  // page awaits the AI classifier server-side, so the browser sits on the
+  // Shadow AI page for a few seconds before the new page renders — without
+  // feedback the button feels unresponsive.
+  function handleConvert(id: string) {
+    setPendingRegisterId(id);
+    router.push(`/registry/new?discoveredToolId=${id}`);
+  }
+
   async function handleAction(id: string, action: string) {
     const isRegister = action === "register" || action === "register_and_assess";
     if (isRegister) setPendingRegisterId(id);
@@ -586,10 +596,13 @@ export default function ShadowAIPage() {
                         </p>
                       </div>
                       <div className="flex gap-2 shrink-0 ml-4">
-                        <Button size="sm" variant="outline" asChild>
-                          <Link href={`/registry/new?discoveredToolId=${tool.id}`}>
-                            Convert to Governed System
-                          </Link>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pendingRegisterId === tool.id}
+                          onClick={() => handleConvert(tool.id)}
+                        >
+                          {pendingRegisterId === tool.id ? "Analyzing..." : "Convert to Governed System"}
                         </Button>
                         <Button
                           size="sm"
@@ -722,10 +735,13 @@ export default function ShadowAIPage() {
                       <div className="flex items-center gap-2">
                         {!tool.linkedSystemId && tool.status === "APPROVED" && (
                           <>
-                            <Button size="sm" variant="outline" asChild>
-                              <Link href={`/registry/new?discoveredToolId=${tool.id}`}>
-                                Convert to Governed System
-                              </Link>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={pendingRegisterId === tool.id}
+                              onClick={() => handleConvert(tool.id)}
+                            >
+                              {pendingRegisterId === tool.id ? "Analyzing..." : "Convert to Governed System"}
                             </Button>
                             <Button
                               size="sm"
