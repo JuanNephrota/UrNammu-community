@@ -26,6 +26,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
 
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
+  const aiSystemId = req.headers.get("x-ai-system-id") ?? null;
 
   let bodyText: string;
   let bodyJson: Record<string, unknown>;
@@ -62,6 +63,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       cost: 0,
       flagged: true,
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+      metadata: { aiSystemId },
     });
     return { status: 502, jsonBody: { error: "Failed to reach OpenAI API" } };
   }
@@ -134,7 +136,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     cost,
     flagged,
     flagReason,
-    metadata: { latencyMs, status: openaiRes.status },
+    metadata: { aiSystemId, latencyMs, status: openaiRes.status },
   });
 
   return {

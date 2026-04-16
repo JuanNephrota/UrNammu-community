@@ -66,10 +66,14 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
     const now = params.at ?? new Date();
     const start = hourStart(now);
     const end = new Date(start.getTime() + 3_600_000);
+
+    // Include department in the dimension key so usage from different
+    // departments doesn't merge into one bucket (losing attribution).
     const dimensionKey = makeDimensionKey({
       source: "proxy",
       model: params.model,
       actor: params.userEmail ?? undefined,
+      department: params.department ?? undefined,
     });
     const syncRunId = await getOrCreateProxyRun(params.provider, start);
 
@@ -88,6 +92,14 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
         outputTokens: { increment: params.completionTokens },
         totalTokens: { increment: params.totalTokens },
         requestCount: { increment: 1 },
+        // Ensure actor fields are populated even if the first request in
+        // this hourly window was anonymous — a later identified request
+        // should still fill in the attribution.
+        ...(params.userEmail ? {
+          actorName: params.userEmail,
+          actorExternalId: params.userEmail,
+        } : {}),
+        ...(params.aiSystemId ? { aiSystemId: params.aiSystemId } : {}),
       },
       create: {
         provider: params.provider,
@@ -97,6 +109,7 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
         dimensionKey,
         model: params.model,
         actorName: params.userEmail ?? undefined,
+        actorExternalId: params.userEmail ?? undefined,
         inputTokens: params.promptTokens,
         outputTokens: params.completionTokens,
         totalTokens: params.totalTokens,

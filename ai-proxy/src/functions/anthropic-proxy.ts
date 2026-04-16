@@ -25,9 +25,11 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     return { status: 400, jsonBody: { error: "No Anthropic API key" } };
   }
 
-  // Tracking
+  // Tracking — x-ai-system-id links proxy traffic to a governed system in
+  // the registry, matching the Vercel fallback proxy's behavior.
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
+  const aiSystemId = req.headers.get("x-ai-system-id") ?? null;
 
   // Build target URL from route params
   const url = new URL(req.url);
@@ -85,6 +87,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       cost: 0,
       flagged: true,
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
+      metadata: { aiSystemId },
     }).catch((logErr) => {
       console.error("logUsage failed:", logErr);
     });
@@ -182,6 +185,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     flagged,
     flagReason,
     metadata: {
+      aiSystemId,
       latencyMs,
       status: anthropicRes.status,
       mcp: mcpResult.detected
