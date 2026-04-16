@@ -328,10 +328,27 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       for (const entry of asArray(bucket.results)) {
         const model = asString(entry.model);
         const apiKeyId = asString(entry.api_key_id);
-        const inputTokens = asNumber(entry.uncached_input_tokens);
+
+        // Token breakdown from the Anthropic usage report:
+        //   uncached_input_tokens  — standard (non-cached) input tokens
+        //   cache_read_input_tokens — tokens read from prompt cache
+        //   cache_creation.ephemeral_{5m,1h}_input_tokens — tokens used to
+        //       populate the prompt cache (billed at a premium rate)
+        //   output_tokens — model-generated output tokens
+        //
+        // inputTokens = ALL input tokens (uncached + cache reads + cache creation)
+        // so that the UsageBucket.inputTokens column reflects total input, and
+        // the individual breakdown is preserved in the metadata blob.
+        const uncachedInputTokens = asNumber(entry.uncached_input_tokens);
         const cacheReadTokens = asNumber(entry.cache_read_input_tokens);
+        const cacheCreation = asRecord(entry.cache_creation);
+        const cacheCreationTokens =
+          asNumber(cacheCreation.ephemeral_1h_input_tokens) +
+          asNumber(cacheCreation.ephemeral_5m_input_tokens);
         const outputTokens = asNumber(entry.output_tokens);
-        const totalTokens = inputTokens + cacheReadTokens + outputTokens;
+
+        const inputTokens = uncachedInputTokens + cacheReadTokens + cacheCreationTokens;
+        const totalTokens = inputTokens + outputTokens;
         const dimensionKey = makeDimensionKey({ model, apiKeyId, date });
 
         await prisma.usageBucket.upsert({

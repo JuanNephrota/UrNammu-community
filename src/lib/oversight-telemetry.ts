@@ -514,11 +514,51 @@ function matchesExpectedVendor(
   return left.includes(right) || right.includes(left);
 }
 
+/**
+ * Broad AI categories used in the AI System registry's "Model Type" field
+ * (e.g. "LLM", "Classification", "Computer Vision"). These describe the
+ * *kind* of model, not a specific model family, so comparing them against
+ * concrete model names from usage telemetry ("claude-sonnet-4-6") is
+ * meaningless and generates false-positive drift findings.
+ *
+ * When the registered modelType is one of these, we skip the model-family
+ * comparison entirely and rely on the vendor/provider check instead.
+ */
+const BROAD_MODEL_CATEGORIES = new Set([
+  "llm",
+  "large language model",
+  "classification",
+  "nlp",
+  "nlp classification",
+  "computer vision",
+  "cv",
+  "embedding",
+  "embeddings",
+  "image generation",
+  "image model",
+  "speech",
+  "speech to text",
+  "text to speech",
+  "multimodal",
+  "agent",
+  "chatbot",
+  "chat",
+  "code generation",
+  "summarization",
+  "translation",
+]);
+
 function matchesExpectedModel(
   model: string | null,
   expectedModelType: string | null | undefined
 ): boolean {
   if (!expectedModelType) return true;
+
+  // A broad category like "LLM" is not specific enough to compare against
+  // actual model names from telemetry.  Every Claude/GPT/Gemini model IS
+  // an LLM, so the check would always false-positive.
+  if (BROAD_MODEL_CATEGORIES.has(expectedModelType.trim().toLowerCase())) return true;
+
   const actualFamily = normalizeFamily(model);
   const expectedFamily = normalizeFamily(expectedModelType);
   return actualFamily === expectedFamily;

@@ -320,3 +320,97 @@ test("detects governed-system model drift from expected vendor and model family"
   assert.match(findings[0]?.reasons.join(" "), /dominant provider/i);
   assert.match(findings[0]?.reasons.join(" "), /dominant model/i);
 });
+
+test("does not flag model drift when modelType is a broad category like LLM", () => {
+  const findings = buildModelDriftFindings(
+    [
+      {
+        id: "bucket-llm",
+        provider: "anthropic",
+        bucketStart: new Date("2026-04-11T00:00:00Z"),
+        bucketEnd: new Date("2026-04-12T00:00:00Z"),
+        granularity: "day",
+        dimensionKey: "llm-check",
+        model: "claude-sonnet-4-6",
+        projectName: null,
+        projectExternalId: null,
+        actorName: null,
+        actorExternalId: null,
+        apiKeyName: null,
+        apiKeyExternalId: null,
+        inputTokens: 500,
+        outputTokens: 100,
+        totalTokens: 600,
+        requestCount: 5,
+        metadata: null,
+        syncRunId: "sync-4",
+        aiSystemId: "sys-llm",
+        createdAt: new Date("2026-04-11T01:00:00Z"),
+        aiSystem: {
+          id: "sys-llm",
+          name: "Claude Internal",
+          vendor: "Anthropic",
+          modelType: "LLM",
+          department: "Engineering",
+          status: "DEPLOYED",
+          riskLevel: "MEDIUM",
+          dataSensitivity: "INTERNAL",
+        },
+      },
+    ],
+    new Map()
+  );
+
+  // An Anthropic system registered as "LLM" using claude-sonnet-4-6 is
+  // working as intended — no drift should be reported.
+  assert.equal(findings.length, 0);
+});
+
+test("still flags vendor drift even when modelType is a broad category", () => {
+  const findings = buildModelDriftFindings(
+    [
+      {
+        id: "bucket-vendor-drift",
+        provider: "openai",
+        bucketStart: new Date("2026-04-11T00:00:00Z"),
+        bucketEnd: new Date("2026-04-12T00:00:00Z"),
+        granularity: "day",
+        dimensionKey: "vendor-drift",
+        model: "gpt-4o",
+        projectName: null,
+        projectExternalId: null,
+        actorName: null,
+        actorExternalId: null,
+        apiKeyName: null,
+        apiKeyExternalId: null,
+        inputTokens: 300,
+        outputTokens: 80,
+        totalTokens: 380,
+        requestCount: 4,
+        metadata: null,
+        syncRunId: "sync-5",
+        aiSystemId: "sys-vendor",
+        createdAt: new Date("2026-04-11T01:00:00Z"),
+        aiSystem: {
+          id: "sys-vendor",
+          name: "Claude Internal",
+          vendor: "Anthropic",
+          modelType: "LLM",
+          department: "Engineering",
+          status: "DEPLOYED",
+          riskLevel: "HIGH",
+          dataSensitivity: "INTERNAL",
+        },
+      },
+    ],
+    new Map()
+  );
+
+  // Vendor is Anthropic but usage is from OpenAI — should flag vendor drift
+  // even though modelType "LLM" is a broad category.
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.severity, "critical");
+  assert.match(findings[0]?.reasons.join(" "), /dominant provider/i);
+  // Should NOT also flag model drift since "LLM" is broad.
+  assert.equal(findings[0]?.reasons.join(" ").match(/model family/i), null);
+});
