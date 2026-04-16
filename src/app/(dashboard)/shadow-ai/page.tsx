@@ -576,50 +576,79 @@ export default function ShadowAIPage() {
               <CardContent>
                 <div className="space-y-3">
                   {discovered.map((tool) => (
-                    <div key={tool.id} className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium">{tool.toolName}</p>
-                          {(tool.detectionSource === "google_workspace" ||
-                            tool.detectionSource === "microsoft_365") && (
-                            <Badge variant="info" className="text-[9px] px-1.5">
-                              {sourceBadgeLabel(tool.detectionSource)}
-                            </Badge>
-                          )}
+                    <div key={tool.id} className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4 space-y-2">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{tool.toolName}</p>
+                            {(tool.detectionSource === "google_workspace" ||
+                              tool.detectionSource === "microsoft_365") && (
+                              <Badge variant="info" className="text-[9px] px-1.5">
+                                {sourceBadgeLabel(tool.detectionSource)}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {tool.vendor ?? "Unknown vendor"} &middot; {tool.detectedDomain ?? "—"} &middot; {tool.userCount} users
+                            {tool.department && ` · ${tool.department}`}
+                          </p>
+                          <p className="text-xs text-[var(--text-faint)] mt-1">
+                            Detected via {tool.detectionSource.replace("_", " ")} on {new Date(tool.detectedAt).toLocaleDateString()}
+                          </p>
                         </div>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          {tool.vendor ?? "Unknown vendor"} &middot; {tool.detectedDomain ?? "—"} &middot; {tool.userCount} users
-                          {tool.department && ` · ${tool.department}`}
-                        </p>
-                        <p className="text-xs text-[var(--text-faint)] mt-1">
-                          Detected via {tool.detectionSource.replace("_", " ")} on {new Date(tool.detectedAt).toLocaleDateString()}
-                        </p>
+                        <div className="flex gap-2 shrink-0 ml-4">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingRegisterId === tool.id}
+                            onClick={() => handleConvert(tool.id)}
+                          >
+                            {pendingRegisterId === tool.id ? "Analyzing..." : "Convert to Governed System"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingRegisterId === tool.id}
+                            onClick={() => handleAction(tool.id, "register_and_assess")}
+                          >
+                            <Shield className="mr-1 h-3 w-3" />
+                            {pendingRegisterId === tool.id ? "Classifying..." : "Register & Assess"}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "APPROVED")}>
+                            Approve
+                          </Button>
+                          <Button size="sm" variant="destructive" onClick={() => handleAction(tool.id, "BLOCKED")}>
+                            Block
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setDismissingId(dismissingId === tool.id ? null : tool.id);
+                              setDismissReason("");
+                            }}
+                          >
+                            Dismiss
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-2 shrink-0 ml-4">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={pendingRegisterId === tool.id}
-                          onClick={() => handleConvert(tool.id)}
-                        >
-                          {pendingRegisterId === tool.id ? "Analyzing..." : "Convert to Governed System"}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={pendingRegisterId === tool.id}
-                          onClick={() => handleAction(tool.id, "register_and_assess")}
-                        >
-                          <Shield className="mr-1 h-3 w-3" />
-                          {pendingRegisterId === tool.id ? "Classifying..." : "Register & Assess"}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => handleAction(tool.id, "APPROVED")}>
-                          Approve
-                        </Button>
-                        <Button size="sm" variant="destructive" onClick={() => handleAction(tool.id, "BLOCKED")}>
-                          Block
-                        </Button>
-                      </div>
+                      {dismissingId === tool.id && (
+                        <div className="flex items-center gap-2 pt-1">
+                          <Input
+                            value={dismissReason}
+                            onChange={(e) => setDismissReason(e.target.value)}
+                            placeholder="Reason for dismissal (e.g. false positive, approved shadow usage, not an AI tool)..."
+                            className="text-xs"
+                          />
+                          <Button
+                            size="sm"
+                            onClick={() => handleDismiss(tool.id)}
+                            disabled={!dismissReason.trim()}
+                          >
+                            Confirm
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
