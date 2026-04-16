@@ -1,9 +1,43 @@
-import type { CostBucket, DataSensitivity, UsageBucket } from "@prisma/client";
+import { Prisma, type CostBucket, type DataSensitivity, type UsageBucket } from "@prisma/client";
 
 type BucketIdentity = Pick<
   UsageBucket | CostBucket,
   "provider" | "bucketStart" | "bucketEnd" | "granularity" | "dimensionKey"
 >;
+
+/**
+ * Prisma `where` fragment that excludes proxy-written rows from aggregate
+ * totals. Proxy traffic is ALSO captured by the admin-sync API (at day
+ * granularity), so summing across all rows double-counts any call that
+ * went through the proxy. Use this filter on any query that computes
+ * totals — the admin-sync (day granularity) is the authoritative source.
+ *
+ * Proxy rows are identified by granularity="1h" AND dimensionKey containing
+ * "source=proxy". They are still queryable directly for real-time views.
+ */
+export const EXCLUDE_PROXY_DUPLICATES: Prisma.UsageBucketWhereInput = {
+  NOT: {
+    AND: [
+      { granularity: "1h" },
+      { dimensionKey: { contains: "source=proxy" } },
+    ],
+  },
+};
+
+export const EXCLUDE_PROXY_DUPLICATES_COST: Prisma.CostBucketWhereInput = {
+  NOT: {
+    AND: [
+      { granularity: "1h" },
+      { dimensionKey: { contains: "source=proxy" } },
+    ],
+  },
+};
+
+/**
+ * Raw-SQL equivalent of EXCLUDE_PROXY_DUPLICATES. Interpolate into a
+ * tagged `prisma.$queryRaw` template using `${EXCLUDE_PROXY_DUPLICATES_SQL}`.
+ */
+export const EXCLUDE_PROXY_DUPLICATES_SQL = Prisma.sql`NOT (granularity = '1h' AND "dimensionKey" LIKE '%source=proxy%')`;
 
 export type TelemetryActivityRow = {
   id: string;

@@ -5,7 +5,12 @@ import {
   ProviderPostureTable,
   type ProviderPostureRow,
 } from "@/components/oversight/provider-posture-table";
-import { buildCostLookup, getBucketIdentityKey } from "@/lib/oversight-telemetry";
+import {
+  buildCostLookup,
+  getBucketIdentityKey,
+  EXCLUDE_PROXY_DUPLICATES,
+  EXCLUDE_PROXY_DUPLICATES_COST,
+} from "@/lib/oversight-telemetry";
 
 export default async function ProviderPosturePage() {
   const now = new Date();
@@ -21,12 +26,18 @@ export default async function ProviderPosturePage() {
     alerts,
   ] = await Promise.all([
     prisma.usageBucket.findMany({
-      where: { bucketStart: { gte: thirtyDaysAgo } },
+      where: {
+        bucketStart: { gte: thirtyDaysAgo },
+        ...EXCLUDE_PROXY_DUPLICATES,
+      },
       orderBy: { bucketStart: "desc" },
       take: 500,
     }),
     prisma.costBucket.findMany({
-      where: { bucketStart: { gte: thirtyDaysAgo } },
+      where: {
+        bucketStart: { gte: thirtyDaysAgo },
+        ...EXCLUDE_PROXY_DUPLICATES_COST,
+      },
       orderBy: { bucketStart: "desc" },
       take: 500,
     }),

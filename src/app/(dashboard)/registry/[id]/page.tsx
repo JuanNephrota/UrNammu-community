@@ -12,6 +12,8 @@ import {
   buildCostLookup,
   getBucketIdentityKey,
   buildTelemetryActivityRows,
+  EXCLUDE_PROXY_DUPLICATES,
+  EXCLUDE_PROXY_DUPLICATES_COST,
 } from "@/lib/oversight-telemetry";
 import {
   getRequiredStages,
@@ -128,6 +130,7 @@ export default async function SystemDetailPage({
       where: {
         aiSystemId: system.id,
         bucketStart: { gte: telemetryWindowStart },
+        ...EXCLUDE_PROXY_DUPLICATES,
       },
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       take: 40,
@@ -138,6 +141,7 @@ export default async function SystemDetailPage({
     prisma.costBucket.findMany({
       where: {
         bucketStart: { gte: telemetryWindowStart },
+        ...EXCLUDE_PROXY_DUPLICATES_COST,
       },
       orderBy: [{ bucketStart: "desc" }],
       take: 120,

@@ -6,6 +6,8 @@ import {
   getBucketIdentityKey,
   getTelemetryAttributionLabel,
   buildTelemetryActivityRows,
+  EXCLUDE_PROXY_DUPLICATES,
+  EXCLUDE_PROXY_DUPLICATES_COST,
 } from "@/lib/oversight-telemetry";
 
 export async function GET(req: NextRequest) {
@@ -26,12 +28,16 @@ export async function GET(req: NextRequest) {
     const model = url.searchParams.get("model") || undefined;
     const project = url.searchParams.get("project") || undefined;
 
-    // Build where clauses
+    // Build where clauses. Proxy-written rows are excluded from aggregates —
+    // admin-sync captures the same traffic at day granularity, so summing
+    // both would double-count. See EXCLUDE_PROXY_DUPLICATES for details.
     const usageWhere: Record<string, unknown> = {
       bucketStart: { gte: startDate, lte: endDate },
+      ...EXCLUDE_PROXY_DUPLICATES,
     };
     const costWhere: Record<string, unknown> = {
       bucketStart: { gte: startDate, lte: endDate },
+      ...EXCLUDE_PROXY_DUPLICATES_COST,
     };
     if (provider) {
       usageWhere.provider = provider;

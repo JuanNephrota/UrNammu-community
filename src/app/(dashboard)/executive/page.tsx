@@ -13,6 +13,7 @@ import {
   computeExecutivePosture,
   type PostureMetrics,
 } from "@/lib/executive-posture";
+import { EXCLUDE_PROXY_DUPLICATES_COST } from "@/lib/oversight-telemetry";
 import { formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -72,7 +73,10 @@ async function gatherMetrics(
       },
     }),
     prisma.costBucket.findMany({
-      where: { bucketStart: { gte: periodStart, lte: periodEnd } },
+      where: {
+        bucketStart: { gte: periodStart, lte: periodEnd },
+        ...EXCLUDE_PROXY_DUPLICATES_COST,
+      },
       select: { amount: true, provider: true },
     }),
     prisma.riskAssessment.findMany({

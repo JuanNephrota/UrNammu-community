@@ -5,6 +5,8 @@ import {
   getBucketIdentityKey,
   getTelemetryAttributionLabel,
   buildTelemetryActivityRows,
+  EXCLUDE_PROXY_DUPLICATES,
+  EXCLUDE_PROXY_DUPLICATES_COST,
 } from "@/lib/oversight-telemetry";
 import { UsageDashboard } from "@/components/oversight/usage-dashboard";
 
@@ -19,8 +21,11 @@ export default async function UsageLogsPage({
 
   // Build optional where-clause filters from URL search params so the
   // initial server-rendered data matches the pre-selected filter state.
+  // Proxy-written rows are excluded — admin-sync captures the same traffic
+  // at day granularity, so summing both double-counts.
   const bucketWhere: Record<string, unknown> = {
     bucketStart: { gte: thirtyDaysAgo },
+    ...EXCLUDE_PROXY_DUPLICATES,
   };
   if (params.provider) bucketWhere.provider = params.provider;
   if (params.model) bucketWhere.model = params.model;
@@ -47,6 +52,7 @@ export default async function UsageLogsPage({
       prisma.costBucket.findMany({
         where: {
           bucketStart: { gte: thirtyDaysAgo },
+          ...EXCLUDE_PROXY_DUPLICATES_COST,
           ...(params.provider ? { provider: params.provider } : {}),
         },
         orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],

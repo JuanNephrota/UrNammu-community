@@ -20,6 +20,9 @@ import {
   buildTelemetryActivityRows,
   getTelemetryAttributionLabel,
   summarizeDataExposureFindings,
+  EXCLUDE_PROXY_DUPLICATES,
+  EXCLUDE_PROXY_DUPLICATES_COST,
+  EXCLUDE_PROXY_DUPLICATES_SQL,
 } from "@/lib/oversight-telemetry";
 import { SpendBudgetManager } from "@/components/oversight/spend-budget-manager";
 import { getTopCostDrivers, summarizeSpendBudgets } from "@/lib/spend-governance";
@@ -55,15 +58,26 @@ export default async function OversightPage() {
     openComplianceIssues,
     openRiskIssues,
   ] = await Promise.all([
-    prisma.usageBucket.count({ where: { bucketStart: { gte: thirtyDaysAgo } } }),
+    prisma.usageBucket.count({
+      where: {
+        bucketStart: { gte: thirtyDaysAgo },
+        ...EXCLUDE_PROXY_DUPLICATES,
+      },
+    }),
     prisma.usageBucket.groupBy({
       by: ["provider"],
-      where: { bucketStart: { gte: thirtyDaysAgo } },
+      where: {
+        bucketStart: { gte: thirtyDaysAgo },
+        ...EXCLUDE_PROXY_DUPLICATES,
+      },
       _sum: { totalTokens: true, cacheReadTokens: true, cacheCreationTokens: true },
       _count: true,
     }),
     prisma.usageBucket.findMany({
-      where: { bucketStart: { gte: thirtyDaysAgo } },
+      where: {
+        bucketStart: { gte: thirtyDaysAgo },
+        ...EXCLUDE_PROXY_DUPLICATES,
+      },
       take: 500,
       orderBy: [{ bucketStart: "desc" }, { provider: "asc" }],
       include: {
@@ -89,6 +103,7 @@ export default async function OversightPage() {
         0::float as cost
       FROM "UsageBucket"
       WHERE "bucketStart" > NOW() - INTERVAL '30 days'
+        AND ${EXCLUDE_PROXY_DUPLICATES_SQL}
       GROUP BY DATE("bucketStart")
       ORDER BY date ASC
     `,
@@ -104,10 +119,12 @@ export default async function OversightPage() {
         COUNT(DISTINCT "aiSystemId")::int AS attributed_systems
       FROM "UsageBucket"
       WHERE "bucketStart" > NOW() - INTERVAL '30 days'
+        AND ${EXCLUDE_PROXY_DUPLICATES_SQL}
     `,
     prisma.costBucket.findMany({
       where: {
         bucketStart: { gte: thirtyDaysAgo },
+        ...EXCLUDE_PROXY_DUPLICATES_COST,
       },
       orderBy: { bucketStart: "desc" },
       take: 200,
