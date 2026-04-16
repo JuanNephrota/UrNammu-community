@@ -319,8 +319,30 @@ export default function ShadowAIPage() {
     }
   }
 
+  const pendingTool = pendingRegisterId
+    ? tools.find((t) => t.id === pendingRegisterId) ?? null
+    : null;
+
   return (
     <div className="space-y-6">
+      {pendingTool && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-[var(--accent)]/40 bg-[var(--bg-surface)] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
+        >
+          <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-[var(--accent)]" />
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">
+              Analyzing {pendingTool.toolName}
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">
+              The AI assistant is inferring use case, data inputs &amp; outputs,
+              risk level, and sensitivity. This usually takes a few seconds.
+            </p>
+          </div>
+        </div>
+      )}
       <PageHeader
         title="Shadow AI Discovery"
         description="Detect and manage unauthorized AI tool usage"
