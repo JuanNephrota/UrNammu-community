@@ -47,6 +47,9 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.GOVERNANCE_ESCALATION_OVERDUE_DAYS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
     proxy_secret: process.env.PROXY_SECRET,
+    claude_code_telemetry_secret: process.env.CLAUDE_CODE_TELEMETRY_SECRET,
+    claude_code_telemetry_retention_days:
+      process.env.CLAUDE_CODE_TELEMETRY_RETENTION_DAYS,
     platform_url: process.env.NEXTAUTH_URL,
     enable_local_auth: process.env.ENABLE_LOCAL_AUTH,
     enable_dev_login: process.env.ENABLE_DEV_LOGIN,

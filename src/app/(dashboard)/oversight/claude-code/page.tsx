@@ -40,8 +40,76 @@ function getSevenDaysAgo() {
   return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 }
 
+function getSixtyMinutesAgo() {
+  return new Date(Date.now() - 60 * 60 * 1000);
+}
+
+interface LiveSummary {
+  dataPoints: number;
+  activeSessions: number;
+  activeUsers: number;
+  totalCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  latestReceivedAt: Date | null;
+}
+
+async function loadLiveTelemetry(): Promise<LiveSummary> {
+  const sixtyMinutesAgo = getSixtyMinutesAgo();
+  // Cheap aggregate — one pass, no row fetching. Fields come from the
+  // ClaudeCodeMetric table populated by the ACA OTel collector gateway.
+  const rows = await prisma.claudeCodeMetric.findMany({
+    where: { timestamp: { gte: sixtyMinutesAgo } },
+    select: {
+      metricName: true,
+      value: true,
+      sessionId: true,
+      userEmail: true,
+      tokenType: true,
+      receivedAt: true,
+    },
+  });
+
+  const sessions = new Set<string>();
+  const users = new Set<string>();
+  let totalCost = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheTokens = 0;
+  let latestReceivedAt: Date | null = null;
+
+  for (const r of rows) {
+    if (r.sessionId) sessions.add(r.sessionId);
+    if (r.userEmail) users.add(r.userEmail);
+    if (r.metricName === "claude_code.cost.usage") totalCost += r.value;
+    if (r.metricName === "claude_code.token.usage") {
+      if (r.tokenType === "input") inputTokens += r.value;
+      else if (r.tokenType === "output") outputTokens += r.value;
+      else if (r.tokenType === "cacheRead" || r.tokenType === "cacheCreation") {
+        cacheTokens += r.value;
+      }
+    }
+    if (!latestReceivedAt || r.receivedAt > latestReceivedAt) {
+      latestReceivedAt = r.receivedAt;
+    }
+  }
+
+  return {
+    dataPoints: rows.length,
+    activeSessions: sessions.size,
+    activeUsers: users.size,
+    totalCost,
+    inputTokens,
+    outputTokens,
+    cacheTokens,
+    latestReceivedAt,
+  };
+}
+
 export default async function ClaudeCodePage() {
   const sevenDaysAgo = getSevenDaysAgo();
+  const live = await loadLiveTelemetry();
 
   const [usageBuckets, latestSyncRun, latestFailedRun] = await Promise.all([
     prisma.usageBucket.findMany({
@@ -188,6 +256,103 @@ export default async function ClaudeCodePage() {
         title="Claude Code Analytics"
         description="Per-user developer productivity and usage metrics from Claude Code"
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                live.dataPoints > 0 ? "bg-[var(--success)]" : "bg-[var(--text-faint)]"
+              }`}
+            />
+            Live telemetry (last 60 minutes)
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {live.dataPoints === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">
+              No OTel data points received in the last hour. Check the collector
+              gateway at <code>cc-otel-app</code> in Azure Container Apps, or the
+              client env on developer machines (<code>OTEL_EXPORTER_OTLP_ENDPOINT</code>,
+              bearer token).
+            </p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Data points
+                </p>
+                <p
+                  className="text-2xl font-bold tabular-nums mt-1"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {live.dataPoints.toLocaleString("en-US")}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Active sessions
+                </p>
+                <p
+                  className="text-2xl font-bold tabular-nums mt-1"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {live.activeSessions}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Active users
+                </p>
+                <p
+                  className="text-2xl font-bold tabular-nums mt-1"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {live.activeUsers}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Tokens
+                </p>
+                <p
+                  className="text-2xl font-bold tabular-nums mt-1"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {((live.inputTokens + live.outputTokens) / 1000).toFixed(0)}k
+                </p>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">
+                  {(live.inputTokens / 1000).toFixed(0)}k in /{" "}
+                  {(live.outputTokens / 1000).toFixed(0)}k out
+                  {live.cacheTokens > 0 && (
+                    <span className="text-[var(--text-faint)]">
+                      {" "}
+                      +{(live.cacheTokens / 1000).toFixed(0)}k cached
+                    </span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                  Est. cost
+                </p>
+                <p
+                  className="text-2xl font-bold tabular-nums mt-1"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  ${live.totalCost.toFixed(2)}
+                </p>
+              </div>
+            </div>
+          )}
+          {live.latestReceivedAt && (
+            <p className="mt-4 text-xs text-[var(--text-faint)]">
+              Last data point received{" "}
+              {live.latestReceivedAt.toLocaleString("en-US")}
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {latestSyncRun?.completedAt && (() => {
         const meta = latestSyncRun.metadata as Record<string, unknown> | null;

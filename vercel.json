@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/forge-skills-sync",
       "schedule": "17 * * * *"
+    },
+    {
+      "path": "/api/cron/prune-claude-code-metrics",
+      "schedule": "23 3 * * *"
     }
   ]
 }

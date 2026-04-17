@@ -987,6 +987,56 @@ model ForgeSyncRun {
   @@index([startedAt])
 }
 
+// ─── Claude Code Telemetry (OTel) ──────────────────────
+// One row per OTLP data point pushed by the Claude Code clients through the
+// Azure Container Apps OTel Collector. Complementary to the daily Admin-API
+// pull that populates UsageBucket(provider="claude_code") — this table holds
+// the live, fine-grained signal (per-session, per-minute) used for the
+// "Live telemetry" panel on the Claude Code Oversight page. Metrics-only;
+// prompt content is never written here (the Collector filter pipeline drops
+// non-metric signals at the gateway).
+model ClaudeCodeMetric {
+  id             String   @id @default(cuid())
+  // OTel data-point timestamp (wall-clock from the client)
+  timestamp      DateTime
+  // When UrNammu accepted the payload (server clock — for latency/debug)
+  receivedAt     DateTime @default(now())
+
+  // Identity (resource attributes)
+  userId         String?
+  userEmail      String?
+  sessionId      String?
+  organizationId String?
+  accountUuid    String?
+
+  // Environment
+  appVersion     String?
+  hostType       String?
+  osType         String?
+  osVersion      String?
+  terminalType   String?
+
+  // Metric
+  metricName     String
+  value          Float
+  unit           String?
+
+  // Lifted common attributes (null when not applicable for the metric)
+  model          String?
+  tokenType      String?
+  tool           String?
+  decision       String?
+  linesType      String?
+
+  // Full attribute bag (resource + data-point attrs, merged)
+  attributes     Json?
+
+  @@index([timestamp])
+  @@index([metricName, timestamp])
+  @@index([userEmail, timestamp])
+  @@index([sessionId, timestamp])
+}
+
 // ─── Proxy Health Snapshots ────────────────────────────
 // One row per sync, holding the Azure Monitor metric values captured for the
 // Nammu AI proxy function app over a specific window. Drives the /proxy-health
