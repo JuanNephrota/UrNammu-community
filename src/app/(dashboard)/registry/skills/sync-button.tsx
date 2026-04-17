@@ -28,9 +28,14 @@ export function SyncButton({ configured }: Props) {
       if (!res.ok) {
         setMessage(`Sync failed: ${body.errorMessage ?? body.error ?? res.statusText}`);
       } else {
-        setMessage(
-          `Synced ${body.skillsFetched}: ${body.skillsCreated} new, ${body.skillsUpdated} updated.`
-        );
+        const parts = [
+          `Synced ${body.skillsFetched}`,
+          `${body.skillsCreated} new`,
+          `${body.skillsUpdated} updated`,
+        ];
+        if ((body.agentsLinked ?? 0) > 0) parts.push(`${body.agentsLinked} agent(s) created`);
+        if ((body.systemsLinked ?? 0) > 0) parts.push(`${body.systemsLinked} system(s) created`);
+        setMessage(parts.join(" · ") + ".");
         start(() => router.refresh());
       }
     } catch (err) {

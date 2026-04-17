@@ -96,6 +96,7 @@ export default async function AISkillsPage({
         take: PAGE_SIZE,
         include: {
           linkedSystem: { select: { id: true, name: true } },
+          linkedAgent: { select: { id: true, name: true } },
         },
       }),
       prisma.aISkill.count({ where }),
@@ -200,7 +201,7 @@ export default async function AISkillsPage({
                     <th className="py-2 pr-4 font-medium">Category</th>
                     <th className="py-2 pr-4 font-medium">Author</th>
                     <th className="py-2 pr-4 font-medium">Department</th>
-                    <th className="py-2 pr-4 font-medium">Linked System</th>
+                    <th className="py-2 pr-4 font-medium">Linked</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium">Updated</th>
                   </tr>
@@ -232,10 +233,19 @@ export default async function AISkillsPage({
                         {skill.departmentName ?? "—"}
                       </td>
                       <td className="py-2 pr-4 text-xs">
-                        {skill.linkedSystem ? (
+                        {skill.linkedAgent ? (
+                          <Link
+                            href={`/agents/${skill.linkedAgent.id}`}
+                            className="text-[var(--accent)] hover:underline"
+                            title="AI Agent"
+                          >
+                            {skill.linkedAgent.name}
+                          </Link>
+                        ) : skill.linkedSystem ? (
                           <Link
                             href={`/registry/${skill.linkedSystem.id}`}
                             className="text-[var(--accent)] hover:underline"
+                            title="AI System"
                           >
                             {skill.linkedSystem.name}
                           </Link>

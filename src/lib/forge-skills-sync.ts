@@ -18,6 +18,7 @@ import {
   listForgeSkills,
   loadForgeConfig,
 } from "./forge-skills-client";
+import { promoteSkill } from "./forge-skills-promotion";
 
 export type SyncOptions = {
   trigger: "manual" | "cron";
@@ -31,6 +32,8 @@ export type SyncResult = {
   skillsFetched: number;
   skillsCreated: number;
   skillsUpdated: number;
+  agentsLinked: number;
+  systemsLinked: number;
   errorMessage?: string;
 };
 
@@ -90,6 +93,8 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
   let fetched = 0;
   let created = 0;
   let updated = 0;
+  let agentsLinked = 0;
+  let systemsLinked = 0;
   let highestUpdatedAt: Date | null = since ? new Date(since) : null;
 
   try {
@@ -103,23 +108,37 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
       });
       for (const item of body.items) {
         fetched++;
-        const existing = await prisma.aISkill.findUnique({
+        const row = toSkillRow(item);
+        // Upsert + fetch back in one round trip — we need the final row
+        // (with linked*Id) to feed promotion.
+        const before = await prisma.aISkill.findUnique({
           where: { forgeId: item.id },
           select: { id: true },
         });
-        const row = toSkillRow(item);
-        if (existing) {
-          await prisma.aISkill.update({
-            where: { forgeId: item.id },
-            data: row,
-          });
-          updated++;
-        } else {
-          await prisma.aISkill.create({
-            data: { forgeId: item.id, ...row },
-          });
-          created++;
+        const saved = await prisma.aISkill.upsert({
+          where: { forgeId: item.id },
+          create: { forgeId: item.id, ...row },
+          update: row,
+        });
+        if (before) updated++;
+        else created++;
+
+        // Auto-promote into AIAgent / AISystem when contentType matches and
+        // the skill isn't already linked. Idempotent — safe to re-run on
+        // every sync; no-op when already linked.
+        try {
+          const result = await promoteSkill(saved);
+          if (result.action === "linked_agent") agentsLinked++;
+          else if (result.action === "linked_system") systemsLinked++;
+        } catch (promoteErr) {
+          // Don't fail the whole sync if a single promotion errors —
+          // record and move on.
+          console.error(
+            `promoteSkill failed for ${item.id}:`,
+            promoteErr instanceof Error ? promoteErr.message : promoteErr
+          );
         }
+
         const ts = row.forgeUpdatedAt as Date;
         if (!highestUpdatedAt || ts > highestUpdatedAt) {
           highestUpdatedAt = ts;
@@ -155,6 +174,8 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
       skillsFetched: fetched,
       skillsCreated: created,
       skillsUpdated: updated,
+      agentsLinked,
+      systemsLinked,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -180,6 +201,8 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
       skillsFetched: fetched,
       skillsCreated: created,
       skillsUpdated: updated,
+      agentsLinked,
+      systemsLinked,
       errorMessage: detail,
     };
   }

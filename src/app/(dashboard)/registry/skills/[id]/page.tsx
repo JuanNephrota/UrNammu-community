@@ -19,6 +19,7 @@ export default async function AISkillDetailPage({
     where: { id },
     include: {
       linkedSystem: { select: { id: true, name: true } },
+      linkedAgent: { select: { id: true, name: true } },
     },
   });
   if (!skill) notFound();
@@ -108,27 +109,49 @@ export default async function AISkillDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Linked governed system</CardTitle>
+          <CardTitle>Governed linkage</CardTitle>
+          <p className="text-xs text-[var(--text-muted)]">
+            Auto-promoted on sync based on Forge <code>content_type</code>:{" "}
+            <code>agent</code> → AI Agents registry;{" "}
+            <code>app</code> / <code>agent-system</code> → AI Systems registry.
+          </p>
         </CardHeader>
-        <CardContent className="text-sm">
-          {skill.linkedSystem ? (
-            <div className="flex items-center justify-between">
-              <Link
-                href={`/registry/${skill.linkedSystem.id}`}
-                className="text-[var(--accent)] hover:underline"
-              >
-                {skill.linkedSystem.name}
-              </Link>
-              <span className="text-xs text-[var(--text-muted)]">
-                Governance, risk, and compliance attached via the AI System registry.
-              </span>
+        <CardContent className="text-sm space-y-2">
+          {skill.linkedAgent ? (
+            <div className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                  Linked AI Agent
+                </p>
+                <Link
+                  href={`/agents/${skill.linkedAgent.id}`}
+                  className="font-medium text-[var(--accent)] hover:underline"
+                >
+                  {skill.linkedAgent.name}
+                </Link>
+              </div>
             </div>
-          ) : (
+          ) : null}
+          {skill.linkedSystem ? (
+            <div className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                  Linked AI System
+                </p>
+                <Link
+                  href={`/registry/${skill.linkedSystem.id}`}
+                  className="font-medium text-[var(--accent)] hover:underline"
+                >
+                  {skill.linkedSystem.name}
+                </Link>
+              </div>
+            </div>
+          ) : null}
+          {!skill.linkedAgent && !skill.linkedSystem ? (
             <p className="text-[var(--text-muted)]">
-              Not linked to a governed AI System. Promotion flow coming soon — for now, link
-              by editing a system in the registry and referencing this skill&apos;s Forge ID.
+              This skill&apos;s <code>content_type</code> ({skill.contentType}) isn&apos;t auto-promoted. Catalog entry only.
             </p>
-          )}
+          ) : null}
         </CardContent>
       </Card>
 

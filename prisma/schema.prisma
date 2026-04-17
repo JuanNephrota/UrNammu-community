@@ -291,8 +291,9 @@ model AIAgent {
   status              AISystemStatus @default(DRAFT)
   department          String?
 
-  auditLogs   AuditLog[]        @relation("AgentAuditLogs")
-  riskReviews AgentRiskReview[]
+  auditLogs    AuditLog[]        @relation("AgentAuditLogs")
+  riskReviews  AgentRiskReview[]
+  linkedSkills AISkill[]         @relation("AIAgentLinkedSkills")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -952,6 +953,8 @@ model AISkill {
 
   linkedSystem           AISystem? @relation("AISystemLinkedSkills", fields: [linkedSystemId], references: [id], onDelete: SetNull)
   linkedSystemId         String?
+  linkedAgent            AIAgent?  @relation("AIAgentLinkedSkills", fields: [linkedAgentId], references: [id], onDelete: SetNull)
+  linkedAgentId          String?
 
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
@@ -959,6 +962,7 @@ model AISkill {
   @@index([contentType, status])
   @@index([forgeUpdatedAt])
   @@index([linkedSystemId])
+  @@index([linkedAgentId])
 }
 
 model ForgeSyncRun {
