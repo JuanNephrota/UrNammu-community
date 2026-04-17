@@ -85,7 +85,7 @@ export function UsageDashboard({
   const [data, setData] = useState<UsageApiResponse>(initialData);
   const [filters, setFilters] = useState<UsageFilters>(initialFilters);
   const [loading, setLoading] = useState(false);
-  const [includeCached, setIncludeCached] = useState(false);
+  const [includeCached, setIncludeCached] = useState(true);
 
   const fetchData = useCallback(async (newFilters: UsageFilters) => {
     setFilters(newFilters);
