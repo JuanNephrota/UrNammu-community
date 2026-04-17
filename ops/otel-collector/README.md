@@ -36,47 +36,68 @@ Vercel Postgres  (ClaudeCodeMetric)
 ## Deploy
 
 Prereqs: Bicep CLI (`az bicep install`), an Azure subscription, and the
-`certifid-ai-governance` resource group (or change it below).
+`certifid-ai-governance` resource group.
+
+The Bicep template separates *infrastructure* from *secret values*. Secret
+rotation is handled by `rotate-secrets.sh` — redeploys of the infra
+template preserve existing bearer tokens via `listSecrets()`, so you don't
+need to know the current values when you change config/image/scale.
+
+### First-ever deploy (one-time bootstrap)
 
 ```bash
-# Pick two fresh tokens (any high-entropy string)
 INGEST=$(openssl rand -hex 32)
 FORWARD=$(openssl rand -hex 32)
 
-# Store FORWARD on UrNammu first — either as a Vercel env var
+# Store FORWARD on UrNammu FIRST — it must accept the token before the
+# collector starts presenting it, otherwise forwards 401 in the gap.
 #   vercel env add CLAUDE_CODE_TELEMETRY_SECRET production
-# or via Settings in the app (writes to AppSetting).
+#   vercel --prod --yes
 
 az deployment group create \
   --resource-group certifid-ai-governance \
-  --template-file ops/otel-collector/deploy.bicep \
+  --template-file ops/otel-collector/deploy-infra.bicep \
   --parameters \
+      isFirstDeploy=true \
       ingestBearerToken="$INGEST" \
       forwardBearerToken="$FORWARD" \
-      urnammuTelemetryUrl="https://<your-urnammu>.vercel.app/api/telemetry/claude-code"
+      urnammuTelemetryUrl="https://nammu.certifid.com/api/telemetry/claude-code"
 
 # Grab the collector URL from the deployment output
 COLLECTOR_URL=$(az deployment group show \
   --resource-group certifid-ai-governance \
-  --name deploy \
+  --name deploy-infra \
   --query properties.outputs.ingestEndpoint.value -o tsv)
 
 echo "Collector: $COLLECTOR_URL"
-echo "Hand devs the INGEST token: $INGEST"
+echo "Hand devs the INGEST token (distribute via managed-settings.json): $INGEST"
 ```
 
-Token rotation:
+### Redeploy (config change, image bump, scaling, etc.)
+
+Leave `isFirstDeploy` off and omit the token params. The template reads
+current secret values via `listSecrets()` and preserves them.
 
 ```bash
-NEW=$(openssl rand -hex 32)
-az containerapp secret set \
+az deployment group create \
   --resource-group certifid-ai-governance \
-  --name cc-otel-app \
-  --secrets ingest-bearer-token=$NEW
-az containerapp revision restart \
-  --resource-group certifid-ai-governance \
-  --name cc-otel-app
+  --template-file ops/otel-collector/deploy-infra.bicep \
+  --parameters urnammuTelemetryUrl="https://nammu.certifid.com/api/telemetry/claude-code"
 ```
+
+### Rotate secrets (no Bicep needed)
+
+```bash
+cd ops/otel-collector
+./rotate-secrets.sh status           # list secret names
+./rotate-secrets.sh rotate-ingest    # generates + sets a fresh token
+./rotate-secrets.sh rotate-forward   # coordinates with UrNammu via a prompt
+./rotate-secrets.sh rotate-all       # both, atomically
+```
+
+The `rotate-forward` / `rotate-all` flows prompt you to update Vercel
+**first** and confirm before rotating the collector — that avoids a 401
+window where the collector presents a new token UrNammu doesn't accept yet.
 
 ## Client setup (org rollout via MDM)
 
@@ -159,9 +180,13 @@ which is what the UI filters on — not `receivedAt`.
 ## Files
 
 - `config.yaml` — reference copy of the Collector config (the deployed one
-  is embedded inside `deploy.bicep` as a variable; keep them in sync).
-- `deploy.bicep` — Azure Container Apps deployment (Log Analytics +
-  Container Apps Env + Container App).
+  is embedded inside `deploy-infra.bicep` as a variable; keep them in sync).
+- `deploy-infra.bicep` — Azure Container Apps deployment (Log Analytics +
+  Container Apps Env + Container App). Preserves existing secret values
+  via `listSecrets()` on redeploys; pass `isFirstDeploy=true` only on the
+  first-ever deploy.
+- `rotate-secrets.sh` — rotates ACA bearer tokens via `az containerapp
+  secret set`. Standalone — no Bicep involvement.
 - `managed-settings.json` — template for Claude Code org-wide enforced
   config. Copy to the MDM-managed path listed above and fill in
   `<COLLECTOR_FQDN>` + `<INGEST_TOKEN>`.
