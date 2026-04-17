@@ -169,6 +169,20 @@ export function parseEnforcementMode(value: string | null | undefined): PolicyEn
   return POLICY_ENFORCEMENT_MODE_DEFAULT;
 }
 
+// CertifID Forge Security Integration API — powers the AI Skills registry.
+// API key format: `forge_sec_<32 hex>`. Retrieve locally with:
+//   az keyvault secret show --vault-name certifid-forge-kv \
+//     --name forge-integration-key-peter-prod --query value -o tsv
+export const FORGE_SETTINGS_KEYS = {
+  API_KEY: "forge_integration_key",
+  BASE_URL: "forge_base_url",
+  SYNC_ENABLED: "forge_sync_enabled",
+  LAST_SINCE: "forge_skills_last_since", // ISO timestamp — highest forgeUpdatedAt
+} as const;
+
+export const FORGE_DEFAULT_BASE_URL =
+  "https://forge.certifid.com/api/integrations/security/v1";
+
 // Azure Monitor access for the proxy-health sync. Service-principal values
 // are only needed when the host doesn't have ambient Azure CLI credentials
 // (i.e., production deploys). Locally, az login covers it.

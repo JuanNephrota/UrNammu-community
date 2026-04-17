@@ -3,6 +3,10 @@
     {
       "path": "/api/scheduler/maintenance",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/forge-skills-sync",
+      "schedule": "17 * * * *"
     }
   ]
 }

@@ -221,6 +221,7 @@ model User {
   falsePositiveAlerts Alert[]          @relation("AlertFalsePositiveBy")
   promptRiskExceptions PromptRiskException[] @relation("PromptRiskExceptionCreator")
   dismissedCandidates DismissedCandidate[] @relation("DismissedCandidateBy")
+  forgeSyncRuns       ForgeSyncRun[] @relation("ForgeSyncRunTriggeredBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -262,6 +263,7 @@ model AISystem {
   alerts             Alert[]
   investigations     Investigation[]
   agents             AIAgent[]
+  linkedSkills       AISkill[]        @relation("AISystemLinkedSkills")
   auditLogs          AuditLog[]       @relation("SystemAuditLogs")
   usageBuckets       UsageBucket[]
 
@@ -908,6 +910,74 @@ model PromptRiskRule {
   updatedAt DateTime @updatedAt
 
   @@index([enabled])
+}
+
+// ─── Forge AI Skills Registry ──────────────────────────
+// Mirror of CertifID Forge's published "skills" (agents, apps, prompts)
+// pulled from the Security Integration API. Catalog-only — skills aren't
+// directly governed (no RiskAssessment / PolicyAssignment); use
+// linkedSystemId to promote a skill into the governed AISystem registry.
+model AISkill {
+  id                     String    @id @default(cuid())
+  forgeId                String    @unique
+  name                   String
+  contentType            String
+  fileType               String?
+  fileName               String?
+  fileSizeBytes          Int?
+  sha256                 String?
+  status                 String    @default("published")
+  appUrl                 String?
+  tags                   String[]
+  currentVersion         Int       @default(1)
+
+  categoryForgeId        String?
+  categoryName           String?
+  departmentForgeId      String?
+  departmentName         String?
+
+  authorForgeId          String?
+  authorName             String?
+  authorDepartmentName   String?
+
+  isFeaturedGlobal       Boolean   @default(false)
+  upvoteCount            Int       @default(0)
+  downloadCount          Int       @default(0)
+
+  forgeCreatedAt         DateTime
+  forgeUpdatedAt         DateTime
+
+  syncedAt               DateTime  @default(now())
+  retiredAt              DateTime?
+
+  linkedSystem           AISystem? @relation("AISystemLinkedSkills", fields: [linkedSystemId], references: [id], onDelete: SetNull)
+  linkedSystemId         String?
+
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([contentType, status])
+  @@index([forgeUpdatedAt])
+  @@index([linkedSystemId])
+}
+
+model ForgeSyncRun {
+  id                String    @id @default(cuid())
+  triggeredByUser   User?     @relation("ForgeSyncRunTriggeredBy", fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+  triggeredByUserId String?
+  trigger           String    @default("manual")
+  status            String    @default("running")
+  cursorUsed        String?
+  sinceUsed         DateTime?
+  skillsFetched     Int       @default(0)
+  skillsCreated     Int       @default(0)
+  skillsUpdated     Int       @default(0)
+  errorMessage      String?   @db.Text
+  startedAt         DateTime  @default(now())
+  completedAt       DateTime?
+
+  @@index([status, startedAt])
+  @@index([startedAt])
 }
 
 // ─── Proxy Health Snapshots ────────────────────────────
