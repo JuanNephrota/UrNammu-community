@@ -951,6 +951,11 @@ model AISkill {
   content                String?   @db.Text
   contentFetchedAt       DateTime?
 
+  // Field names that were edited locally in UrNammu. Sync skips these
+  // keys on update so Forge can't clobber user overrides. Blanking a
+  // field on the edit form removes its entry, letting sync refill it.
+  localOverrides         String[]  @default([])
+
   syncedAt               DateTime  @default(now())
   retiredAt              DateTime?
 

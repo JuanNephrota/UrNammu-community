@@ -135,12 +135,24 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
             forgeUpdatedAt: true,
             content: true,
             contentFetchedAt: true,
+            localOverrides: true,
           },
         });
+
+        // Respect per-field local overrides: the user edited these in
+        // UrNammu and expects them to survive subsequent syncs. Strip
+        // them from the update payload — but still apply on create,
+        // since there's nothing to preserve yet.
+        const overrides = new Set(before?.localOverrides ?? []);
+        const updatePayload: Record<string, unknown> = { ...row };
+        for (const field of overrides) {
+          if (field in updatePayload) delete updatePayload[field];
+        }
+
         const saved = await prisma.aISkill.upsert({
           where: { forgeId: item.id },
           create: { forgeId: item.id, ...row },
-          update: row,
+          update: updatePayload,
         });
         if (before) updated++;
         else created++;
@@ -148,7 +160,11 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
         // Pull the skill body from Forge when this is a new row, when the
         // upstream has changed since we last cached, or when we've never
         // stored content before and the file type is one we handle.
+        // Skip when the user has locally overridden content — their copy
+        // is authoritative.
+        const contentIsOverridden = overrides.has("content");
         const shouldFetchContent =
+          !contentIsOverridden &&
           isTextFileType(item.file_type) &&
           (!before ||
             !before.contentFetchedAt ||

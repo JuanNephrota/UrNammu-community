@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,7 +33,22 @@ export default async function AISkillDetailPage({
             Back to skills
           </Button>
         </Link>
+        <Link href={`/registry/skills/${skill.id}/edit`}>
+          <Button>
+            <Pencil className="mr-2 h-4 w-4" />
+            Edit
+          </Button>
+        </Link>
       </PageHeader>
+
+      {skill.localOverrides.length > 0 ? (
+        <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs text-[var(--text-muted)]">
+          Local overrides preserved through Forge sync:{" "}
+          <span className="font-medium text-[var(--text-primary)]">
+            {skill.localOverrides.join(", ")}
+          </span>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
