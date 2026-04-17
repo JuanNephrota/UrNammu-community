@@ -16,6 +16,7 @@ export type UsageFilters = {
   provider: string;
   model: string;
   project: string;
+  apiKey: string;
 };
 
 interface UsageFiltersBarProps {
@@ -24,6 +25,7 @@ interface UsageFiltersBarProps {
     providers: string[];
     models: string[];
     projects: string[];
+    apiKeys: { externalId: string; name: string | null }[];
   };
   onFilterChange: (filters: UsageFilters) => void;
   loading?: boolean;
@@ -87,12 +89,13 @@ export function UsageFiltersBar({
       provider: "",
       model: "",
       project: "",
+      apiKey: "",
     };
     setLocal(reset);
     onFilterChange(reset);
   }, [onFilterChange]);
 
-  const hasFilters = local.provider || local.model || local.project;
+  const hasFilters = local.provider || local.model || local.project || local.apiKey;
 
   return (
     <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-4">
@@ -207,6 +210,31 @@ export function UsageFiltersBar({
               {filterOptions.projects.map((p) => (
                 <SelectItem key={p} value={p}>
                   {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* API Key filter */}
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
+            API Key
+          </label>
+          <Select
+            value={local.apiKey || "__all__"}
+            onValueChange={(v) =>
+              handleChange("apiKey", v === "__all__" ? "" : v)
+            }
+          >
+            <SelectTrigger className="h-9 w-[180px] text-xs">
+              <SelectValue placeholder="All keys" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All keys</SelectItem>
+              {filterOptions.apiKeys.map((k) => (
+                <SelectItem key={k.externalId} value={k.name ?? k.externalId}>
+                  {k.name ?? `${k.externalId.slice(0, 16)}…`}
                 </SelectItem>
               ))}
             </SelectContent>

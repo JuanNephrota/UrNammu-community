@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
     const provider = url.searchParams.get("provider") || undefined;
     const model = url.searchParams.get("model") || undefined;
     const project = url.searchParams.get("project") || undefined;
+    const apiKey = url.searchParams.get("apiKey") || undefined;
 
     // Build where clauses. Proxy-written rows are excluded from aggregates —
     // admin-sync captures the same traffic at day granularity, so summing
@@ -53,9 +54,17 @@ export async function GET(req: NextRequest) {
         { aiSystem: { name: { contains: project, mode: "insensitive" } } },
       ];
     }
+    if (apiKey) {
+      // Match either externalId or name (name is more user-friendly in the URL).
+      usageWhere.OR = [
+        ...((usageWhere.OR as Record<string, unknown>[]) ?? []),
+        { apiKeyExternalId: apiKey },
+        { apiKeyName: apiKey },
+      ];
+    }
 
     // Fetch data in parallel
-    const [usageBuckets, costBuckets, allProviders, allModels, allProjects] =
+    const [usageBuckets, costBuckets, allProviders, allModels, allProjects, allApiKeys] =
       await Promise.all([
         prisma.usageBucket.findMany({
           where: usageWhere,
@@ -89,6 +98,13 @@ export async function GET(req: NextRequest) {
           where: {
             bucketStart: { gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000) },
             projectName: { not: null },
+          },
+        }),
+        prisma.usageBucket.groupBy({
+          by: ["apiKeyExternalId", "apiKeyName"],
+          where: {
+            bucketStart: { gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000) },
+            apiKeyExternalId: { not: null },
           },
         }),
       ]);
@@ -243,6 +259,62 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.tokens - a.tokens)
       .slice(0, 8);
 
+    // Top API keys — tokens are exact from usage_by_key ingestion; cost is
+    // estimated via token-share apportionment within each (provider, model,
+    // day) because Anthropic's cost_report API doesn't expose api_key_id.
+    // Cache-heavy keys will be slightly overcharged relative to output-heavy
+    // ones at the same token count (cache_read is ~1/10 the rate of output),
+    // so this is a first-order estimate labeled as such in the UI.
+    const costByModelDay = new Map<string, number>();
+    for (const c of costBuckets) {
+      const k = `${c.provider}|${c.model ?? ""}|${c.bucketStart.toISOString().slice(0, 10)}`;
+      costByModelDay.set(k, (costByModelDay.get(k) ?? 0) + c.amount);
+    }
+    const tokensByModelDay = new Map<string, number>();
+    for (const b of usageBuckets) {
+      const k = `${b.provider}|${b.model ?? ""}|${b.bucketStart.toISOString().slice(0, 10)}`;
+      tokensByModelDay.set(k, (tokensByModelDay.get(k) ?? 0) + b.totalTokens);
+    }
+    const apiKeyMap = new Map<
+      string,
+      {
+        externalId: string;
+        name: string | null;
+        provider: string;
+        tokens: number;
+        cacheTokens: number;
+        estimatedCost: number;
+        requests: number;
+      }
+    >();
+    for (const bucket of usageBuckets) {
+      const externalId = bucket.apiKeyExternalId;
+      if (!externalId) continue;
+      const bucketCacheTokens = bucket.cacheReadTokens + bucket.cacheCreationTokens;
+      const dayKey = `${bucket.provider}|${bucket.model ?? ""}|${bucket.bucketStart.toISOString().slice(0, 10)}`;
+      const dayTotalTokens = tokensByModelDay.get(dayKey) ?? 0;
+      const dayCost = costByModelDay.get(dayKey) ?? 0;
+      const share = dayTotalTokens > 0 ? bucket.totalTokens / dayTotalTokens : 0;
+      const item = apiKeyMap.get(externalId) ?? {
+        externalId,
+        name: bucket.apiKeyName,
+        provider: bucket.provider,
+        tokens: 0,
+        cacheTokens: 0,
+        estimatedCost: 0,
+        requests: 0,
+      };
+      if (!item.name && bucket.apiKeyName) item.name = bucket.apiKeyName;
+      item.tokens += bucket.totalTokens;
+      item.cacheTokens += bucketCacheTokens;
+      item.estimatedCost += dayCost * share;
+      item.requests += bucket.requestCount ?? 0;
+      apiKeyMap.set(externalId, item);
+    }
+    const topApiKeys = [...apiKeyMap.values()]
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 8);
+
     // Activity rows
     const activityRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
 
@@ -267,6 +339,7 @@ export async function GET(req: NextRequest) {
       dailyCostBreakdown,
       topModels,
       topProjects,
+      topApiKeys,
       activityRows: activityRows.map((r) => ({
         ...r,
         date: r.date.toISOString(),
@@ -281,6 +354,13 @@ export async function GET(req: NextRequest) {
           .map((p) => p.projectName)
           .filter(Boolean)
           .sort() as string[],
+        apiKeys: allApiKeys
+          .filter((k) => k.apiKeyExternalId)
+          .map((k) => ({
+            externalId: k.apiKeyExternalId as string,
+            name: k.apiKeyName,
+          }))
+          .sort((a, b) => (a.name ?? a.externalId).localeCompare(b.name ?? b.externalId)),
       },
     });
   });

@@ -237,21 +237,36 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
     const startingAt = sevenDaysAgo.toISOString();
     const endingAt = today.toISOString();
 
-    const [org, keys, members, usageByModel, usageByKey, costReport] = await Promise.all([
+    const [org, keys, members, usageByModelAndKey, usageByKey, costReport] = await Promise.all([
       fetchAnthropicOrgData(),
       listAPIKeys({ status: "active", limit: 100 }).catch(() => null),
       listMembers({ limit: 100 }).catch(() => null),
-      getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["model"] }),
+      // Multi-dim group_by so each UsageBucket row is attributable to a
+      // specific (model, api_key) pair. Without api_key_id in the grouping,
+      // the api_key_id field on results comes back null and all keys'
+      // traffic collides into one row per (model, day).
+      getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["model", "api_key_id"] }),
+      // Kept for forensics / raw snapshot only — the flattened attribution
+      // above supersedes this for UsageBucket writes.
       getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["api_key_id"] }).catch(() => null),
       getCostReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["description"] }).catch(() => null),
     ]);
+
+    // Build id → name lookup for API keys so each UsageBucket row carries a
+    // human-readable apiKeyName.
+    const apiKeyNameById = new Map<string, string>();
+    for (const key of asArray(asRecord(keys).data)) {
+      const id = asString(key.id);
+      const name = asString(key.name);
+      if (id && name) apiKeyNameById.set(id, name);
+    }
 
     let rawSnapshotsStored = 0;
     for (const [resourceType, payload] of Object.entries({
       org,
       keys,
       members,
-      usage_by_model: usageByModel,
+      usage_by_model: usageByModelAndKey,
       usage_by_key: usageByKey,
       cost_report: costReport,
     })) {
@@ -320,7 +335,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
     let apiUsageLogsCreated = 0;
 
     // New Anthropic API returns nested structure: data[].{ starting_at, ending_at, results[] }
-    for (const bucket of asArray(asRecord(usageByModel).data)) {
+    for (const bucket of asArray(asRecord(usageByModelAndKey).data)) {
       const bucketStart = new Date(asString(bucket.starting_at) ?? startingAt);
       const bucketEnd = new Date(asString(bucket.ending_at) ?? endingAt);
       const date = bucketStart.toISOString().split("T")[0];
@@ -364,6 +379,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
           update: {
             model,
             apiKeyExternalId: apiKeyId,
+            apiKeyName: apiKeyId ? (apiKeyNameById.get(apiKeyId) ?? null) : null,
             inputTokens,
             outputTokens,
             totalTokens,
@@ -380,6 +396,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             dimensionKey,
             model,
             apiKeyExternalId: apiKeyId,
+            apiKeyName: apiKeyId ? (apiKeyNameById.get(apiKeyId) ?? null) : null,
             inputTokens,
             outputTokens,
             totalTokens,

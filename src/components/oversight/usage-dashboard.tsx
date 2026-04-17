@@ -48,6 +48,15 @@ type UsageApiResponse = {
     providers: string[];
     cacheTokens?: number;
   }[];
+  topApiKeys: {
+    externalId: string;
+    name: string | null;
+    provider: string;
+    tokens: number;
+    cacheTokens: number;
+    estimatedCost: number;
+    requests: number;
+  }[];
   activityRows: {
     id: string;
     date: string;
@@ -62,6 +71,7 @@ type UsageApiResponse = {
     providers: string[];
     models: string[];
     projects: string[];
+    apiKeys: { externalId: string; name: string | null }[];
   };
 };
 
@@ -97,6 +107,7 @@ export function UsageDashboard({
       if (newFilters.provider) params.set("provider", newFilters.provider);
       if (newFilters.model) params.set("model", newFilters.model);
       if (newFilters.project) params.set("project", newFilters.project);
+      if (newFilters.apiKey) params.set("apiKey", newFilters.apiKey);
       const res = await fetch(`/api/oversight/usage?${params.toString()}`);
       if (res.ok) {
         const json = await res.json();
@@ -421,6 +432,62 @@ export function UsageDashboard({
                       </div>
                     </div>
                   </div>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between gap-2">
+                <span>API Keys</span>
+                <span
+                  className="text-[10px] font-normal uppercase tracking-wider text-[var(--text-faint)]"
+                  title="Cost is estimated via token-share apportionment within each (provider, model, day) — Anthropic's cost_report API does not expose api_key_id."
+                >
+                  cost = est
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {data.topApiKeys.length === 0 ? (
+                <p className="text-sm text-[var(--text-muted)]">
+                  No per-key attribution for this window. (Rows older than 7 days
+                  may predate the per-key sync.)
+                </p>
+              ) : (
+                data.topApiKeys.map((item) => {
+                  const display = includeCached
+                    ? item.tokens
+                    : item.tokens - item.cacheTokens;
+                  return (
+                    <div
+                      key={item.externalId}
+                      className="rounded-lg border border-[var(--border-subtle)] p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate" title={item.externalId}>
+                            {item.name ?? `${item.externalId.slice(0, 16)}…`}
+                          </p>
+                          <p className="text-xs text-[var(--text-faint)] capitalize">
+                            {item.provider}
+                            {item.requests > 0
+                              ? ` · ${item.requests.toLocaleString("en-US")} req`
+                              : ""}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold">
+                            {display.toLocaleString("en-US")}
+                          </p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            ${item.estimatedCost.toFixed(2)} est
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   );
                 })
               )}

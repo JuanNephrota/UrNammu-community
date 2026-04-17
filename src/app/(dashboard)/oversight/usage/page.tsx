@@ -13,7 +13,7 @@ import { UsageDashboard } from "@/components/oversight/usage-dashboard";
 export default async function UsageLogsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ provider?: string; model?: string; project?: string }>;
+  searchParams: Promise<{ provider?: string; model?: string; project?: string; apiKey?: string }>;
 }) {
   const params = await searchParams;
   const now = new Date();
@@ -30,9 +30,15 @@ export default async function UsageLogsPage({
   if (params.provider) bucketWhere.provider = params.provider;
   if (params.model) bucketWhere.model = params.model;
   if (params.project) bucketWhere.projectName = params.project;
+  if (params.apiKey) {
+    bucketWhere.OR = [
+      { apiKeyExternalId: params.apiKey },
+      { apiKeyName: params.apiKey },
+    ];
+  }
 
   // Fetch initial 30-day data + filter options in parallel
-  const [usageBuckets, costBuckets, allProviders, allModels, allProjects] =
+  const [usageBuckets, costBuckets, allProviders, allModels, allProjects, allApiKeys] =
     await Promise.all([
       prisma.usageBucket.findMany({
         where: bucketWhere,
@@ -82,6 +88,15 @@ export default async function UsageLogsPage({
             gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
           },
           projectName: { not: null },
+        },
+      }),
+      prisma.usageBucket.groupBy({
+        by: ["apiKeyExternalId", "apiKeyName"],
+        where: {
+          bucketStart: {
+            gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+          },
+          apiKeyExternalId: { not: null },
         },
       }),
     ]);
@@ -261,6 +276,58 @@ export default async function UsageLogsPage({
     .sort((a, b) => b.tokens - a.tokens)
     .slice(0, 8);
 
+  // Top API keys — exact tokens, estimated cost via token-share apportionment
+  // within (provider, model, day). See /api/oversight/usage/route.ts for rationale.
+  const costByModelDay = new Map<string, number>();
+  for (const c of costBuckets) {
+    const k = `${c.provider}|${c.model ?? ""}|${c.bucketStart.toISOString().slice(0, 10)}`;
+    costByModelDay.set(k, (costByModelDay.get(k) ?? 0) + c.amount);
+  }
+  const tokensByModelDay = new Map<string, number>();
+  for (const b of usageBuckets) {
+    const k = `${b.provider}|${b.model ?? ""}|${b.bucketStart.toISOString().slice(0, 10)}`;
+    tokensByModelDay.set(k, (tokensByModelDay.get(k) ?? 0) + b.totalTokens);
+  }
+  const apiKeyMap = new Map<
+    string,
+    {
+      externalId: string;
+      name: string | null;
+      provider: string;
+      tokens: number;
+      cacheTokens: number;
+      estimatedCost: number;
+      requests: number;
+    }
+  >();
+  for (const bucket of usageBuckets) {
+    const externalId = bucket.apiKeyExternalId;
+    if (!externalId) continue;
+    const bucketCacheTokens = bucket.cacheReadTokens + bucket.cacheCreationTokens;
+    const dayKey = `${bucket.provider}|${bucket.model ?? ""}|${bucket.bucketStart.toISOString().slice(0, 10)}`;
+    const dayTotalTokens = tokensByModelDay.get(dayKey) ?? 0;
+    const dayCost = costByModelDay.get(dayKey) ?? 0;
+    const share = dayTotalTokens > 0 ? bucket.totalTokens / dayTotalTokens : 0;
+    const item = apiKeyMap.get(externalId) ?? {
+      externalId,
+      name: bucket.apiKeyName,
+      provider: bucket.provider,
+      tokens: 0,
+      cacheTokens: 0,
+      estimatedCost: 0,
+      requests: 0,
+    };
+    if (!item.name && bucket.apiKeyName) item.name = bucket.apiKeyName;
+    item.tokens += bucket.totalTokens;
+    item.cacheTokens += bucketCacheTokens;
+    item.estimatedCost += dayCost * share;
+    item.requests += bucket.requestCount ?? 0;
+    apiKeyMap.set(externalId, item);
+  }
+  const topApiKeys = [...apiKeyMap.values()]
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, 8);
+
   // Activity rows
   const activityRows = buildTelemetryActivityRows(usageBuckets, costMap, 60);
 
@@ -288,6 +355,7 @@ export default async function UsageLogsPage({
     dailyCostBreakdown,
     topModels,
     topProjects,
+    topApiKeys,
     activityRows: activityRows.map((r) => ({
       ...r,
       date: r.date.toISOString(),
@@ -302,6 +370,13 @@ export default async function UsageLogsPage({
         .map((p) => p.projectName)
         .filter(Boolean)
         .sort() as string[],
+      apiKeys: allApiKeys
+        .filter((k) => k.apiKeyExternalId)
+        .map((k) => ({
+          externalId: k.apiKeyExternalId as string,
+          name: k.apiKeyName,
+        }))
+        .sort((a, b) => (a.name ?? a.externalId).localeCompare(b.name ?? b.externalId)),
     },
   };
 
@@ -319,6 +394,7 @@ export default async function UsageLogsPage({
           provider: params.provider ?? "",
           model: params.model ?? "",
           project: params.project ?? "",
+          apiKey: params.apiKey ?? "",
         }}
       />
     </div>
