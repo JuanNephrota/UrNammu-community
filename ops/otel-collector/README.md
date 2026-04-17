@@ -78,10 +78,51 @@ az containerapp revision restart \
   --name cc-otel-app
 ```
 
-## Client setup (developer machines)
+## Client setup (org rollout via MDM)
 
-Drop this in your shell rc file. The **logs exporter is intentionally
-unset** — metrics only.
+Claude Code reads managed settings from a platform-specific path that users
+**cannot override** from their personal `~/.claude/settings.json`. This is
+the right tier for org-wide telemetry: distribute via Jamf / Intune /
+Kandji / whatever and the config is enforced everywhere.
+
+Target paths:
+
+| OS | Path |
+| --- | --- |
+| macOS | `/Library/Application Support/ClaudeCode/managed-settings.json` |
+| Linux | `/etc/claude-code/managed-settings.json` |
+| Windows | `C:\ProgramData\ClaudeCode\managed-settings.json` |
+
+Precedence (highest wins): managed → project → user → local.
+
+Template: [`managed-settings.json`](./managed-settings.json) — fill in the
+two placeholders before shipping:
+
+- `<COLLECTOR_FQDN>` — the `ingestEndpoint` output from the Bicep deploy,
+  without trailing slash (e.g. `cc-otel-app.<region>.azurecontainerapps.io`)
+- `<INGEST_TOKEN>` — the `INGEST` token from the deploy
+
+The template deliberately **does not** set `OTEL_LOGS_EXPORTER`. No logs
+pipeline means events/prompts can't leave the machine even if a developer
+tries to enable them locally — their `~/.claude/settings.json` can't
+override the managed file. This is belt-and-braces on top of the
+collector's `filter/claude_code_only` processor.
+
+### MDM rollout tips
+
+- Test on one machine first by copying `managed-settings.json` to the path
+  above, then `claude doctor` to confirm the env vars are picked up.
+- Push updates (e.g. token rotation) by re-distributing the file and
+  asking users to start a new Claude Code session — env vars are read at
+  process start.
+- Managed settings can also lock down permissions, hooks, and model
+  choice. This file only covers telemetry; layer other policies on top.
+
+### Per-machine opt-in (fallback)
+
+If MDM rollout isn't ready or you're just testing on your own laptop, drop
+the equivalent env vars in your shell rc file. **Users can disable this
+any time**, which is why it's not the org-wide answer.
 
 ```bash
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
@@ -90,7 +131,6 @@ export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 export OTEL_EXPORTER_OTLP_ENDPOINT="https://<collector-fqdn>"
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <INGEST_TOKEN>"
 export OTEL_METRIC_EXPORT_INTERVAL=60000
-# Belt-and-braces: don't let events/prompts leave the machine
 unset OTEL_LOGS_EXPORTER
 export OTEL_LOG_USER_PROMPTS=0
 ```
@@ -122,3 +162,6 @@ which is what the UI filters on — not `receivedAt`.
   is embedded inside `deploy.bicep` as a variable; keep them in sync).
 - `deploy.bicep` — Azure Container Apps deployment (Log Analytics +
   Container Apps Env + Container App).
+- `managed-settings.json` — template for Claude Code org-wide enforced
+  config. Copy to the MDM-managed path listed above and fill in
+  `<COLLECTOR_FQDN>` + `<INGEST_TOKEN>`.
