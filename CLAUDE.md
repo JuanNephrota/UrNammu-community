@@ -181,7 +181,7 @@ npx prisma generate                  # Regenerate Prisma client
 # Deploy main app
 vercel --prod --yes
 
-# Deploy proxy
+# Deploy proxy (requires: npm i -g azure-functions-core-tools@4)
 cd ai-proxy && func azure functionapp publish <your-function-app-name> --build remote
 
 # Database
