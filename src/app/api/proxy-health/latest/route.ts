@@ -27,6 +27,7 @@ export async function GET() {
       flaggedLast15m,
       denialsLast15m,
       latestUsageLog,
+      recentLogs,
     ] = await Promise.all([
       prisma.proxyHealthSnapshot.findFirst({
         orderBy: { capturedAt: "desc" },
@@ -55,6 +56,23 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
         select: { createdAt: true },
       }),
+      prisma.aPIUsageLog.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          createdAt: true,
+          provider: true,
+          model: true,
+          aiSystemId: true,
+          department: true,
+          totalTokens: true,
+          cost: true,
+          flagged: true,
+          flagReason: true,
+          user: { select: { name: true, email: true } },
+        },
+      }),
     ]);
 
     return NextResponse.json({
@@ -72,6 +90,7 @@ export async function GET() {
         denialCount: denialsLast15m,
         latestUsageLogAt: latestUsageLog?.createdAt ?? null,
       },
+      recentLogs,
     });
   });
 }

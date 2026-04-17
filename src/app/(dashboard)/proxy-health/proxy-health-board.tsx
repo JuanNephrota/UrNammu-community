@@ -44,6 +44,19 @@ type LatestResponse = {
     denialCount: number;
     latestUsageLogAt: string | null;
   };
+  recentLogs: Array<{
+    id: string;
+    createdAt: string;
+    provider: string;
+    model: string | null;
+    aiSystemId: string | null;
+    department: string | null;
+    totalTokens: number;
+    cost: number;
+    flagged: boolean;
+    flagReason: string | null;
+    user: { name: string | null; email: string | null } | null;
+  }>;
 };
 
 const LIVE_POLL_MS = 15_000;
@@ -359,6 +372,91 @@ export function ProxyHealthBoard({ initial }: Props) {
               }
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Tail of last 10 proxy writes */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Recent proxy writes ({data.recentLogs.length})</CardTitle>
+          <p className="text-xs text-[var(--text-muted)]">
+            The ten most-recent rows the proxy has written to <code>APIUsageLog</code>. Live-updates on the 15s poll.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {data.recentLogs.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">No proxy writes yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)] text-left text-[var(--text-muted)]">
+                    <th className="py-1.5 pr-4">Time</th>
+                    <th className="py-1.5 pr-4">Provider · Model</th>
+                    <th className="py-1.5 pr-4">User</th>
+                    <th className="py-1.5 pr-4">Dept</th>
+                    <th className="py-1.5 pr-4 text-right">Tokens</th>
+                    <th className="py-1.5 pr-4 text-right">Cost</th>
+                    <th className="py-1.5 pr-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.recentLogs.map((log) => (
+                    <tr
+                      key={log.id}
+                      className="border-b border-[var(--border-subtle)]"
+                    >
+                      <td className="py-1.5 pr-4 text-[var(--text-muted)] whitespace-nowrap">
+                        {formatAge(log.createdAt)}
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        <span className="text-[var(--text-muted)]">{log.provider}</span>
+                        {log.model ? (
+                          <>
+                            {" · "}
+                            <span>{log.model}</span>
+                          </>
+                        ) : null}
+                      </td>
+                      <td
+                        className="py-1.5 pr-4 max-w-[180px] truncate"
+                        title={log.user?.email ?? ""}
+                      >
+                        {log.user?.name ?? log.user?.email ?? "—"}
+                      </td>
+                      <td className="py-1.5 pr-4 text-[var(--text-muted)]">
+                        {log.department ?? "—"}
+                      </td>
+                      <td className="py-1.5 pr-4 text-right tabular-nums">
+                        {log.totalTokens.toLocaleString()}
+                      </td>
+                      <td className="py-1.5 pr-4 text-right tabular-nums">
+                        ${log.cost.toFixed(4)}
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        {log.flagged ? (
+                          <Badge
+                            variant="outline"
+                            className="text-[var(--critical)] border-[var(--critical)]/30"
+                            title={log.flagReason ?? undefined}
+                          >
+                            Flagged
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="text-[var(--success)] border-[var(--success)]/30"
+                          >
+                            OK
+                          </Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 

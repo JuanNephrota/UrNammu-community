@@ -22,6 +22,7 @@ export default async function ProxyHealthPage() {
     flaggedLast15m,
     denialsLast15m,
     latestUsageLog,
+    recentLogs,
   ] = await Promise.all([
     prisma.proxyHealthSnapshot.findFirst({ orderBy: { capturedAt: "desc" } }),
     prisma.proxyHealthSnapshot.findMany({
@@ -43,6 +44,23 @@ export default async function ProxyHealthPage() {
     prisma.aPIUsageLog.findFirst({
       orderBy: { createdAt: "desc" },
       select: { createdAt: true },
+    }),
+    prisma.aPIUsageLog.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        createdAt: true,
+        provider: true,
+        model: true,
+        aiSystemId: true,
+        department: true,
+        totalTokens: true,
+        cost: true,
+        flagged: true,
+        flagReason: true,
+        user: { select: { name: true, email: true } },
+      },
     }),
   ]);
 
@@ -71,6 +89,10 @@ export default async function ProxyHealthPage() {
       denialCount: denialsLast15m,
       latestUsageLogAt: latestUsageLog?.createdAt.toISOString() ?? null,
     },
+    recentLogs: recentLogs.map((log) => ({
+      ...log,
+      createdAt: log.createdAt.toISOString(),
+    })),
   };
 
   return (
