@@ -13,7 +13,7 @@ interface Props {
   systems: FilterSystem[];
   policies: FilterPolicy[];
   initial: {
-    mode: string;
+    source: string;
     aiSystemId: string;
     policyId: string;
     since: string;
@@ -34,7 +34,7 @@ export function FilterBar({ systems, policies, initial }: Props) {
   const search = useSearchParams();
   const [pending, startTransition] = useTransition();
 
-  const [mode, setMode] = useState(initial.mode);
+  const [source, setSource] = useState(initial.source);
   const [aiSystemId, setAiSystemId] = useState(initial.aiSystemId);
   const [policyId, setPolicyId] = useState(initial.policyId);
   const [since, setSince] = useState(toIsoDateInput(initial.since));
@@ -46,11 +46,12 @@ export function FilterBar({ systems, policies, initial }: Props) {
       if (value) params.set(key, value);
       else params.delete(key);
     };
-    set("mode", mode === "all" ? "" : mode);
+    set("source", source === "all" ? "" : source);
     set("aiSystemId", aiSystemId);
     set("policyId", policyId);
     set("since", since);
     set("until", until);
+    params.delete("mode"); // legacy param no longer used
     params.delete("page"); // reset pagination on filter change
     startTransition(() => {
       router.push(`/compliance/denials?${params.toString()}`);
@@ -58,7 +59,7 @@ export function FilterBar({ systems, policies, initial }: Props) {
   }
 
   function reset() {
-    setMode("all");
+    setSource("all");
     setAiSystemId("");
     setPolicyId("");
     setSince("");
@@ -71,15 +72,15 @@ export function FilterBar({ systems, policies, initial }: Props) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6 items-end">
       <div className="space-y-1">
-        <Label>Mode</Label>
+        <Label>Source</Label>
         <select
-          value={mode}
-          onChange={(e) => setMode(e.target.value)}
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
           className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
         >
-          <option value="all">All</option>
-          <option value="enforced">Enforced (blocked)</option>
-          <option value="dryrun">Dry run</option>
+          <option value="all">All sources</option>
+          <option value="policy">Policy (dry-run + enforced)</option>
+          <option value="content">Content (dangerous prompts)</option>
         </select>
       </div>
       <div className="space-y-1">

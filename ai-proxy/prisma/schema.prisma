@@ -33,11 +33,13 @@ model APIUsageLog {
   cost             Float   @default(0)
   promptMetadata   Json?
   flagged          Boolean @default(false)
+  flagCategory     String?
   flagReason       String?
 
   createdAt DateTime @default(now())
 
   @@index([aiSystemId, createdAt])
+  @@index([flagCategory, createdAt])
 }
 
 // Policy denials — proxy writes; main app owns migrations.

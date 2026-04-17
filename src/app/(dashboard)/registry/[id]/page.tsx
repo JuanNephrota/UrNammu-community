@@ -127,7 +127,7 @@ export default async function SystemDetailPage({
   const now = new Date();
   const telemetryWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const denialsWindowStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const [usageBuckets, costBuckets, denials7d, latestDenial, enforcementModeSetting] = await Promise.all([
+  const [usageBuckets, costBuckets, denials7d, latestDenial, enforcementModeSetting, contentBlocks7d, latestContentBlock] = await Promise.all([
     prisma.usageBucket.findMany({
       where: {
         aiSystemId: system.id,
@@ -157,8 +157,31 @@ export default async function SystemDetailPage({
       select: { id: true, createdAt: true, mode: true },
     }),
     prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
+    prisma.alert.count({
+      where: {
+        aiSystemId: system.id,
+        source: "dangerous_prompt",
+        createdAt: { gte: denialsWindowStart },
+      },
+    }),
+    prisma.alert.findFirst({
+      where: { aiSystemId: system.id, source: "dangerous_prompt" },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, createdAt: true },
+    }),
   ]);
   const enforcementMode = parseEnforcementMode(enforcementModeSetting?.value);
+  const totalBlocked7d = denials7d + contentBlocks7d;
+  const latestBlockedEvent =
+    latestDenial && latestContentBlock
+      ? latestDenial.createdAt.getTime() >= latestContentBlock.createdAt.getTime()
+        ? { ...latestDenial, kind: "policy" as const, label: latestDenial.mode }
+        : { ...latestContentBlock, kind: "content" as const, label: "content" }
+      : latestDenial
+        ? { ...latestDenial, kind: "policy" as const, label: latestDenial.mode }
+        : latestContentBlock
+          ? { ...latestContentBlock, kind: "content" as const, label: "content" }
+          : null;
   const exceptionSummaries = system.governanceExceptions.map((exception) => ({
     ...exception,
     status:
@@ -765,17 +788,17 @@ export default async function SystemDetailPage({
         </TabsContent>
 
         <TabsContent value="compliance">
-          {enforcementMode !== "off" && (denials7d > 0 || latestDenial) ? (
+          {totalBlocked7d > 0 ? (
             <Link
               href={`/compliance/denials?aiSystemId=${system.id}`}
               className="mb-4 block rounded-lg border p-3 transition-all hover:brightness-110"
               style={{
                 borderColor:
-                  enforcementMode === "enforce"
+                  enforcementMode === "enforce" || contentBlocks7d > 0
                     ? "var(--critical)"
                     : "var(--warning)",
                 backgroundColor:
-                  enforcementMode === "enforce"
+                  enforcementMode === "enforce" || contentBlocks7d > 0
                     ? "color-mix(in srgb, var(--critical) 6%, var(--bg-base))"
                     : "color-mix(in srgb, var(--warning) 6%, var(--bg-base))",
               }}
@@ -783,11 +806,18 @@ export default async function SystemDetailPage({
               <div className="flex items-center justify-between gap-3 text-sm">
                 <div>
                   <span className="font-medium">
-                    {denials7d} policy{denials7d === 1 ? " denial" : " denials"} in the last 7 days
+                    {totalBlocked7d} blocked quer{totalBlocked7d === 1 ? "y" : "ies"} in the last 7 days
                   </span>
-                  {latestDenial ? (
+                  {denials7d > 0 || contentBlocks7d > 0 ? (
                     <span className="ml-2 text-xs text-[var(--text-muted)]">
-                      · most recent: {latestDenial.mode}, {formatDate(latestDenial.createdAt)}
+                      {denials7d > 0 ? `${denials7d} policy` : ""}
+                      {denials7d > 0 && contentBlocks7d > 0 ? " · " : ""}
+                      {contentBlocks7d > 0 ? `${contentBlocks7d} content` : ""}
+                    </span>
+                  ) : null}
+                  {latestBlockedEvent ? (
+                    <span className="ml-2 text-xs text-[var(--text-muted)]">
+                      · latest: {latestBlockedEvent.label}, {formatDate(latestBlockedEvent.createdAt)}
                     </span>
                   ) : null}
                 </div>

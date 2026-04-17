@@ -123,6 +123,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       totalTokens: 0,
       cost: 0,
       flagged: true,
+      flagCategory: "proxy_error",
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
       metadata: { aiSystemId },
     });
@@ -180,9 +181,11 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const cost = calculateCost("chatgpt", model, promptTokens, completionTokens);
 
   let flagged = false;
+  let flagCategory: "upstream_error" | null = null;
   let flagReason: string | null = null;
   if (!openaiRes.ok) {
     flagged = true;
+    flagCategory = "upstream_error";
     flagReason = `API error: ${openaiRes.status} ${responseBody.error?.message ?? ""}`;
   }
 
@@ -196,6 +199,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     totalTokens,
     cost,
     flagged,
+    flagCategory,
     flagReason,
     metadata: { aiSystemId, latencyMs, status: openaiRes.status },
   });

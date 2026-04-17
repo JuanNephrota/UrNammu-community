@@ -54,6 +54,7 @@ type LatestResponse = {
     totalTokens: number;
     cost: number;
     flagged: boolean;
+    flagCategory: string | null;
     flagReason: string | null;
     user: { name: string | null; email: string | null } | null;
   }>;
@@ -437,10 +438,20 @@ export function ProxyHealthBoard({ initial }: Props) {
                         {log.flagged ? (
                           <Badge
                             variant="outline"
-                            className="text-[var(--critical)] border-[var(--critical)]/30"
+                            className={
+                              log.flagCategory === "prompt_risk"
+                                ? "text-[var(--critical)] border-[var(--critical)]/30"
+                                : "text-[var(--warning)] border-[var(--warning)]/30"
+                            }
                             title={log.flagReason ?? undefined}
                           >
-                            Flagged
+                            {log.flagCategory === "prompt_risk"
+                              ? "Blocked"
+                              : log.flagCategory === "upstream_error"
+                                ? "Upstream error"
+                                : log.flagCategory === "proxy_error"
+                                  ? "Proxy error"
+                                  : "Flagged"}
                           </Badge>
                         ) : (
                           <Badge

@@ -151,6 +151,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       totalTokens: 0,
       cost: 0,
       flagged: true,
+      flagCategory: "proxy_error",
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
       metadata: { aiSystemId },
     }).catch((logErr) => {
@@ -232,9 +233,11 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const cost = calculateCost("claude", model, promptTokens, completionTokens);
 
   let flagged = false;
+  let flagCategory: "upstream_error" | null = null;
   let flagReason: string | null = null;
   if (!anthropicRes.ok) {
     flagged = true;
+    flagCategory = "upstream_error";
     flagReason = `API error: ${anthropicRes.status} ${responseBody.error?.message ?? ""}`;
   }
 
@@ -248,6 +251,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     totalTokens,
     cost,
     flagged,
+    flagCategory,
     flagReason,
     metadata: {
       aiSystemId,

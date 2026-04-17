@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Plus, Shield } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { parseEnforcementMode } from "@/lib/settings";
+import { listBlockedEvents } from "@/lib/blocked-events";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -9,7 +10,12 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
 
+function thirtyDaysAgo() {
+  return new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+}
+
 export default async function CompliancePage() {
+  const blockedSince = thirtyDaysAgo();
   const [policies, assignments, frameworks, activeExceptions] = await Promise.all([
     prisma.policy.findMany({
       orderBy: { createdAt: "desc" },
@@ -163,7 +169,7 @@ export default async function CompliancePage() {
             <CardTitle className="flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <Shield className="h-4 w-4 text-[var(--accent)]" />
-                Policy Denials
+                Blocked Queries
               </span>
               <Link href="/compliance/denials">
                 <Button variant="outline" size="sm">View All</Button>
@@ -171,7 +177,7 @@ export default async function CompliancePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <PolicyDenialsPreview />
+            <PolicyDenialsPreview since={blockedSince} />
           </CardContent>
         </Card>
 
@@ -193,12 +199,9 @@ export default async function CompliancePage() {
   );
 }
 
-async function PolicyDenialsPreview() {
-  const [recent, modeSetting] = await Promise.all([
-    prisma.policyDenial.findMany({
-      take: 5,
-      orderBy: { createdAt: "desc" },
-    }),
+async function PolicyDenialsPreview({ since }: { since: Date }) {
+  const [{ items: recent }, modeSetting] = await Promise.all([
+    listBlockedEvents({ since }, { skip: 0, take: 5 }),
     prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
   ]);
 
@@ -207,13 +210,9 @@ async function PolicyDenialsPreview() {
   if (recent.length === 0) {
     return (
       <div className="space-y-2">
-        <p className="text-sm text-[var(--text-muted)]">
-          {mode === "off"
-            ? "Enforcement is off — no denials are being recorded."
-            : "No denials yet."}
-        </p>
+        <p className="text-sm text-[var(--text-muted)]">No blocked queries in the last 30 days.</p>
         <p className="text-xs text-[var(--text-faint)]">
-          Current mode: <span className="font-mono">{mode}</span>
+          Policy enforcement mode: <span className="font-mono">{mode}</span>
         </p>
       </div>
     );
@@ -232,35 +231,37 @@ async function PolicyDenialsPreview() {
 
   return (
     <div className="space-y-2">
-      {recent.map((denial) => (
+      {recent.map((event) => (
         <Link
-          key={denial.id}
-          href={`/compliance/denials/${denial.id}`}
+          key={event.id}
+          href={event.detailHref}
           className="flex items-center justify-between text-sm hover:underline"
         >
           <span className="truncate">
             <Badge
               variant="outline"
               className={
-                denial.mode === "enforced"
+                event.modeLabel === "enforced" || event.source === "content"
                   ? "mr-2 text-[var(--critical)] border-[var(--critical)]/30"
                   : "mr-2 text-[var(--warning)] border-[var(--warning)]/30"
               }
             >
-              {denial.mode}
+              {event.source === "policy"
+                ? `policy · ${event.modeLabel}`
+                : "content"}
             </Badge>
-            {denial.aiSystemId
-              ? systemNames.get(denial.aiSystemId) ?? denial.aiSystemId
+            {event.aiSystemId
+              ? systemNames.get(event.aiSystemId) ?? event.aiSystemId
               : "—"}
-            {denial.model ? ` · ${denial.model}` : ""}
+            {event.model ? ` · ${event.model}` : ""}
           </span>
           <span className="text-xs text-[var(--text-faint)] whitespace-nowrap ml-2">
-            {formatDateTime(denial.createdAt)}
+            {formatDateTime(event.createdAt)}
           </span>
         </Link>
       ))}
       <p className="pt-2 text-xs text-[var(--text-faint)]">
-        Current mode: <span className="font-mono">{mode}</span>
+        Policy enforcement mode: <span className="font-mono">{mode}</span>
       </p>
     </div>
   );

@@ -58,6 +58,7 @@ export default async function ProxyHealthPage() {
         totalTokens: true,
         cost: true,
         flagged: true,
+        flagCategory: true,
         flagReason: true,
         user: { select: { name: true, email: true } },
       },

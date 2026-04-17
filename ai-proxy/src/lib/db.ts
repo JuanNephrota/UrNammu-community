@@ -44,6 +44,7 @@ export async function logUsage(params: {
   totalTokens: number;
   cost: number;
   flagged: boolean;
+  flagCategory?: "upstream_error" | "proxy_error" | "prompt_risk" | null;
   flagReason?: string | null;
   metadata?: Record<string, unknown>;
 }) {
@@ -74,6 +75,7 @@ export async function logUsage(params: {
         totalTokens: params.totalTokens,
         cost: params.cost,
         flagged: params.flagged,
+        flagCategory: params.flagCategory ?? null,
         flagReason: params.flagReason,
         promptMetadata: params.metadata
           ? JSON.parse(JSON.stringify(params.metadata))

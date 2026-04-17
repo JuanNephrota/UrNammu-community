@@ -1,16 +1,14 @@
 import Link from "next/link";
-import type { Prisma } from "@prisma/client";
 import { Download } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { parseEnforcementMode } from "@/lib/settings";
+import { listBlockedEvents, type BlockedEventSource } from "@/lib/blocked-events";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/utils";
 import { FilterBar } from "./filter-bar";
-
-type Reason = { ruleKey: string; message: string; policyId: string; policyName: string };
 
 const PAGE_SIZE = 50;
 
@@ -27,34 +25,38 @@ function defaultSince(): Date {
   return d;
 }
 
-function modeBadge(mode: string) {
-  if (mode === "enforced") {
-    return (
-      <Badge className="bg-[var(--critical)]/15 text-[var(--critical)] border border-[var(--critical)]/30">
-        Enforced
-      </Badge>
-    );
-  }
-  if (mode === "dryrun") {
+function sourceBadge(source: "policy" | "content", modeLabel: string) {
+  if (source === "policy") {
+    if (modeLabel === "enforced") {
+      return (
+        <Badge className="bg-[var(--critical)]/15 text-[var(--critical)] border border-[var(--critical)]/30">
+          Policy · Enforced
+        </Badge>
+      );
+    }
     return (
       <Badge className="bg-[var(--warning)]/15 text-[var(--warning)] border border-[var(--warning)]/30">
-        Dry run
+        Policy · Dry run
       </Badge>
     );
   }
-  return <Badge variant="outline">{mode}</Badge>;
+  // content
+  return (
+    <Badge className="bg-[var(--critical)]/15 text-[var(--critical)] border border-[var(--critical)]/30">
+      Content · Blocked
+    </Badge>
+  );
 }
 
-export default async function PolicyDenialsPage({
+export default async function BlockedQueriesPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const mode =
-    typeof params.mode === "string" && (params.mode === "dryrun" || params.mode === "enforced")
-      ? params.mode
-      : null;
+  const sourceParam = typeof params.source === "string" ? params.source : "";
+  const source: BlockedEventSource | undefined =
+    sourceParam === "policy" || sourceParam === "content" ? sourceParam : undefined;
   const aiSystemIdParam = typeof params.aiSystemId === "string" ? params.aiSystemId : "";
   const policyIdParam = typeof params.policyId === "string" ? params.policyId : "";
   const sinceParam = typeof params.since === "string" ? params.since : "";
@@ -63,64 +65,56 @@ export default async function PolicyDenialsPage({
   const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
 
   const since = parseDate(sinceParam) ?? defaultSince();
-  const until = parseDate(untilParam);
+  const until = parseDate(untilParam) ?? undefined;
 
-  // Build the filter once; re-used for list, count, and available-policy lookup.
-  const where: Prisma.PolicyDenialWhereInput = {
-    createdAt: {
-      gte: since,
-      ...(until ? { lte: until } : {}),
-    },
-    ...(mode ? { mode } : {}),
-    ...(aiSystemIdParam ? { aiSystemId: aiSystemIdParam } : {}),
-    ...(policyIdParam ? { policyIds: { has: policyIdParam } } : {}),
-  };
-
-  const [denials, totalCount, systems, policies, enforcementModeSetting] = await Promise.all([
-    prisma.policyDenial.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    prisma.policyDenial.count({ where }),
-    prisma.aISystem.findMany({
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
-    prisma.policy.findMany({
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
-    prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
-  ]);
+  const [{ items, total }, systems, policies, enforcementModeSetting] =
+    await Promise.all([
+      listBlockedEvents(
+        {
+          since,
+          until,
+          aiSystemId: aiSystemIdParam || undefined,
+          policyId: policyIdParam || undefined,
+          source,
+        },
+        { skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }
+      ),
+      prisma.aISystem.findMany({
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      }),
+      prisma.policy.findMany({
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      }),
+      prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
+    ]);
 
   const currentMode = parseEnforcementMode(enforcementModeSetting?.value);
 
-  // Hydrate aiSystemId → name for the rows we just read.
   const systemNames = new Map(systems.map((s) => [s.id, s.name]));
   const policyNames = new Map(policies.map((p) => [p.id, p.name]));
 
-  // Pass the current filter state to the CSV export link.
   const exportQs = new URLSearchParams();
-  if (mode) exportQs.set("mode", mode);
+  if (source) exportQs.set("source", source);
   if (aiSystemIdParam) exportQs.set("aiSystemId", aiSystemIdParam);
   if (policyIdParam) exportQs.set("policyId", policyIdParam);
   if (sinceParam) exportQs.set("since", sinceParam);
   if (untilParam) exportQs.set("until", untilParam);
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Policy Denials"
+        title="Blocked Queries"
         description={
-          currentMode === "off"
-            ? "Global enforcement is currently off — no new denials are being recorded. Change the mode in Settings → General to start collecting."
+          `Requests rejected or flagged by UrNammu — policy denials from the proxy plus dangerous-prompt content blocks. ` +
+          (currentMode === "off"
+            ? "Policy enforcement is off; new policy rows only appear once you flip the mode in Settings → General."
             : currentMode === "dryrun"
-              ? "Dry-run mode — denials are logged, but requests still pass through."
-              : "Enforce mode — blocking denials return 403 to the caller."
+              ? "Policy enforcement is in dry-run; rows are recorded but requests still forward."
+              : "Policy enforcement is on; blocking denials return 403.")
         }
       >
         <a href={`/api/policy-denials/export?${exportQs.toString()}`}>
@@ -137,7 +131,7 @@ export default async function PolicyDenialsPage({
             systems={systems}
             policies={policies}
             initial={{
-              mode: mode ?? "all",
+              source: source ?? "all",
               aiSystemId: aiSystemIdParam,
               policyId: policyIdParam,
               since: sinceParam || since.toISOString(),
@@ -149,9 +143,9 @@ export default async function PolicyDenialsPage({
 
       <Card>
         <CardContent className="pt-6">
-          {denials.length === 0 ? (
+          {items.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">
-              No denials in this range. {currentMode === "off" ? "(Enforcement is off.)" : ""}
+              No blocked queries in this range.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -159,39 +153,36 @@ export default async function PolicyDenialsPage({
                 <thead>
                   <tr className="border-b border-[var(--border-subtle)] text-left text-xs uppercase text-[var(--text-muted)]">
                     <th className="py-2 pr-4 font-medium">Time</th>
-                    <th className="py-2 pr-4 font-medium">Mode</th>
+                    <th className="py-2 pr-4 font-medium">Source</th>
                     <th className="py-2 pr-4 font-medium">System</th>
                     <th className="py-2 pr-4 font-medium">Provider · Model</th>
                     <th className="py-2 pr-4 font-medium">Policies</th>
-                    <th className="py-2 pr-4 font-medium">Reasons</th>
+                    <th className="py-2 pr-4 font-medium">Reason</th>
                     <th className="py-2 pr-4 font-medium">User</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {denials.map((row) => {
-                    const reasons = Array.isArray(row.reasons)
-                      ? (row.reasons as unknown as Reason[])
-                      : [];
-                    const firstReason = reasons[0]?.message ?? "—";
-                    const extraReasons = reasons.length > 1 ? ` (+${reasons.length - 1})` : "";
+                  {items.map((row) => {
                     const systemName = row.aiSystemId
                       ? systemNames.get(row.aiSystemId) ?? row.aiSystemId
                       : "—";
                     const policyList = row.policyIds
                       .map((id) => policyNames.get(id) ?? id)
                       .join(", ");
-
+                    const extra = row.reasonCount > 1 ? ` (+${row.reasonCount - 1})` : "";
                     return (
                       <tr
                         key={row.id}
                         className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-base)]/50"
                       >
                         <td className="py-2 pr-4 text-xs text-[var(--text-muted)] whitespace-nowrap">
-                          <Link href={`/compliance/denials/${row.id}`} className="hover:underline">
+                          <Link href={row.detailHref} className="hover:underline">
                             {formatDateTime(row.createdAt)}
                           </Link>
                         </td>
-                        <td className="py-2 pr-4">{modeBadge(row.mode)}</td>
+                        <td className="py-2 pr-4">
+                          {sourceBadge(row.source, row.modeLabel)}
+                        </td>
                         <td className="py-2 pr-4">
                           {row.aiSystemId ? (
                             <Link
@@ -205,7 +196,9 @@ export default async function PolicyDenialsPage({
                           )}
                         </td>
                         <td className="py-2 pr-4 text-xs">
-                          <span className="text-[var(--text-muted)]">{row.provider}</span>
+                          <span className="text-[var(--text-muted)]">
+                            {row.provider ?? "—"}
+                          </span>
                           {row.model ? (
                             <>
                               {" · "}
@@ -216,9 +209,9 @@ export default async function PolicyDenialsPage({
                         <td className="py-2 pr-4 text-xs max-w-[220px] truncate" title={policyList}>
                           {policyList || "—"}
                         </td>
-                        <td className="py-2 pr-4 text-xs max-w-[320px] truncate" title={reasons.map((r) => r.message).join("\n")}>
-                          {firstReason}
-                          {extraReasons}
+                        <td className="py-2 pr-4 text-xs max-w-[320px] truncate" title={row.primaryReason}>
+                          {row.primaryReason}
+                          {extra}
                         </td>
                         <td className="py-2 pr-4 text-xs text-[var(--text-muted)] whitespace-nowrap">
                           {row.userEmail ?? "—"}
@@ -231,7 +224,7 @@ export default async function PolicyDenialsPage({
               {totalPages > 1 ? (
                 <div className="flex items-center justify-between pt-4 text-xs text-[var(--text-muted)]">
                   <span>
-                    Page {page} of {totalPages} · {totalCount} total
+                    Page {page} of {totalPages} · {total} total
                   </span>
                   <div className="flex gap-2">
                     {page > 1 ? (

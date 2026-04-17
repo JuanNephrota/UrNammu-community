@@ -139,6 +139,7 @@ export async function handleAnthropicProxy(
       totalTokens: 0,
       cost: 0,
       flagged: true,
+      flagCategory: promptRisk.flagged ? "prompt_risk" : "proxy_error",
       flagReason:
         promptRisk.flagReason ??
         `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
@@ -244,10 +245,16 @@ export async function handleAnthropicProxy(
   const cost = calculateCost(model, promptTokens, completionTokens);
 
   let flagged = promptRisk.flagged;
+  let flagCategory: "upstream_error" | "prompt_risk" | null = promptRisk.flagged
+    ? "prompt_risk"
+    : null;
   let flagReason: string | null = promptRisk.flagReason;
 
   if (!anthropicResponse.ok) {
     flagged = true;
+    // Prompt-risk wins the category when both fire — that's the more
+    // actionable governance signal for the user.
+    if (flagCategory === null) flagCategory = "upstream_error";
     const apiError = `API error: ${anthropicResponse.status} ${responseBody.error?.message ?? ""}`.trim();
     flagReason = flagReason ? `${flagReason}; ${apiError}` : apiError;
   }
@@ -262,6 +269,7 @@ export async function handleAnthropicProxy(
     totalTokens,
     cost,
     flagged,
+    flagCategory,
     flagReason,
     metadata: {
       latencyMs,
@@ -372,6 +380,7 @@ async function extractStreamUsage(
         totalTokens,
         cost,
         flagged: ctx.promptRisk.flagged,
+        flagCategory: ctx.promptRisk.flagged ? "prompt_risk" : null,
         flagReason: ctx.promptRisk.flagReason,
         metadata: {
           latencyMs: ctx.latencyMs,
@@ -410,6 +419,7 @@ async function logUsage(params: {
   totalTokens: number;
   cost: number;
   flagged: boolean;
+  flagCategory?: "upstream_error" | "proxy_error" | "prompt_risk" | null;
   flagReason?: string | null;
   metadata?: Record<string, unknown>;
 }) {
@@ -434,6 +444,7 @@ async function logUsage(params: {
         totalTokens: params.totalTokens,
         cost: params.cost,
         flagged: params.flagged,
+        flagCategory: params.flagCategory ?? null,
         flagReason: params.flagReason,
         promptMetadata: params.metadata
           ? JSON.parse(JSON.stringify(params.metadata))

@@ -616,11 +616,19 @@ model APIUsageLog {
   cost             Float   @default(0)
   promptMetadata   Json?
   flagged          Boolean @default(false)
+  // Why was the row flagged? Free-form string; known values:
+  //   "upstream_error" — provider returned non-2xx
+  //   "proxy_error"    — network error before reaching provider
+  //   "prompt_risk"    — prompt-risk rule matched (content block)
+  // Split out from `flagReason` so the UI can tell operational failures
+  // apart from actual block events.
+  flagCategory     String?
   flagReason       String?
 
   createdAt DateTime @default(now())
 
   @@index([aiSystemId, createdAt])
+  @@index([flagCategory, createdAt])
 }
 
 // ─── Policy Denials (runtime enforcement log) ──────────

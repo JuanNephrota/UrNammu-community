@@ -10,6 +10,12 @@ import {
 // current data instead of a stale render.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+// Helper defined outside the component to keep Date.now() off the render path
+// (react-hooks/purity linting).
+function sevenDaysAgoWindow() {
+  return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { GovernanceActionQueue } from "@/components/dashboard/governance-action-queue";
@@ -460,30 +466,24 @@ export default async function DashboardPage() {
     .sort((a, b) => b.recommendation.priority - a.recommendation.priority)
     .slice(0, 5);
 
-  // Policy enforcement posture — only fetch denial counts if enforcement is
-  // actually armed. When mode is "off", keep the dashboard quiet: no card,
-  // no DB hit.
-  const enforcementModeSetting = await prisma.appSetting.findUnique({
-    where: { key: "policy_enforcement_mode" },
-  });
+  // Blocked queries posture — policy denials + prompt-risk content blocks.
+  // We always count because content blocks happen regardless of the global
+  // policy enforcement mode setting. The banner hides only when both counts
+  // are zero and the mode is "off".
+  const sevenDaysAgo = sevenDaysAgoWindow();
+  const [enforcementModeSetting, denialsLast7d, denialsEnforced7d, contentBlocksLast7d] = await Promise.all([
+    prisma.appSetting.findUnique({ where: { key: "policy_enforcement_mode" } }),
+    prisma.policyDenial.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
+    prisma.policyDenial.count({
+      where: { mode: "enforced", createdAt: { gte: sevenDaysAgo } },
+    }),
+    prisma.alert.count({
+      where: { source: "dangerous_prompt", createdAt: { gte: sevenDaysAgo } },
+    }),
+  ]);
   const enforcementMode = parseEnforcementMode(enforcementModeSetting?.value);
-  const denialsLast7d =
-    enforcementMode === "off"
-      ? 0
-      : await prisma.policyDenial.count({
-          where: {
-            createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-          },
-        });
-  const denialsEnforced7d =
-    enforcementMode === "enforce"
-      ? await prisma.policyDenial.count({
-          where: {
-            mode: "enforced",
-            createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-          },
-        })
-      : 0;
+  const blockedLast7d = denialsLast7d + contentBlocksLast7d;
+  const showBlockedBanner = enforcementMode !== "off" || blockedLast7d > 0;
 
   return (
     <div className="space-y-8">
@@ -510,17 +510,17 @@ export default async function DashboardPage() {
         </Card>
       )}
 
-      {enforcementMode !== "off" ? (
+      {showBlockedBanner ? (
         <Link
           href="/compliance/denials"
           className="block rounded-lg border p-4 transition-all hover:brightness-110"
           style={{
             borderColor:
-              enforcementMode === "enforce"
+              enforcementMode === "enforce" || contentBlocksLast7d > 0
                 ? "var(--critical)"
                 : "var(--warning)",
             backgroundColor:
-              enforcementMode === "enforce"
+              enforcementMode === "enforce" || contentBlocksLast7d > 0
                 ? "color-mix(in srgb, var(--critical) 6%, var(--bg-base))"
                 : "color-mix(in srgb, var(--warning) 6%, var(--bg-base))",
           }}
@@ -531,19 +531,28 @@ export default async function DashboardPage() {
                 className="text-xs font-medium uppercase tracking-wide"
                 style={{
                   color:
-                    enforcementMode === "enforce"
+                    enforcementMode === "enforce" || contentBlocksLast7d > 0
                       ? "var(--critical)"
                       : "var(--warning)",
                 }}
               >
-                Policy Enforcement: {enforcementMode === "enforce" ? "Enforce" : "Dry run"}
+                Blocked Queries · Policy enforcement: {enforcementMode}
               </p>
               <p className="mt-1 text-sm">
-                <span className="text-lg font-semibold">{denialsLast7d}</span>{" "}
-                <span className="text-[var(--text-muted)]">denials in the last 7 days</span>
-                {enforcementMode === "enforce" && denialsEnforced7d > 0 ? (
+                <span className="text-lg font-semibold">{blockedLast7d}</span>{" "}
+                <span className="text-[var(--text-muted)]">in the last 7 days</span>
+                {denialsEnforced7d > 0 ? (
                   <span className="text-[var(--text-muted)]">
-                    {" "}· <span className="font-semibold text-[var(--critical)]">{denialsEnforced7d}</span> blocked
+                    {" "}·{" "}
+                    <span className="font-semibold text-[var(--critical)]">{denialsEnforced7d}</span>{" "}
+                    policy blocks
+                  </span>
+                ) : null}
+                {contentBlocksLast7d > 0 ? (
+                  <span className="text-[var(--text-muted)]">
+                    {" "}·{" "}
+                    <span className="font-semibold text-[var(--critical)]">{contentBlocksLast7d}</span>{" "}
+                    content blocks
                   </span>
                 ) : null}
               </p>
@@ -552,7 +561,7 @@ export default async function DashboardPage() {
               className="h-4 w-4"
               style={{
                 color:
-                  enforcementMode === "enforce"
+                  enforcementMode === "enforce" || contentBlocksLast7d > 0
                     ? "var(--critical)"
                     : "var(--warning)",
               }}
