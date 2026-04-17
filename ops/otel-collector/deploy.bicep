@@ -95,7 +95,7 @@ processors:
     send_batch_max_size: 1500
 
 exporters:
-  otlphttp/urnammu:
+  otlp_http/urnammu:
     endpoint: $${env:URNAMMU_TELEMETRY_URL}
     encoding: json
     compression: gzip
@@ -117,7 +117,7 @@ service:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, filter/claude_code_only, resource, batch]
-      exporters: [otlphttp/urnammu]
+      exporters: [otlp_http/urnammu]
   telemetry:
     logs:
       level: info

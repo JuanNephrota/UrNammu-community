@@ -4,7 +4,7 @@
 #   Claude Code clients (OTLP/HTTP, bearer auth)
 #     → receivers.otlp
 #     → memory_limiter → filter/claude_code_only → resource → batch
-#     → exporters.otlphttp (UrNammu /api/telemetry/claude-code)
+#     → exporters.otlp_http (UrNammu /api/telemetry/claude-code)
 #
 # Loaded by the Container App via `--config=env:OTEL_CONFIG`. Two bearer
 # tokens, both injected as ACA secrets:
@@ -65,7 +65,7 @@ processors:
     send_batch_max_size: 1500
 
 exporters:
-  otlphttp/urnammu:
+  otlp_http/urnammu:
     endpoint: ${env:URNAMMU_TELEMETRY_URL}
     encoding: json
     compression: gzip
@@ -91,7 +91,7 @@ service:
         - filter/claude_code_only
         - resource
         - batch
-      exporters: [otlphttp/urnammu]
+      exporters: [otlp_http/urnammu]
   telemetry:
     logs:
       level: info
