@@ -146,3 +146,55 @@ export async function getForgeSkillContent(
     `/skills/${encodeURIComponent(id)}/content`
   );
 }
+
+// File types we're willing to decode + store as text. Everything else we
+// leave as null on the AISkill row.
+const TEXT_FILE_TYPES = new Set([
+  "md", "markdown", "txt", "text",
+  "json", "yaml", "yml", "toml", "ini",
+  "html", "htm", "xml", "csv", "tsv",
+  "py", "js", "ts", "tsx", "jsx", "sh", "bash",
+  "go", "rb", "rs", "java", "c", "cpp", "h", "hpp",
+  "css", "scss", "sass", "less",
+]);
+
+// Upper bound on bytes we'll pull inline into the DB. Anything larger is
+// almost certainly a binary artifact we don't want as a description.
+const MAX_INLINE_BYTES = 512 * 1024;
+
+export function isTextFileType(fileType: string | null | undefined): boolean {
+  if (!fileType) return false;
+  return TEXT_FILE_TYPES.has(fileType.toLowerCase().replace(/^\./, ""));
+}
+
+/**
+ * Two-step fetch: ask Forge for a short-lived signed URL, then pull the
+ * bytes from that URL. Returns null if the file isn't a text type we know
+ * how to store, or if it's too large. Throws on network / HTTP errors.
+ *
+ * Signed URLs don't carry our auth — they're pre-signed CDN/storage URLs
+ * — so we strip the Authorization header for that fetch.
+ */
+export async function fetchForgeSkillText(
+  config: ForgeConfig,
+  id: string
+): Promise<string | null> {
+  const content = await getForgeSkillContent(config, id);
+  if (!content.content_url) return null;
+  if (!isTextFileType(content.file_type)) return null;
+  if (
+    typeof content.file_size_bytes === "number" &&
+    content.file_size_bytes > MAX_INLINE_BYTES
+  ) {
+    return null;
+  }
+  const res = await fetch(content.content_url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new ForgeApiError(
+      `Content fetch failed for ${id}`,
+      res.status,
+      undefined
+    );
+  }
+  return await res.text();
+}

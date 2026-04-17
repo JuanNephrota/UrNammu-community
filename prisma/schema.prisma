@@ -948,6 +948,9 @@ model AISkill {
   forgeCreatedAt         DateTime
   forgeUpdatedAt         DateTime
 
+  content                String?   @db.Text
+  contentFetchedAt       DateTime?
+
   syncedAt               DateTime  @default(now())
   retiredAt              DateTime?
 

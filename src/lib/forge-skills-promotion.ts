@@ -59,6 +59,13 @@ function normalizeType(contentType: string): "agent" | "system" | null {
 }
 
 function buildDescription(skill: AISkill): string {
+  // Prefer the downloaded Forge content — that's the authoritative
+  // description once we've pulled it. Fall back to a metadata blurb when
+  // content isn't available yet (non-text files, large files, or a
+  // content-fetch that hasn't run yet).
+  if (skill.content && skill.content.trim().length > 0) {
+    return skill.content;
+  }
   const lines = [
     `Auto-created from CertifID Forge skill "${skill.name}".`,
     `Forge ID: ${skill.forgeId}`,
@@ -69,6 +76,24 @@ function buildDescription(skill: AISkill): string {
   if (skill.tags.length) lines.push(`Tags: ${skill.tags.join(", ")}`);
   if (skill.appUrl) lines.push(`App URL: ${skill.appUrl}`);
   return lines.join("\n");
+}
+
+/**
+ * Map a Forge `author.name` to an existing User row (case-insensitive name
+ * match). Returns null when there's no match — callers then fall back to
+ * the Forge Sync Bot so we never create a row with a missing owner.
+ */
+async function resolveAuthorOwnerId(
+  authorName: string | null | undefined
+): Promise<string | null> {
+  if (!authorName) return null;
+  const trimmed = authorName.trim();
+  if (!trimmed) return null;
+  const match = await prisma.user.findFirst({
+    where: { name: { equals: trimmed, mode: "insensitive" } },
+    select: { id: true },
+  });
+  return match?.id ?? null;
 }
 
 /**
@@ -91,7 +116,10 @@ export async function promoteSkill(skill: AISkill): Promise<
     return { action: "skipped", reason: "already linked to a system" };
   }
 
-  const ownerId = await getForgeBotUserId();
+  // Prefer the skill's author as the owner; fall back to the Forge Sync
+  // Bot when we can't resolve them to a local User row.
+  const authorOwnerId = await resolveAuthorOwnerId(skill.authorName);
+  const ownerId = authorOwnerId ?? (await getForgeBotUserId());
   const department = skill.departmentName ?? "Forge";
 
   if (target === "agent") {

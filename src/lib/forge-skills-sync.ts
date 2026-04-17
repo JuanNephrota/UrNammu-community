@@ -15,10 +15,24 @@ import { FORGE_SETTINGS_KEYS, getSetting, setSetting } from "./settings";
 import {
   ForgeApiError,
   type ForgeSkill,
+  fetchForgeSkillText,
+  isTextFileType,
   listForgeSkills,
   loadForgeConfig,
 } from "./forge-skills-client";
 import { promoteSkill } from "./forge-skills-promotion";
+
+// Forge limits integration keys to 60 req/min. We space every direct Forge
+// call (list + content signed-URL) at ~1.1s. The signed-URL follow-up fetch
+// hits storage, not Forge, so it isn't paced.
+const FORGE_MIN_INTERVAL_MS = 1100;
+let lastForgeCallAt = 0;
+async function paceForgeCall(): Promise<void> {
+  const now = Date.now();
+  const wait = lastForgeCallAt + FORGE_MIN_INTERVAL_MS - now;
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastForgeCallAt = Date.now();
+}
 
 export type SyncOptions = {
   trigger: "manual" | "cron";
@@ -101,6 +115,7 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
     // Upper bound on pages to stop a runaway loop. 200 pages × 100 skills =
     // 20k skills per run, well beyond anything plausible for Forge today.
     for (let page = 0; page < 200; page++) {
+      await paceForgeCall();
       const body = await listForgeSkills(config, {
         since,
         cursor,
@@ -110,10 +125,17 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
         fetched++;
         const row = toSkillRow(item);
         // Upsert + fetch back in one round trip — we need the final row
-        // (with linked*Id) to feed promotion.
+        // (with linked*Id) to feed promotion. Also pull prior forgeUpdatedAt
+        // and content so we only re-download when the skill has actually
+        // changed upstream.
         const before = await prisma.aISkill.findUnique({
           where: { forgeId: item.id },
-          select: { id: true },
+          select: {
+            id: true,
+            forgeUpdatedAt: true,
+            content: true,
+            contentFetchedAt: true,
+          },
         });
         const saved = await prisma.aISkill.upsert({
           where: { forgeId: item.id },
@@ -122,6 +144,38 @@ export async function syncForgeSkills(opts: SyncOptions): Promise<SyncResult> {
         });
         if (before) updated++;
         else created++;
+
+        // Pull the skill body from Forge when this is a new row, when the
+        // upstream has changed since we last cached, or when we've never
+        // stored content before and the file type is one we handle.
+        const shouldFetchContent =
+          isTextFileType(item.file_type) &&
+          (!before ||
+            !before.contentFetchedAt ||
+            before.content == null ||
+            (before.forgeUpdatedAt &&
+              new Date(item.updated_at) > before.forgeUpdatedAt));
+        if (shouldFetchContent) {
+          try {
+            await paceForgeCall();
+            const text = await fetchForgeSkillText(config, item.id);
+            if (text != null) {
+              await prisma.aISkill.update({
+                where: { id: saved.id },
+                data: { content: text, contentFetchedAt: new Date() },
+              });
+              saved.content = text;
+              saved.contentFetchedAt = new Date();
+            }
+          } catch (contentErr) {
+            // Content download failures shouldn't abort the sync — the
+            // next run will retry. Log and move on.
+            console.error(
+              `fetchForgeSkillText failed for ${item.id}:`,
+              contentErr instanceof Error ? contentErr.message : contentErr
+            );
+          }
+        }
 
         // Auto-promote into AIAgent / AISystem when contentType matches and
         // the skill isn't already linked. Idempotent — safe to re-run on
