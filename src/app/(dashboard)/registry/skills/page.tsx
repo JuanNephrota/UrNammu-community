@@ -11,23 +11,10 @@ import { SyncButton } from "./sync-button";
 
 const PAGE_SIZE = 50;
 
-function contentTypeBadge(contentType: string) {
-  const tone =
-    contentType === "agent"
-      ? "var(--accent)"
-      : contentType === "app"
-        ? "var(--success)"
-        : "var(--text-muted)";
-  return (
-    <Badge
-      variant="outline"
-      className="font-mono text-[10px]"
-      style={{ color: tone, borderColor: `color-mix(in srgb, ${tone} 30%, transparent)` }}
-    >
-      {contentType}
-    </Badge>
-  );
-}
+// The Skills registry surfaces only content_type="skill" rows. Other Forge
+// content types (agent, app, agent_system) are auto-promoted into the
+// AI Agents / AI Systems registries on sync and live there.
+const SKILLS_CONTENT_TYPE = "skill";
 
 function statusBadge(status: string) {
   if (status === "retired") {
@@ -64,7 +51,6 @@ export default async function AISkillsPage({
 }) {
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q.trim() : "";
-  const contentTypeParam = typeof params.contentType === "string" ? params.contentType : "";
   const categoryParam = typeof params.category === "string" ? params.category : "";
   const departmentParam = typeof params.department === "string" ? params.department : "";
   const statusParam = typeof params.status === "string" ? params.status : "";
@@ -72,7 +58,7 @@ export default async function AISkillsPage({
   const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
 
   const where: Prisma.AISkillWhereInput = {
-    ...(contentTypeParam ? { contentType: contentTypeParam } : {}),
+    contentType: SKILLS_CONTENT_TYPE,
     ...(categoryParam ? { categoryName: categoryParam } : {}),
     ...(departmentParam ? { departmentName: departmentParam } : {}),
     ...(statusParam ? { status: statusParam } : {}),
@@ -87,34 +73,33 @@ export default async function AISkillsPage({
       : {}),
   };
 
-  const [skills, total, contentTypes, categories, departments, latestRun, config] =
+  const [skills, total, categories, departments, latestRun, config] =
     await Promise.all([
       prisma.aISkill.findMany({
         where,
         orderBy: { forgeUpdatedAt: "desc" },
         skip: (page - 1) * PAGE_SIZE,
         take: PAGE_SIZE,
-        include: {
-          linkedSystem: { select: { id: true, name: true } },
-          linkedAgent: { select: { id: true, name: true } },
-        },
       }),
       prisma.aISkill.count({ where }),
-      prisma.aISkill
-        .findMany({ distinct: ["contentType"], select: { contentType: true } })
-        .then((r) => r.map((x) => x.contentType).filter(Boolean)),
       prisma.aISkill
         .findMany({
           distinct: ["categoryName"],
           select: { categoryName: true },
-          where: { categoryName: { not: null } },
+          where: {
+            contentType: SKILLS_CONTENT_TYPE,
+            categoryName: { not: null },
+          },
         })
         .then((r) => r.map((x) => x.categoryName!).filter(Boolean)),
       prisma.aISkill
         .findMany({
           distinct: ["departmentName"],
           select: { departmentName: true },
-          where: { departmentName: { not: null } },
+          where: {
+            contentType: SKILLS_CONTENT_TYPE,
+            departmentName: { not: null },
+          },
         })
         .then((r) => r.map((x) => x.departmentName!).filter(Boolean)),
       prisma.forgeSyncRun.findFirst({
@@ -171,12 +156,10 @@ export default async function AISkillsPage({
       <Card>
         <CardContent className="pt-6">
           <FilterBar
-            contentTypes={contentTypes}
             categories={categories}
             departments={departments}
             initial={{
               q,
-              contentType: contentTypeParam || "all",
               category: categoryParam || "all",
               department: departmentParam || "all",
               status: statusParam || "all",
@@ -197,11 +180,9 @@ export default async function AISkillsPage({
                 <thead>
                   <tr className="border-b border-[var(--border-subtle)] text-left text-xs uppercase text-[var(--text-muted)]">
                     <th className="py-2 pr-4 font-medium">Skill</th>
-                    <th className="py-2 pr-4 font-medium">Type</th>
                     <th className="py-2 pr-4 font-medium">Category</th>
                     <th className="py-2 pr-4 font-medium">Author</th>
                     <th className="py-2 pr-4 font-medium">Department</th>
-                    <th className="py-2 pr-4 font-medium">Linked</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium">Updated</th>
                   </tr>
@@ -226,32 +207,10 @@ export default async function AISkillsPage({
                           </div>
                         ) : null}
                       </td>
-                      <td className="py-2 pr-4">{contentTypeBadge(skill.contentType)}</td>
                       <td className="py-2 pr-4 text-xs">{skill.categoryName ?? "—"}</td>
                       <td className="py-2 pr-4 text-xs">{skill.authorName ?? "—"}</td>
                       <td className="py-2 pr-4 text-xs text-[var(--text-muted)]">
                         {skill.departmentName ?? "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-xs">
-                        {skill.linkedAgent ? (
-                          <Link
-                            href={`/agents/${skill.linkedAgent.id}`}
-                            className="text-[var(--accent)] hover:underline"
-                            title="AI Agent"
-                          >
-                            {skill.linkedAgent.name}
-                          </Link>
-                        ) : skill.linkedSystem ? (
-                          <Link
-                            href={`/registry/${skill.linkedSystem.id}`}
-                            className="text-[var(--accent)] hover:underline"
-                            title="AI System"
-                          >
-                            {skill.linkedSystem.name}
-                          </Link>
-                        ) : (
-                          <span className="text-[var(--text-muted)]">—</span>
-                        )}
                       </td>
                       <td className="py-2 pr-4">{statusBadge(skill.status)}</td>
                       <td className="py-2 pr-4 text-xs text-[var(--text-muted)] whitespace-nowrap">

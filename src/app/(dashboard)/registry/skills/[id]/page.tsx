@@ -42,14 +42,6 @@ export default async function AISkillDetailPage({
         <CardContent>
           <dl className="grid gap-3 sm:grid-cols-2 text-sm">
             <div>
-              <dt className="text-[var(--text-muted)]">Content type</dt>
-              <dd className="font-medium">
-                <Badge variant="outline" className="font-mono text-[10px]">
-                  {skill.contentType}
-                </Badge>
-              </dd>
-            </div>
-            <div>
               <dt className="text-[var(--text-muted)]">Status</dt>
               <dd className="font-medium capitalize">{skill.status}</dd>
             </div>
@@ -149,7 +141,8 @@ export default async function AISkillDetailPage({
           ) : null}
           {!skill.linkedAgent && !skill.linkedSystem ? (
             <p className="text-[var(--text-muted)]">
-              This skill&apos;s <code>content_type</code> ({skill.contentType}) isn&apos;t auto-promoted. Catalog entry only.
+              Skills aren&apos;t promoted automatically — Forge items that represent governed
+              agents or apps live in the AI Agents / AI Systems registries instead.
             </p>
           ) : null}
         </CardContent>

@@ -8,25 +8,22 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 interface Props {
-  contentTypes: string[];
   categories: string[];
   departments: string[];
   initial: {
     q: string;
-    contentType: string;
     category: string;
     department: string;
     status: string;
   };
 }
 
-export function FilterBar({ contentTypes, categories, departments, initial }: Props) {
+export function FilterBar({ categories, departments, initial }: Props) {
   const router = useRouter();
   const search = useSearchParams();
   const [pending, startTransition] = useTransition();
 
   const [q, setQ] = useState(initial.q);
-  const [contentType, setContentType] = useState(initial.contentType);
   const [category, setCategory] = useState(initial.category);
   const [department, setDepartment] = useState(initial.department);
   const [status, setStatus] = useState(initial.status);
@@ -38,10 +35,10 @@ export function FilterBar({ contentTypes, categories, departments, initial }: Pr
       else params.delete(key);
     };
     set("q", q.trim());
-    set("contentType", contentType === "all" ? "" : contentType);
     set("category", category === "all" ? "" : category);
     set("department", department === "all" ? "" : department);
     set("status", status === "all" ? "" : status);
+    params.delete("contentType"); // legacy param no longer used
     params.delete("page");
     startTransition(() => {
       router.push(`/registry/skills?${params.toString()}`);
@@ -50,7 +47,6 @@ export function FilterBar({ contentTypes, categories, departments, initial }: Pr
 
   function reset() {
     setQ("");
-    setContentType("all");
     setCategory("all");
     setDepartment("all");
     setStatus("all");
@@ -60,7 +56,7 @@ export function FilterBar({ contentTypes, categories, departments, initial }: Pr
   }
 
   return (
-    <div className="grid gap-3 lg:grid-cols-6 items-end">
+    <div className="grid gap-3 lg:grid-cols-5 items-end">
       <div className="space-y-1 lg:col-span-2">
         <Label>Search</Label>
         <Input
@@ -71,21 +67,6 @@ export function FilterBar({ contentTypes, categories, departments, initial }: Pr
           }}
           placeholder="Name, author, tag…"
         />
-      </div>
-      <div className="space-y-1">
-        <Label>Type</Label>
-        <select
-          value={contentType}
-          onChange={(e) => setContentType(e.target.value)}
-          className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
-        >
-          <option value="all">All types</option>
-          {contentTypes.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
       </div>
       <div className="space-y-1">
         <Label>Category</Label>
@@ -130,7 +111,7 @@ export function FilterBar({ contentTypes, categories, departments, initial }: Pr
           <option value="retired">Retired</option>
         </select>
       </div>
-      <div className="flex gap-2 lg:col-span-6">
+      <div className="flex gap-2 lg:col-span-5">
         <Button
           type="button"
           onClick={apply}
