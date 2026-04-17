@@ -5,10 +5,14 @@
  *   content_type = "app" | "agent-system"       → AISystem
  *   anything else                               → stays catalog-only
  *
- * One-way sync: if a skill is already linked (linkedAgentId or
- * linkedSystemId set), we never overwrite the governed row. That lets
- * operators edit the promoted system/agent after the fact without
- * worrying about Forge clobbering their changes on the next sync.
+ * One-way sync with a narrow exception for descriptions: once a skill is
+ * linked we never overwrite the governed row's fields, so operators can
+ * edit freely without Forge clobbering them on the next sync. The one
+ * exception is `description` — if the governed row's description still
+ * starts with the auto-generated fallback marker, we refresh it on every
+ * sync so late-arriving content (e.g. content fetched after the initial
+ * promotion) replaces the boilerplate. Any manual edit removes the
+ * marker and re-locks the row against further description updates.
  *
  * Ownership: all auto-created rows are attributed to a synthetic
  * "Forge Sync Bot" User. Looked up (or created) lazily on first need,
@@ -18,6 +22,13 @@
 
 import type { AISkill } from "@prisma/client";
 import { prisma } from "./prisma";
+
+// Prefix on every metadata-fallback description. Used both as the first
+// line in buildDescription() and as the sentinel we look for when
+// deciding whether a linked row's description is still auto-generated
+// (and therefore safe to refresh). Do not translate or reword without
+// updating the refresh check below.
+const FALLBACK_DESCRIPTION_PREFIX = "Auto-created from CertifID Forge skill";
 
 const FORGE_BOT_EMAIL = "forge-sync@urnammu.internal";
 const FORGE_BOT_NAME = "Forge Sync Bot";
@@ -67,7 +78,7 @@ function buildDescription(skill: AISkill): string {
     return skill.content;
   }
   const lines = [
-    `Auto-created from CertifID Forge skill "${skill.name}".`,
+    `${FALLBACK_DESCRIPTION_PREFIX} "${skill.name}".`,
     `Forge ID: ${skill.forgeId}`,
   ];
   if (skill.authorName) lines.push(`Author: ${skill.authorName}`);
@@ -97,6 +108,46 @@ async function resolveAuthorOwnerId(
 }
 
 /**
+ * Refresh the governed row's description from the current skill state,
+ * but only if it still bears the auto-generated fallback marker. An
+ * operator edit removes the marker and permanently locks the field
+ * against further sync updates.
+ */
+async function refreshLinkedDescriptionIfUntouched(
+  target: "agent" | "system",
+  linkedId: string,
+  skill: AISkill
+): Promise<void> {
+  const current =
+    target === "agent"
+      ? await prisma.aIAgent.findUnique({
+          where: { id: linkedId },
+          select: { description: true },
+        })
+      : await prisma.aISystem.findUnique({
+          where: { id: linkedId },
+          select: { description: true },
+        });
+  const currentDescription = current?.description ?? "";
+  if (!currentDescription.startsWith(FALLBACK_DESCRIPTION_PREFIX)) return;
+
+  const next = buildDescription(skill);
+  if (next === currentDescription) return;
+
+  if (target === "agent") {
+    await prisma.aIAgent.update({
+      where: { id: linkedId },
+      data: { description: next },
+    });
+  } else {
+    await prisma.aISystem.update({
+      where: { id: linkedId },
+      data: { description: next },
+    });
+  }
+}
+
+/**
  * Ensure the skill has the right governance row linked. No-op if already
  * linked or if the skill's contentType doesn't promote.
  */
@@ -110,9 +161,11 @@ export async function promoteSkill(skill: AISkill): Promise<
     return { action: "skipped", reason: `contentType "${skill.contentType}" is not promotable` };
   }
   if (target === "agent" && skill.linkedAgentId) {
+    await refreshLinkedDescriptionIfUntouched("agent", skill.linkedAgentId, skill);
     return { action: "skipped", reason: "already linked to an agent" };
   }
   if (target === "system" && skill.linkedSystemId) {
+    await refreshLinkedDescriptionIfUntouched("system", skill.linkedSystemId, skill);
     return { action: "skipped", reason: "already linked to a system" };
   }
 
