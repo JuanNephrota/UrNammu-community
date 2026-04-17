@@ -35,8 +35,8 @@ param forwardBearerToken string
 @description('Absolute URL of the UrNammu ingestion endpoint, e.g. https://urnammu.vercel.app/api/telemetry/claude-code')
 param urnammuTelemetryUrl string
 
-@description('Pinned collector image. Bump deliberately.')
-param collectorImage string = 'otel/opentelemetry-collector-contrib:0.115.0'
+@description('Pinned collector image. Bump deliberately. Verify tag exists at https://hub.docker.com/r/otel/opentelemetry-collector-contrib/tags before changing.')
+param collectorImage string = 'otel/opentelemetry-collector-contrib:0.150.1'
 
 @description('Min replicas. 0 = scale-to-zero; cold starts ~5–10s on first request.')
 @minValue(0)
