@@ -1,6 +1,12 @@
 import { type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 
+type AuditLogClient = {
+  auditLog: {
+    create: typeof prisma.auditLog.create;
+  };
+};
+
 export async function createAuditLog(params: {
   userId: string;
   action: string;
@@ -9,8 +15,8 @@ export async function createAuditLog(params: {
   aiSystemId?: string;
   agentId?: string;
   changes?: Prisma.InputJsonValue;
-}) {
-  return prisma.auditLog.create({
+}, db: AuditLogClient = prisma) {
+  return db.auditLog.create({
     data: {
       userId: params.userId,
       action: params.action,

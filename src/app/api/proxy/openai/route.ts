@@ -51,6 +51,104 @@ function calculateCost(
   );
 }
 
+type OpenAIUpstreamPayload =
+  | {
+      kind: "stream";
+      body: ReadableStream<Uint8Array>;
+      contentType: string;
+    }
+  | {
+      kind: "json";
+      body: Record<string, unknown>;
+      contentType: string;
+    }
+  | {
+      kind: "text";
+      body: string;
+      contentType: string;
+    };
+
+type OpenAIErrorBody = {
+  error?: {
+    code?: string;
+    type?: string;
+    message?: string;
+  };
+};
+
+type OpenAIUsageBody = {
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+};
+
+export function getContentType(headers: Headers): string {
+  return headers.get("Content-Type") ?? headers.get("content-type") ?? "application/json";
+}
+
+export async function readOpenAIUpstreamPayload(
+  response: Response
+): Promise<OpenAIUpstreamPayload> {
+  const contentType = getContentType(response.headers);
+
+  if (contentType.includes("text/event-stream")) {
+    if (!response.body) {
+      throw new Error("OpenAI stream response body was empty.");
+    }
+
+    return {
+      kind: "stream",
+      body: response.body,
+      contentType,
+    };
+  }
+
+  if (contentType.includes("application/json")) {
+    return {
+      kind: "json",
+      body: (await response.json()) as Record<string, unknown>,
+      contentType,
+    };
+  }
+
+  return {
+    kind: "text",
+    body: await response.text(),
+    contentType,
+  };
+}
+
+export function sanitizeOpenAIUpstreamError(
+  status: number,
+  payload: OpenAIUpstreamPayload
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {
+    error: "upstream_error",
+    status,
+  };
+
+  if (payload.kind !== "json") {
+    return sanitized;
+  }
+
+  const body = payload.body as OpenAIErrorBody;
+
+  const upstreamCode =
+    typeof body.error?.code === "string"
+      ? body.error.code
+      : null;
+  const upstreamType =
+    typeof body.error?.type === "string"
+      ? body.error.type
+      : null;
+
+  if (upstreamCode) sanitized.code = upstreamCode;
+  if (upstreamType) sanitized.type = upstreamType;
+  return sanitized;
+}
+
 export async function POST(req: NextRequest) {
   // Authenticate proxy request
   const proxyKey = req.headers.get("x-proxy-key");
@@ -162,10 +260,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const responseBody = await openaiResponse.json();
+  const responsePayload = await readOpenAIUpstreamPayload(openaiResponse);
   const latencyMs = Date.now() - startTime;
 
-  const usage = responseBody.usage ?? {};
+  if (responsePayload.kind === "stream") {
+    if (promptRisk.flagged) {
+      await createPromptRiskAlert({
+        provider: "chatgpt",
+        model,
+        department,
+        userEmail,
+        aiSystemId: linkedSystem?.id ?? null,
+        analysis: promptRisk,
+      });
+      logger.warn("openai_proxy.dangerous_prompt_detected", {
+        model,
+        department,
+        userEmail,
+        categories: promptRisk.categories,
+        aiSystemId: linkedSystem?.id ?? null,
+      });
+    }
+
+    return new Response(responsePayload.body, {
+      status: openaiResponse.status,
+      headers: {
+        "Content-Type": responsePayload.contentType,
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  if (responsePayload.kind === "text") {
+    if (!openaiResponse.ok) {
+      logger.warn("openai_proxy.upstream_error", {
+        status: openaiResponse.status,
+        model,
+        department,
+        userEmail,
+        contentType: responsePayload.contentType,
+      });
+      return NextResponse.json(
+        sanitizeOpenAIUpstreamError(openaiResponse.status, responsePayload),
+        { status: openaiResponse.status }
+      );
+    }
+
+    return new Response(responsePayload.body, {
+      status: openaiResponse.status,
+      headers: {
+        "Content-Type": responsePayload.contentType,
+      },
+    });
+  }
+
+  const responseBody = responsePayload.body;
+
+  const usage = (responseBody as OpenAIUsageBody).usage ?? {};
   const promptTokens = usage.prompt_tokens ?? 0;
   const completionTokens = usage.completion_tokens ?? 0;
   const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
@@ -180,7 +332,7 @@ export async function POST(req: NextRequest) {
   if (!openaiResponse.ok) {
     flagged = true;
     if (flagCategory === null) flagCategory = "upstream_error";
-    const apiError = `API error: ${openaiResponse.status} ${responseBody.error?.message ?? ""}`.trim();
+    const apiError = `API error: ${openaiResponse.status} ${((responseBody as OpenAIErrorBody).error?.message ?? "")}`.trim();
     flagReason = flagReason ? `${flagReason}; ${apiError}` : apiError;
   }
 
@@ -234,24 +386,11 @@ export async function POST(req: NextRequest) {
   // OpenAI error bodies may include org IDs, rate-limit internals, or hints
   // about our server-side key that callers shouldn't see.
   if (!openaiResponse.ok) {
-    const upstreamCode =
-      typeof responseBody?.error?.code === "string"
-        ? responseBody.error.code
-        : null;
-    const upstreamType =
-      typeof responseBody?.error?.type === "string"
-        ? responseBody.error.type
-        : null;
-    const sanitized: Record<string, unknown> = {
-      error: "upstream_error",
-      status: openaiResponse.status,
-    };
-    if (upstreamCode) sanitized.code = upstreamCode;
-    if (upstreamType) sanitized.type = upstreamType;
+    const sanitized = sanitizeOpenAIUpstreamError(openaiResponse.status, responsePayload);
     logger.warn("openai_proxy.upstream_error", {
       status: openaiResponse.status,
-      code: upstreamCode,
-      type: upstreamType,
+      code: sanitized.code,
+      type: sanitized.type,
       model,
       department,
       userEmail,

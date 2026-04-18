@@ -49,27 +49,29 @@ export async function PUT(req: NextRequest) {
     const changedKeys: string[] = [];
 
     try {
-      for (const [key, value] of Object.entries(updates)) {
-        if (value === null || value === "") {
-          await prisma.appSetting.deleteMany({ where: { key } });
-          changedKeys.push(key);
-        } else {
-          const storedValue = encryptSettingValue(key, value);
-          await prisma.appSetting.upsert({
-            where: { key },
-            update: { value: storedValue },
-            create: { key, value: storedValue },
-          });
-          changedKeys.push(key);
+      await prisma.$transaction(async (tx) => {
+        for (const [key, value] of Object.entries(updates)) {
+          if (value === null || value === "") {
+            await tx.appSetting.deleteMany({ where: { key } });
+            changedKeys.push(key);
+          } else {
+            const storedValue = encryptSettingValue(key, value);
+            await tx.appSetting.upsert({
+              where: { key },
+              update: { value: storedValue },
+              create: { key, value: storedValue },
+            });
+            changedKeys.push(key);
+          }
         }
-      }
 
-      await createAuditLog({
-        userId: session.user.userId,
-        action: "UPDATE",
-        entityType: "AppSettings",
-        entityId: "global",
-        changes: JSON.parse(JSON.stringify({ keys: changedKeys })),
+        await createAuditLog({
+          userId: session.user.userId,
+          action: "UPDATE",
+          entityType: "AppSettings",
+          entityId: "global",
+          changes: JSON.parse(JSON.stringify({ keys: changedKeys })),
+        }, tx);
       });
 
       logger.info("settings.updated", {

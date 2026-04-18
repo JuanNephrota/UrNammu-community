@@ -1,6 +1,7 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import type { NextAuthOptions } from "next-auth";
 import type { Provider } from "next-auth/providers/index";
+import type { JWT } from "next-auth/jwt";
 import GoogleProvider from "next-auth/providers/google";
 import AzureADProvider from "next-auth/providers/azure-ad";
 import CredentialsProvider from "next-auth/providers/credentials";
@@ -16,6 +17,32 @@ async function getBooleanSetting(key: string, fallback: boolean) {
   if (value === "true") return true;
   if (value === "false") return false;
   return fallback;
+}
+
+export async function hydrateJwtClaims(
+  token: JWT,
+  user?: { email?: string | null; id?: string | null }
+): Promise<JWT> {
+  const jwtEmail = String(user?.email ?? token.email ?? "");
+  if (!jwtEmail) return token;
+
+  const dbUser = await prisma.user.findUnique({
+    where: { email: jwtEmail },
+    select: { id: true, role: true, department: true },
+  });
+
+  if (dbUser) {
+    token.userId = dbUser.id;
+    token.role = dbUser.role;
+    token.department = dbUser.department;
+    return token;
+  }
+
+  if (user?.id) {
+    token.userId = user.id;
+  }
+
+  return token;
 }
 
 export async function getAuthOptions(): Promise<NextAuthOptions> {
@@ -162,19 +189,8 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
         return true;
       },
       async jwt({ token, user, trigger }) {
-        if (user || trigger === "signIn") {
-          const jwtEmail = String(user?.email ?? token.email ?? "");
-          const dbUser = jwtEmail
-            ? await prisma.user.findUnique({
-                where: { email: jwtEmail },
-                select: { id: true, role: true, department: true },
-              })
-            : null;
-          if (dbUser) {
-            token.userId = dbUser.id;
-            token.role = dbUser.role;
-            token.department = dbUser.department;
-          }
+        if (token.email || user || trigger === "signIn") {
+          return hydrateJwtClaims(token, user);
         }
         return token;
       },
