@@ -38,54 +38,47 @@ Vercel Postgres  (ClaudeCodeMetric)
 Prereqs: Bicep CLI (`az bicep install`), an Azure subscription, and the
 `certifid-ai-governance` resource group.
 
-The Bicep template separates *infrastructure* from *secret values*. Secret
-rotation is handled by `rotate-secrets.sh` — redeploys of the infra
-template preserve existing bearer tokens via `listSecrets()`, so you don't
-need to know the current values when you change config/image/scale.
+Two moving parts:
 
-### First-ever deploy (one-time bootstrap)
+- **`deploy-infra.sh`** — wrapper script. Reads existing bearer tokens
+  from the Container App (via `az containerapp secret show`) and passes
+  them to Bicep as params. On the first-ever deploy, prompts you for
+  generate-fresh vs paste-existing.
+- **`deploy-infra.bicep`** — the actual Bicep template. Takes the two
+  tokens as `@secure()` params. You can invoke Bicep directly if you
+  want to script around the wrapper; the wrapper is just about avoiding
+  re-typing the tokens on every redeploy.
 
-```bash
-INGEST=$(openssl rand -hex 32)
-FORWARD=$(openssl rand -hex 32)
-
-# Store FORWARD on UrNammu FIRST — it must accept the token before the
-# collector starts presenting it, otherwise forwards 401 in the gap.
-#   vercel env add CLAUDE_CODE_TELEMETRY_SECRET production
-#   vercel --prod --yes
-
-az deployment group create \
-  --resource-group certifid-ai-governance \
-  --template-file ops/otel-collector/deploy-infra.bicep \
-  --parameters \
-      isFirstDeploy=true \
-      ingestBearerToken="$INGEST" \
-      forwardBearerToken="$FORWARD" \
-      urnammuTelemetryUrl="https://nammu.certifid.com/api/telemetry/claude-code"
-
-# Grab the collector URL from the deployment output
-COLLECTOR_URL=$(az deployment group show \
-  --resource-group certifid-ai-governance \
-  --name deploy-infra \
-  --query properties.outputs.ingestEndpoint.value -o tsv)
-
-echo "Collector: $COLLECTOR_URL"
-echo "Hand devs the INGEST token (distribute via managed-settings.json): $INGEST"
-```
-
-### Redeploy (config change, image bump, scaling, etc.)
-
-Leave `isFirstDeploy` off and omit the token params. The template reads
-current secret values via `listSecrets()` and preserves them.
+### Any deploy (first, subsequent, whatever)
 
 ```bash
-az deployment group create \
-  --resource-group certifid-ai-governance \
-  --template-file ops/otel-collector/deploy-infra.bicep \
-  --parameters urnammuTelemetryUrl="https://nammu.certifid.com/api/telemetry/claude-code"
+cd ops/otel-collector
+./deploy-infra.sh
 ```
 
-### Rotate secrets (no Bicep needed)
+That's it. The script figures out whether the app exists, reads existing
+secrets if so, prompts for new ones if not. Overrides via env vars:
+
+```bash
+URNAMMU_URL=https://staging.example.com/api/telemetry/claude-code \
+RG=other-rg APP=other-app \
+  ./deploy-infra.sh
+```
+
+On first-run you'll be prompted for `forward-bearer-token`. Set
+`CLAUDE_CODE_TELEMETRY_SECRET` on UrNammu **first** (and redeploy Vercel)
+before you pick that value — otherwise there's a brief 401 window where
+the collector forwards tokens UrNammu doesn't yet accept.
+
+After the first deploy, grab the collector URL for `managed-settings.json`:
+
+```bash
+COLLECTOR_URL=$(az containerapp show -g certifid-ai-governance -n cc-otel-app \
+  --query properties.configuration.ingress.fqdn -o tsv)
+echo "https://$COLLECTOR_URL"
+```
+
+### Rotate secrets (no Bicep involved)
 
 ```bash
 cd ops/otel-collector
@@ -181,10 +174,12 @@ which is what the UI filters on — not `receivedAt`.
 
 - `config.yaml` — reference copy of the Collector config (the deployed one
   is embedded inside `deploy-infra.bicep` as a variable; keep them in sync).
-- `deploy-infra.bicep` — Azure Container Apps deployment (Log Analytics +
-  Container Apps Env + Container App). Preserves existing secret values
-  via `listSecrets()` on redeploys; pass `isFirstDeploy=true` only on the
-  first-ever deploy.
+- `deploy-infra.bicep` — Azure Container Apps template (Log Analytics +
+  Container Apps Env + Container App). Takes both bearer tokens as
+  `@secure()` params.
+- `deploy-infra.sh` — wrapper around Bicep that reads existing secret
+  values from ACA and passes them to the template, so you don't re-type
+  tokens on every redeploy. Use this as the default deploy command.
 - `rotate-secrets.sh` — rotates ACA bearer tokens via `az containerapp
   secret set`. Standalone — no Bicep involvement.
 - `managed-settings.json` — template for Claude Code org-wide enforced

@@ -1,39 +1,28 @@
 // Azure Container App: OTel Collector gateway for Claude Code telemetry.
 //
-// Infra-only template — secret VALUES are managed separately via
-// rotate-secrets.sh. Redeploying this file (config changes, image bump,
-// scaling) does NOT require re-passing the bearer tokens.
+// Deploy this template via the `deploy-infra.sh` wrapper, which reads
+// existing secret values from ACA (via `az containerapp secret show`) and
+// passes them as parameters, so you don't have to re-type the bearer
+// tokens on every redeploy. You CAN call Bicep directly if you want —
+// you'll just need to pass both @secure params explicitly.
+//
+// Why a wrapper: Bicep does not support calling listSecrets() on a
+// resource it is also declaring in the same template (circular
+// dependency — BCP422). The wrapper moves the "read existing secrets"
+// step out of Bicep into plain `az` calls that run first.
 //
 // Resources:
 //   Log Analytics Workspace  (required host for Container Apps Environment)
 //   Container Apps Environment
 //   Container App            (otel/opentelemetry-collector-contrib)
 //
-// ─── Deploy flows ─────────────────────────────────────────────────────
+// ─── Usage ──────────────────────────────────────────────────────────
 //
-// FIRST DEPLOY (one-time bootstrap):
-//   INGEST=$(openssl rand -hex 32)
-//   FORWARD=$(openssl rand -hex 32)   # must match CLAUDE_CODE_TELEMETRY_SECRET on UrNammu
-//   az deployment group create \
-//     --resource-group certifid-ai-governance \
-//     --template-file deploy-infra.bicep \
-//     --parameters \
-//         isFirstDeploy=true \
-//         ingestBearerToken="$INGEST" \
-//         forwardBearerToken="$FORWARD" \
-//         urnammuTelemetryUrl='https://nammu.certifid.com/api/telemetry/claude-code'
+// Any deploy (first or subsequent):
+//   ./deploy-infra.sh
 //
-// REDEPLOY (any subsequent change — config, image, scaling, etc.):
-//   az deployment group create \
-//     --resource-group certifid-ai-governance \
-//     --template-file deploy-infra.bicep \
-//     --parameters urnammuTelemetryUrl='https://nammu.certifid.com/api/telemetry/claude-code'
-//
-//   → existing secret values are read via listSecrets() and preserved.
-//   → No need to know the current bearer tokens.
-//
-// ROTATE SECRETS (no Bicep involvement needed):
-//   ./rotate-secrets.sh rotate-ingest     # or rotate-forward / rotate-all
+// Rotate tokens (no Bicep involvement):
+//   ./rotate-secrets.sh rotate-ingest | rotate-forward | rotate-all
 
 @description('Azure region for all resources. Defaults to the resource group location.')
 param location string = resourceGroup().location
@@ -41,16 +30,13 @@ param location string = resourceGroup().location
 @description('Name prefix used for all resources. Keep short — ACA names have tight limits.')
 param namePrefix string = 'cc-otel'
 
-@description('Set to true ONLY on the first-ever deploy (when the Container App does not yet exist). Redeploys must leave this false — the template will then read existing secret values via listSecrets() and preserve them.')
-param isFirstDeploy bool = false
-
-@description('First-time bootstrap only. Required when isFirstDeploy=true; ignored otherwise.')
+@description('Bearer token Claude Code clients present to the Collector. Normally supplied by the deploy-infra.sh wrapper, which reads the existing value from ACA. Only set directly if you are bootstrapping outside the wrapper.')
 @secure()
-param ingestBearerToken string = ''
+param ingestBearerToken string
 
-@description('First-time bootstrap only. Required when isFirstDeploy=true; ignored otherwise. Must match CLAUDE_CODE_TELEMETRY_SECRET on UrNammu.')
+@description('Bearer token the Collector presents to UrNammu. Must match the claude_code_telemetry_secret AppSetting (or CLAUDE_CODE_TELEMETRY_SECRET env) on UrNammu.')
 @secure()
-param forwardBearerToken string = ''
+param forwardBearerToken string
 
 @description('Absolute URL of the UrNammu ingestion endpoint, e.g. https://nammu.certifid.com/api/telemetry/claude-code')
 param urnammuTelemetryUrl string
@@ -168,28 +154,6 @@ resource managedEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-// Reference the existing Container App on redeploys to pull current secret
-// values. Gated behind !isFirstDeploy so the `existing` reference is never
-// evaluated on the first-ever deploy (when the resource doesn't exist yet).
-resource existingApp 'Microsoft.App/containerApps@2024-03-01' existing = if (!isFirstDeploy) {
-  name: '${namePrefix}-app'
-}
-
-// Short-circuit on the bootstrap flag so listSecrets() is only called when
-// we know the resource exists. On first deploy we use the @secure params.
-var bootstrapSecrets = [
-  {
-    name: 'ingest-bearer-token'
-    value: ingestBearerToken
-  }
-  {
-    name: 'forward-bearer-token'
-    value: forwardBearerToken
-  }
-]
-
-var secretsToApply = isFirstDeploy ? bootstrapSecrets : existingApp.listSecrets().value
-
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${namePrefix}-app'
   location: location
@@ -207,7 +171,16 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
-      secrets: secretsToApply
+      secrets: [
+        {
+          name: 'ingest-bearer-token'
+          value: ingestBearerToken
+        }
+        {
+          name: 'forward-bearer-token'
+          value: forwardBearerToken
+        }
+      ]
     }
     template: {
       containers: [
