@@ -62,10 +62,6 @@ receivers:
         endpoint: 0.0.0.0:4318
         auth:
           authenticator: bearertokenauth
-      grpc:
-        endpoint: 0.0.0.0:4317
-        auth:
-          authenticator: bearertokenauth
 
 extensions:
   bearertokenauth:
@@ -102,7 +98,7 @@ processors:
 
 exporters:
   otlp_http/urnammu:
-    endpoint: $${env:URNAMMU_TELEMETRY_URL}
+    metrics_endpoint: $${env:URNAMMU_TELEMETRY_URL}
     encoding: json
     compression: gzip
     headers:

@@ -18,7 +18,7 @@ Dev machines (Claude Code)
       ▼
 ACA: otel/opentelemetry-collector-contrib
       │  memory_limiter → filter/claude_code_only → resource → batch
-      │  otlphttp/urnammu  (Authorization: Bearer <FORWARD_TOKEN>)
+      │  otlp_http/urnammu  (Authorization: Bearer <FORWARD_TOKEN>)
       ▼
 UrNammu  POST /api/telemetry/claude-code   (Vercel)
       ▼
@@ -29,6 +29,9 @@ Vercel Postgres  (ClaudeCodeMetric)
   `claude_code.*`, and no logs pipeline is configured — so if a client
   enables the logs exporter locally, events/prompts are dropped at the
   gateway.
+- **HTTP-only ingress.** The deployed Container App exposes OTLP/HTTP on
+  port `4318`. The collector config intentionally matches that; OTLP/gRPC
+  is not exposed externally.
 - **Two tokens.** `INGEST_BEARER_TOKEN` faces developers; rotate freely.
   `FORWARD_BEARER_TOKEN` is the collector-to-UrNammu server-to-server
   token; it must match UrNammu's `claude_code_telemetry_secret` setting.
@@ -154,7 +157,7 @@ export OTEL_LOG_USER_PROMPTS=0
 From any dev laptop after the env vars are set, run a single Claude Code
 session; within ~60 s you should see:
 
-1. Collector logs (Log Analytics) show `otlphttp/urnammu` exports.
+1. Collector logs (Log Analytics) show `otlp_http/urnammu` exports.
 2. UrNammu Oversight → Claude Code → **Live telemetry (last 60m)** populates.
 3. `SELECT COUNT(*) FROM "ClaudeCodeMetric" WHERE "receivedAt" > NOW() - INTERVAL '5 min';`
 
