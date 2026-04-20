@@ -50,6 +50,19 @@ export default async function AISkillDetailPage({
         </div>
       ) : null}
 
+      {skill.description ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Description</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm whitespace-pre-wrap text-[var(--text-primary)]">
+              {skill.description}
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Details</CardTitle>
@@ -176,7 +189,7 @@ export default async function AISkillDetailPage({
             </p>
           ) : null}
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
           {skill.contentType === "app" && skill.appUrl ? (
             <a
               href={skill.appUrl}
@@ -186,6 +199,10 @@ export default async function AISkillDetailPage({
             >
               Open external app <ExternalLink className="h-3.5 w-3.5" />
             </a>
+          ) : skill.content ? (
+            <pre className="max-h-[60vh] overflow-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 font-mono text-xs whitespace-pre-wrap text-[var(--text-primary)]">
+              {skill.content}
+            </pre>
           ) : (
             <ContentFetchButton skillId={skill.id} />
           )}

@@ -15,6 +15,7 @@ interface AISkillFormProps {
     id: string;
     forgeId: string;
     name: string;
+    description: string | null;
     content: string | null;
     status: string;
     tags: string[];
@@ -34,6 +35,7 @@ interface AISkillFormProps {
 // with src/lib/validations/ai-skill.ts#AI_SKILL_OVERRIDE_FIELDS.
 type OverrideField =
   | "name"
+  | "description"
   | "content"
   | "status"
   | "tags"
@@ -48,6 +50,7 @@ export function AISkillForm({ skill, agents, systems }: AISkillFormProps) {
   const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState(skill.name);
+  const [description, setDescription] = useState(skill.description ?? "");
   const [content, setContent] = useState(skill.content ?? "");
   const [status, setStatus] = useState(skill.status);
   const [tagsInput, setTagsInput] = useState(skill.tags.join(", "));
@@ -76,6 +79,7 @@ export function AISkillForm({ skill, agents, systems }: AISkillFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
+          description,
           content,
           status,
           tags,
@@ -143,6 +147,20 @@ export function AISkillForm({ skill, agents, systems }: AISkillFormProps) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="description" className="flex items-center">
+              Description
+              <OverrideBadge field="description" />
+            </Label>
+            <Textarea
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="Short summary shown on the skill list and used as the description for linked AI Agents / AI Systems."
             />
           </div>
 

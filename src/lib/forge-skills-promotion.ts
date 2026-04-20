@@ -70,10 +70,16 @@ function normalizeType(contentType: string): "agent" | "system" | null {
 }
 
 function buildDescription(skill: AISkill): string {
-  // Prefer the downloaded Forge content — that's the authoritative
-  // description once we've pulled it. Fall back to a metadata blurb when
-  // content isn't available yet (non-text files, large files, or a
-  // content-fetch that hasn't run yet).
+  // Priority order:
+  //   1. Forge's `description` blurb — short, authoritative summary that
+  //      every skill has (even zip bundles and external apps with no
+  //      downloadable text body).
+  //   2. Downloaded file content — the full body for text-type skills.
+  //      Useful when the description is absent or empty.
+  //   3. Metadata fallback — last-resort blurb for skills with neither.
+  if (skill.description && skill.description.trim().length > 0) {
+    return skill.description;
+  }
   if (skill.content && skill.content.trim().length > 0) {
     return skill.content;
   }
@@ -108,16 +114,21 @@ async function resolveAuthorOwnerId(
 }
 
 /**
- * Refresh the governed row's description from the current skill state,
- * but only if it still bears the auto-generated fallback marker. An
- * operator edit removes the marker and permanently locks the field
- * against further sync updates.
+ * Refresh the governed row's description from the current skill state.
+ * The skill's own `localOverrides` is the operator's lock: if "description"
+ * is in that list, the skill record itself has been edited, and we should
+ * not propagate Forge changes to the linked Agent/System. Otherwise we
+ * keep the linked description in sync with Forge — including when the
+ * upstream description changes, which the old "only refresh while the
+ * auto-generated marker is present" rule failed to do.
  */
 async function refreshLinkedDescriptionIfUntouched(
   target: "agent" | "system",
   linkedId: string,
   skill: AISkill
 ): Promise<void> {
+  if (skill.localOverrides.includes("description")) return;
+
   const current =
     target === "agent"
       ? await prisma.aIAgent.findUnique({
@@ -129,8 +140,6 @@ async function refreshLinkedDescriptionIfUntouched(
           select: { description: true },
         });
   const currentDescription = current?.description ?? "";
-  if (!currentDescription.startsWith(FALLBACK_DESCRIPTION_PREFIX)) return;
-
   const next = buildDescription(skill);
   if (next === currentDescription) return;
 

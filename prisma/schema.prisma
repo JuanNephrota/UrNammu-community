@@ -948,6 +948,7 @@ model AISkill {
   forgeCreatedAt         DateTime
   forgeUpdatedAt         DateTime
 
+  description            String?   @db.Text
   content                String?   @db.Text
   contentFetchedAt       DateTime?
 

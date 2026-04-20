@@ -17,6 +17,7 @@ import { FORGE_DEFAULT_BASE_URL, FORGE_SETTINGS_KEYS, getSetting } from "./setti
 export type ForgeSkill = {
   id: string;
   name: string;
+  description: string | null;
   content_type: string;
   file_type: string | null;
   file_name?: string | null;

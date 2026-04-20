@@ -6,6 +6,7 @@ import { z } from "zod";
 // overrides, letting the next sync repopulate from Forge.
 export const AI_SKILL_OVERRIDE_FIELDS = [
   "name",
+  "description",
   "content",
   "status",
   "tags",
@@ -19,6 +20,7 @@ export type AISkillOverrideField = (typeof AI_SKILL_OVERRIDE_FIELDS)[number];
 
 export const updateAISkillSchema = z.object({
   name: z.string().max(200).optional(),
+  description: z.string().optional(),
   content: z.string().optional(),
   status: z.string().max(40).optional(),
   tags: z.array(z.string().max(80)).optional(),

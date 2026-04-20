@@ -54,6 +54,7 @@ export type SyncResult = {
 function toSkillRow(item: ForgeSkill) {
   return {
     name: item.name,
+    description: item.description ?? null,
     contentType: item.content_type,
     fileType: item.file_type ?? null,
     fileName: item.file_name ?? null,
