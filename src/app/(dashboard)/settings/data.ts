@@ -43,6 +43,7 @@ const SETTINGS_KEYS = [
   "ai_model",
   "ai_api_key",
   "anthropic_admin_key",
+  "anthropic_managed_system_id",
   "openai_admin_key",
   "policy_enforcement_mode",
   "azure_subscription_id",

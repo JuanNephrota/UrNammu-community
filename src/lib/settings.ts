@@ -126,6 +126,13 @@ export const PROVIDER_SYNC_SETTINGS_KEYS = {
   INTERVAL_HOURS: "provider_sync_interval_hours",
 } as const;
 
+// Maps each provider's admin-sync'd UsageBucket rows to a registered AISystem
+// so the Usage Trend and Activity views attribute telemetry to that system
+// instead of falling back to api-key-level labels.
+export const PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS = {
+  ANTHROPIC: "anthropic_managed_system_id",
+} as const;
+
 export const OVERSIGHT_ANOMALY_SETTINGS_KEYS = {
   RECENT_WINDOW_DAYS: "anomaly_recent_window_days",
   BASELINE_WINDOW_DAYS: "anomaly_baseline_window_days",

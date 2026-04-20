@@ -89,6 +89,8 @@ interface Props {
   governanceReviewNoticeDays: number;
   governanceExceptionNoticeDays: number;
   governanceEscalationOverdueDays: number;
+  anthropicManagedSystemId: string;
+  aiSystems: { id: string; name: string; vendor: string | null }[];
 }
 
 export function AdminAPISettings({
@@ -111,6 +113,8 @@ export function AdminAPISettings({
   governanceReviewNoticeDays: initialGovernanceReviewNoticeDays,
   governanceExceptionNoticeDays: initialGovernanceExceptionNoticeDays,
   governanceEscalationOverdueDays: initialGovernanceEscalationOverdueDays,
+  anthropicManagedSystemId: initialAnthropicManagedSystemId,
+  aiSystems,
 }: Props) {
   const router = useRouter();
   const [providerSyncEnabled, setProviderSyncEnabled] = useState(initialProviderSyncEnabled);
@@ -136,6 +140,9 @@ export function AdminAPISettings({
   const [governanceEscalationOverdueDays, setGovernanceEscalationOverdueDays] = useState(initialGovernanceEscalationOverdueDays);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleResult, setScheduleResult] = useState<string | null>(null);
+  const [anthropicManagedSystemId, setAnthropicManagedSystemId] = useState(initialAnthropicManagedSystemId);
+  const [savingAttribution, setSavingAttribution] = useState(false);
+  const [attributionResult, setAttributionResult] = useState<string | null>(null);
 
   const providers = PROVIDERS.map((p) => ({
     ...p,
@@ -218,6 +225,35 @@ export function AdminAPISettings({
       setGeminiSaveResult(`Failed: ${err instanceof Error ? err.message : "Network error"}`);
     } finally {
       setSavingGemini(false);
+    }
+  }
+
+  async function handleSaveAttribution() {
+    setSavingAttribution(true);
+    setAttributionResult(null);
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          anthropic_managed_system_id: anthropicManagedSystemId || null,
+        }),
+      });
+
+      if (res.ok) {
+        setAttributionResult("Attribution settings saved.");
+        router.refresh();
+      } else {
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error ?? msg; } catch { msg = text || msg; }
+        setAttributionResult(`Failed: ${msg}`);
+      }
+    } catch (err) {
+      setAttributionResult(`Failed: ${err instanceof Error ? err.message : "Network error"}`);
+    } finally {
+      setSavingAttribution(false);
     }
   }
 
@@ -368,6 +404,46 @@ export function AdminAPISettings({
               <Label className="text-xs">Escalate After Overdue (days)</Label>
               <Input type="number" min={1} value={governanceEscalationOverdueDays} onChange={(e) => setGovernanceEscalationOverdueDays(parseInt(e.target.value || "1", 10))} />
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h4 className="text-sm font-semibold">Usage Attribution</h4>
+              <p className="text-xs text-[var(--text-muted)]">
+                Pick the registered AI system that admin-sync&apos;d telemetry should be attributed to. Without this, rows fall back to api-key-level labels.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs">Anthropic managed system</Label>
+            <select
+              value={anthropicManagedSystemId}
+              onChange={(e) => setAnthropicManagedSystemId(e.target.value)}
+              className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
+            >
+              <option value="">— Not set (unattributed) —</option>
+              {aiSystems.map((sys) => (
+                <option key={sys.id} value={sys.id}>
+                  {sys.name}{sys.vendor ? ` (${sys.vendor})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleSaveAttribution} disabled={savingAttribution}>
+              {savingAttribution ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+              {savingAttribution ? "Saving..." : "Save Attribution Settings"}
+            </Button>
+            {attributionResult && (
+              <span className={`text-xs ${attributionResult.includes("saved") ? "text-[var(--success)]" : "text-[var(--critical)]"}`}>
+                {attributionResult}
+              </span>
+            )}
           </div>
         </div>
 

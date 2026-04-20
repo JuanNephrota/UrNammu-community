@@ -1,4 +1,5 @@
 import { requireRole } from "@/lib/auth-guard";
+import { prisma } from "@/lib/prisma";
 import { AdminAPISettings } from "../admin-api-settings";
 import { getSettingsPageData } from "../data";
 
@@ -11,6 +12,11 @@ export default async function ProviderAdminSettingsPage() {
     hasGeminiBillingConfig,
     settingsMap,
   } = await getSettingsPageData();
+
+  const aiSystems = await prisma.aISystem.findMany({
+    select: { id: true, name: true, vendor: true },
+    orderBy: { name: "asc" },
+  });
 
   return (
     <AdminAPISettings
@@ -33,6 +39,8 @@ export default async function ProviderAdminSettingsPage() {
       governanceReviewNoticeDays={parseInt(settingsMap.governance_review_notice_days ?? "14")}
       governanceExceptionNoticeDays={parseInt(settingsMap.governance_exception_notice_days ?? "14")}
       governanceEscalationOverdueDays={parseInt(settingsMap.governance_escalation_overdue_days ?? "7")}
+      anthropicManagedSystemId={settingsMap.anthropic_managed_system_id ?? ""}
+      aiSystems={aiSystems}
     />
   );
 }

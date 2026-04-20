@@ -27,6 +27,8 @@ import {
   isClaudeCodeAnalyticsAvailable,
   type ClaudeCodeRangeResult,
 } from "./claude-code-analytics";
+import { getSetting, PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS } from "./settings";
+import { logger } from "./observability";
 
 type SyncSummary = {
   syncRunId: string;
@@ -83,6 +85,24 @@ function makeDimensionKey(parts: Record<string, string | null | undefined>): str
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
     .join("|") || "all";
+}
+
+async function resolveManagedSystemId(settingKey: string): Promise<string | null> {
+  const configuredId = await getSetting(settingKey);
+  if (!configuredId) return null;
+
+  const system = await prisma.aISystem.findUnique({
+    where: { id: configuredId },
+    select: { id: true },
+  });
+  if (!system) {
+    logger.warn("provider_sync.managed_system_not_found", {
+      settingKey,
+      configuredId,
+    });
+    return null;
+  }
+  return system.id;
 }
 
 async function createSyncRun(provider: SyncProvider, triggeredByUserId: string) {
@@ -237,6 +257,10 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
     const startingAt = sevenDaysAgo.toISOString();
     const endingAt = today.toISOString();
 
+    const managedSystemId = await resolveManagedSystemId(
+      PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.ANTHROPIC
+    );
+
     const [org, keys, members, usageByModelAndKey, usageByKey, costReport] = await Promise.all([
       fetchAnthropicOrgData(),
       listAPIKeys({ status: "active", limit: 100 }).catch(() => null),
@@ -387,6 +411,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             cacheCreationTokens,
             metadata: toJsonValue(entry),
             syncRunId: syncRun.id,
+            aiSystemId: managedSystemId,
           },
           create: {
             provider: "anthropic",
@@ -404,6 +429,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             cacheCreationTokens,
             metadata: toJsonValue(entry),
             syncRunId: syncRun.id,
+            aiSystemId: managedSystemId,
           },
         });
         usageBucketsUpserted++;
