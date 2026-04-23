@@ -8,10 +8,10 @@ type SegmentRow = {
 };
 
 function cellStyle(score: number) {
-  if (score >= 80) return "bg-[var(--critical)]/20 text-[var(--critical)]";
-  if (score >= 60) return "bg-orange-500/20 text-orange-200";
-  if (score >= 40) return "bg-amber-500/20 text-amber-200";
-  return "bg-emerald-500/15 text-emerald-200";
+  if (score >= 80) return "bg-[var(--critical-dim)] text-[var(--critical-strong)] border border-[var(--critical-border)]";
+  if (score >= 60) return "bg-[var(--high-dim)] text-[var(--high-strong)] border border-[var(--high-border)]";
+  if (score >= 40) return "bg-[var(--medium-dim)] text-[var(--medium-strong)] border border-[var(--medium-border)]";
+  return "bg-[var(--low-dim)] text-[var(--low-strong)] border border-[var(--low-border)]";
 }
 
 export function SegmentRiskHeatmap({

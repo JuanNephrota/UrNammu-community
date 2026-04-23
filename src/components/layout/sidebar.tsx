@@ -127,7 +127,7 @@ export function Sidebar() {
         {navItems.map((group) => (
           <div key={group.label}>
             {!collapsed && (
-              <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--text-faint)]">
+              <p className="mb-2 px-3 text-[11px] font-bold uppercase tracking-[0.15em] text-[var(--text-faint)]">
                 {group.label}
               </p>
             )}

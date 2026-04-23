@@ -22,7 +22,7 @@ import { GovernanceActionQueue } from "@/components/dashboard/governance-action-
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { prisma } from "@/lib/prisma";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { parseEnforcementMode } from "@/lib/settings";
 import { isDemoModeEnabled } from "@/lib/demo-mode";
 import { ExecutivePostureChart } from "@/components/dashboard/executive-posture-chart";
@@ -485,6 +485,9 @@ export default async function DashboardPage() {
   const blockedLast7d = denialsLast7d + contentBlocksLast7d;
   const showBlockedBanner = enforcementMode !== "off" || blockedLast7d > 0;
 
+  const hasCriticalAlert = recentAlerts.some((a) => a.severity === "CRITICAL");
+  const governanceQueueItems = governanceItems.filter((item) => item.count > 0);
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -495,20 +498,6 @@ export default async function DashboardPage() {
             : "Real-time AI governance posture overview"
         }
       />
-
-      {demoMode && (
-        <Card className="border-amber-500/20 bg-amber-500/5">
-          <CardContent className="pt-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="warning">Demo Data Loaded</Badge>
-              <Badge variant="outline">No live provider credentials required</Badge>
-            </div>
-            <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
-              This environment is preloaded with example systems, approvals, alerts, usage telemetry, sync history, and shadow-AI findings so new users can explore the full governance workflow immediately after setup.
-            </p>
-          </CardContent>
-        </Card>
-      )}
 
       {showBlockedBanner ? (
         <Link
@@ -570,22 +559,18 @@ export default async function DashboardPage() {
         </Link>
       ) : null}
 
-      {/* Stat Cards */}
+      {/* Governance Action Queue — promoted above stats: tells the user what to DO,
+          not just what exists. Only renders when there are open items. */}
+      {governanceQueueItems.length > 0 && (
+        <GovernanceActionQueue items={governanceQueueItems} />
+      )}
+
+      {/* Posture stats.
+          Inventory counts (AI Systems, AI Agents) use variant="default" so they
+          step back visually — they're reference data, not governance signal.
+          The four semantic cards (High Risk, Open Alerts, Shadow AI, Compliance)
+          carry the posture narrative. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 stagger-children">
-        <StatCard
-          title="AI Systems"
-          value={systemCount}
-          iconName="Database"
-          href="/registry"
-          variant="info"
-        />
-        <StatCard
-          title="AI Agents"
-          value={agentCount}
-          iconName="Bot"
-          href="/agents"
-          variant="info"
-        />
         <StatCard
           title="High Risk"
           value={highRiskCount}
@@ -615,82 +600,37 @@ export default async function DashboardPage() {
           href="/compliance"
           variant={complianceRate >= 80 ? "success" : "warning"}
         />
+        <StatCard
+          title="AI Systems"
+          value={systemCount}
+          iconName="Database"
+          href="/registry"
+          variant="default"
+        />
+        <StatCard
+          title="AI Agents"
+          value={agentCount}
+          iconName="Bot"
+          href="/agents"
+          variant="default"
+        />
       </div>
 
-      {/* Main content grid */}
+      {/* Action-oriented row: Live Alerts + Automated Recommendations.
+          Both answer "what should I look at next?" — hierarchy above historic charts. */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="lg:col-span-2 animate-fade-in-up" style={{ animationDelay: "280ms" }}>
+        <Card className="animate-fade-in-up" style={{ animationDelay: "280ms" }}>
           <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-[var(--accent)]" />
-              Executive Governance Posture
-            </CardTitle>
-            <Link href="/oversight/vendors" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">
-              Vendor governance <ArrowRight className="h-3 w-3" />
-            </Link>
-          </CardHeader>
-          <CardContent>
-            <ExecutivePostureChart data={executiveTrend} />
-          </CardContent>
-        </Card>
-
-        {/* Recent AI Systems */}
-        <Card className="animate-fade-in-up" style={{ animationDelay: "300ms" }}>
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Database className="h-4 w-4 text-[var(--accent)]" />
-              Recent AI Systems
-            </CardTitle>
-            <Link
-              href="/registry"
-              className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
-            >
-              View all <ArrowRight className="h-3 w-3" />
-            </Link>
-          </CardHeader>
-          <CardContent>
-            {recentSystems.length === 0 ? (
-              <div className="flex flex-col items-center py-8 text-center">
-                <Database className="h-8 w-8 text-[var(--text-faint)] mb-2" />
-                <p className="text-sm text-[var(--text-muted)]">No AI systems registered yet.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {recentSystems.map((system, i) => (
-                  <Link
-                    key={system.id}
-                    href={`/registry/${system.id}`}
-                    className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)] group"
-                    style={{ animationDelay: `${400 + i * 60}ms` }}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors">
-                        {system.name}
-                      </p>
-                      <p className="text-[11px] text-[var(--text-faint)] mt-0.5">
-                        {system.department} &middot; {system.owner.name}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0 ml-3">
-                      <Badge variant={riskBadgeVariant(system.riskLevel)}>
-                        {system.riskLevel}
-                      </Badge>
-                      <Badge variant={statusBadgeVariant(system.status)}>
-                        {system.status.replace("_", " ")}
-                      </Badge>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Alerts Feed */}
-        <Card className="animate-fade-in-up" style={{ animationDelay: "360ms" }}>
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-[var(--critical)]" style={{ animation: "pulseGlow 2s ease-in-out infinite" }} />
+              {/* Activity icon is the only section still using pulseGlow — and only when
+                  there's an actual CRITICAL alert to convey. Ambient pulse was fatiguing. */}
+              <Activity
+                className={cn(
+                  "h-4 w-4",
+                  hasCriticalAlert ? "text-[var(--critical)]" : "text-[var(--text-muted)]"
+                )}
+                style={hasCriticalAlert ? { animation: "pulseGlow 2s ease-in-out infinite" } : undefined}
+              />
               Live Alerts
             </CardTitle>
             <Link
@@ -726,7 +666,7 @@ export default async function DashboardPage() {
                             alert.severity === "MEDIUM" ? "var(--warning)" : "var(--text-muted)",
                           boxShadow:
                             alert.severity === "CRITICAL" ? "0 0 8px var(--critical-glow)" :
-                            alert.severity === "HIGH" ? "0 0 8px rgba(249,115,22,0.3)" : "none",
+                            alert.severity === "HIGH" ? "0 0 8px var(--high-border)" : "none",
                         }}
                       />
                       <div className="min-w-0">
@@ -747,7 +687,75 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Automated Governance Recommendations */}
+        <Card className="animate-fade-in-up" style={{ animationDelay: "300ms" }}>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle>
+              Automated Recommendations
+            </CardTitle>
+            <Link href="/registry" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">
+              Registry <ArrowRight className="h-3 w-3" />
+            </Link>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {topRecommendations.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No recommendation-heavy systems right now. Governance work is caught up enough to stay in monitoring mode.
+              </p>
+            ) : (
+              topRecommendations.map((system) => (
+                <Link
+                  key={system.id}
+                  href={`/registry/${system.id}`}
+                  className="flex items-start justify-between gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 transition-all hover:bg-[var(--bg-hover)]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium text-[var(--text-primary)]">
+                        {system.name}
+                      </p>
+                      <Badge
+                        variant={
+                          system.recommendation.tone === "critical"
+                            ? "critical"
+                            : system.recommendation.tone === "warning"
+                              ? "warning"
+                              : system.recommendation.tone === "success"
+                                ? "success"
+                                : "info"
+                        }
+                      >
+                        {system.department}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-[var(--text-primary)]">
+                      {system.recommendation.title}
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      {system.recommendation.detail}
+                    </p>
+                  </div>
+                  <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-faint)]" />
+                </Link>
+              ))
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Historic context + browsing affordances (demoted below actionables). */}
+      <Card className="animate-fade-in-up" style={{ animationDelay: "320ms" }}>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Executive Governance Posture</CardTitle>
+          <Link href="/oversight/vendors" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">
+            Vendor governance <ArrowRight className="h-3 w-3" />
+          </Link>
+        </CardHeader>
+        <CardContent>
+          <ExecutivePostureChart data={executiveTrend} />
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <SegmentRiskHeatmap title="Risk by Department" rows={departmentRiskRows} />
@@ -755,12 +763,57 @@ export default async function DashboardPage() {
         <SegmentRiskHeatmap title="Risk by Data Sensitivity" rows={sensitivityRiskRows} />
       </div>
 
+      <Card className="animate-fade-in-up" style={{ animationDelay: "340ms" }}>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Recent AI Systems</CardTitle>
+          <Link
+            href="/registry"
+            className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+          >
+            View all <ArrowRight className="h-3 w-3" />
+          </Link>
+        </CardHeader>
+        <CardContent>
+          {recentSystems.length === 0 ? (
+            <div className="flex flex-col items-center py-8 text-center">
+              <Database className="h-8 w-8 text-[var(--text-faint)] mb-2" />
+              <p className="text-sm text-[var(--text-muted)]">No AI systems registered yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {recentSystems.map((system, i) => (
+                <Link
+                  key={system.id}
+                  href={`/registry/${system.id}`}
+                  className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 transition-all hover:bg-[var(--bg-hover)] hover:border-[var(--border-default)] group"
+                  style={{ animationDelay: `${400 + i * 60}ms` }}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors">
+                      {system.name}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                      {system.department} &middot; {system.owner.name}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0 ml-3">
+                    <Badge variant={riskBadgeVariant(system.riskLevel)}>
+                      {system.riskLevel}
+                    </Badge>
+                    <Badge variant={statusBadgeVariant(system.status)}>
+                      {system.status.replace("_", " ")}
+                    </Badge>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-[var(--accent)]" />
-            Remediation Status
-          </CardTitle>
+          <CardTitle>Remediation Status</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
@@ -798,64 +851,19 @@ export default async function DashboardPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-[var(--accent)]" />
-            Automated Governance Recommendations
-          </CardTitle>
-          <Link href="/registry" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">
-            Registry <ArrowRight className="h-3 w-3" />
-          </Link>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {topRecommendations.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">
-              No recommendation-heavy systems right now. Governance work is caught up enough to stay in monitoring mode.
+      {demoMode && (
+        <Card className="border-[var(--warning-border)] bg-[var(--warning-faint)]">
+          <CardContent className="pt-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="warning">Demo Data Loaded</Badge>
+              <Badge variant="outline">No live provider credentials required</Badge>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
+              This environment is preloaded with example systems, approvals, alerts, usage telemetry, sync history, and shadow-AI findings so new users can explore the full governance workflow immediately after setup.
             </p>
-          ) : (
-            topRecommendations.map((system) => (
-              <Link
-                key={system.id}
-                href={`/registry/${system.id}`}
-                className="flex items-start justify-between gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 transition-all hover:bg-[var(--bg-hover)]"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-medium text-[var(--text-primary)]">
-                      {system.name}
-                    </p>
-                    <Badge
-                      variant={
-                        system.recommendation.tone === "critical"
-                          ? "critical"
-                          : system.recommendation.tone === "warning"
-                            ? "warning"
-                            : system.recommendation.tone === "success"
-                              ? "success"
-                              : "info"
-                      }
-                    >
-                      {system.department}
-                    </Badge>
-                  </div>
-                  <p className="mt-1 text-sm text-[var(--text-primary)]">
-                    {system.recommendation.title}
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">
-                    {system.recommendation.detail}
-                  </p>
-                </div>
-                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-faint)]" />
-              </Link>
-            ))
-          )}
-        </CardContent>
-      </Card>
-
-      <GovernanceActionQueue
-        items={governanceItems.filter((item) => item.count > 0)}
-      />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

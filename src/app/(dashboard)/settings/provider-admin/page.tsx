@@ -9,6 +9,9 @@ export default async function ProviderAdminSettingsPage() {
   const {
     hasAnthropicAdminKey,
     hasOpenAIAdminKey,
+    hasOpenRouterKey,
+    hasHeliconeKey,
+    hasPortkeyKey,
     hasGeminiBillingConfig,
     settingsMap,
   } = await getSettingsPageData();
@@ -22,6 +25,9 @@ export default async function ProviderAdminSettingsPage() {
     <AdminAPISettings
       hasAnthropicAdminKey={hasAnthropicAdminKey}
       hasOpenAIAdminKey={hasOpenAIAdminKey}
+      hasOpenRouterKey={hasOpenRouterKey}
+      hasHeliconeKey={hasHeliconeKey}
+      hasPortkeyKey={hasPortkeyKey}
       hasGeminiBillingConfig={hasGeminiBillingConfig}
       providerSyncEnabled={settingsMap.provider_sync_enabled !== "false"}
       providerSyncIntervalHours={parseInt(settingsMap.provider_sync_interval_hours ?? "6")}

@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-interface ProviderConfig {
+export interface ProviderConfig {
   id: string;
   name: string;
   description: string;
@@ -29,10 +29,11 @@ interface ProviderConfig {
   setupSteps: string[];
   docsUrl: string;
   docsLabel: string;
+  credentialLabel?: string;
   color: string;
 }
 
-const PROVIDERS: ProviderConfig[] = [
+export const PROVIDERS: ProviderConfig[] = [
   {
     id: "anthropic",
     name: "Anthropic Admin API",
@@ -67,11 +68,68 @@ const PROVIDERS: ProviderConfig[] = [
     docsLabel: "OpenAI Admin API Docs",
     color: "var(--success)",
   },
+  {
+    id: "openrouter",
+    name: "OpenRouter Activity API",
+    description: "Pull daily proxy activity from OpenRouter using a provisioning key and normalize it into Oversight usage and cost buckets.",
+    keyPlaceholder: "or-...",
+    testEndpoint: "/api/settings/test-openrouter",
+    settingKey: "openrouter_provisioning_key",
+    hasKey: false,
+    setupSteps: [
+      "Go to openrouter.ai settings and create a provisioning key",
+      "Grant the key access to analytics / activity data",
+      "Copy the key and paste it below",
+    ],
+    docsUrl: "https://openrouter.ai/docs/api-reference/analytics/get-activity",
+    docsLabel: "OpenRouter Activity API Docs",
+    credentialLabel: "Provisioning Key",
+    color: "var(--accent)",
+  },
+  {
+    id: "helicone",
+    name: "Helicone Request API",
+    description: "Read Helicone request logs and aggregate them into UrNammu telemetry for third-party proxy oversight.",
+    keyPlaceholder: "sk-helicone-...",
+    testEndpoint: "/api/settings/test-helicone",
+    settingKey: "helicone_api_key",
+    hasKey: false,
+    setupSteps: [
+      "Go to your Helicone dashboard and generate an API key",
+      "If you use the EU region, set HELICONE_API_BASE_URL separately to https://eu.api.helicone.ai",
+      "Copy the API key and paste it below",
+    ],
+    docsUrl: "https://docs.helicone.ai/guides/cookbooks/getting-user-requests",
+    docsLabel: "Helicone Request API Docs",
+    credentialLabel: "API Key",
+    color: "var(--warning)",
+  },
+  {
+    id: "portkey",
+    name: "Portkey Analytics API",
+    description: "Sync Portkey gateway analytics into UrNammu using a Portkey admin or workspace API key.",
+    keyPlaceholder: "pk_live_...",
+    testEndpoint: "/api/settings/test-portkey",
+    settingKey: "portkey_api_key",
+    hasKey: false,
+    setupSteps: [
+      "Go to Portkey and create an API key with analytics access",
+      "Grant analytics scopes, and logs scopes if you plan to export richer data later",
+      "Paste the API key below. Optionally set PORTKEY_WORKSPACE_SLUG separately for a non-default workspace.",
+    ],
+    docsUrl: "https://portkey.ai/docs/api-reference/admin-api/introduction",
+    docsLabel: "Portkey Admin API Docs",
+    credentialLabel: "API Key",
+    color: "var(--success)",
+  },
 ];
 
 interface Props {
   hasAnthropicAdminKey: boolean;
   hasOpenAIAdminKey: boolean;
+  hasOpenRouterKey: boolean;
+  hasHeliconeKey: boolean;
+  hasPortkeyKey: boolean;
   hasGeminiBillingConfig: boolean;
   providerSyncEnabled: boolean;
   providerSyncIntervalHours: number;
@@ -96,6 +154,9 @@ interface Props {
 export function AdminAPISettings({
   hasAnthropicAdminKey,
   hasOpenAIAdminKey,
+  hasOpenRouterKey,
+  hasHeliconeKey,
+  hasPortkeyKey,
   hasGeminiBillingConfig,
   providerSyncEnabled: initialProviderSyncEnabled,
   providerSyncIntervalHours: initialProviderSyncIntervalHours,
@@ -146,7 +207,16 @@ export function AdminAPISettings({
 
   const providers = PROVIDERS.map((p) => ({
     ...p,
-    hasKey: p.id === "anthropic" ? hasAnthropicAdminKey : hasOpenAIAdminKey,
+    hasKey:
+      p.id === "anthropic"
+        ? hasAnthropicAdminKey
+        : p.id === "openai"
+          ? hasOpenAIAdminKey
+          : p.id === "openrouter"
+            ? hasOpenRouterKey
+            : p.id === "helicone"
+              ? hasHeliconeKey
+              : hasPortkeyKey,
   }));
 
   async function handleSaveSchedule() {
@@ -279,7 +349,7 @@ export function AdminAPISettings({
           AI Provider Admin APIs
         </CardTitle>
         <CardDescription>
-          Connect to Anthropic and OpenAI admin APIs to pull organization-level usage data, costs, API key inventories, and auto-discover AI assistants.
+          Connect provider admin APIs and major proxy platforms to pull organization-level usage, costs, and gateway activity into AI Oversight.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -557,7 +627,7 @@ export function AdminAPISettings({
   );
 }
 
-function ProviderSection({ provider }: { provider: ProviderConfig & { hasKey: boolean } }) {
+export function ProviderSection({ provider }: { provider: ProviderConfig & { hasKey: boolean } }) {
   const router = useRouter();
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -648,7 +718,7 @@ function ProviderSection({ provider }: { provider: ProviderConfig & { hasKey: bo
       <div className="space-y-2">
         <Label className="flex items-center gap-2 text-xs">
           <KeyRound className="h-3 w-3" />
-          Admin API Key
+          {provider.credentialLabel ?? "API Key"}
         </Label>
         {provider.hasKey && !apiKey ? (
           <div className="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2">

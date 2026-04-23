@@ -44,27 +44,27 @@ const variantConfig = {
   },
   success: {
     icon: "text-[var(--success)]",
-    glow: "shadow-[0_0_30px_-5px] shadow-emerald-500/15",
+    glow: "shadow-[0_0_30px_-5px_var(--success-halo)]",
     accent: "var(--success)",
-    border: "rgba(16, 185, 129, 0.15)",
+    border: "var(--success-halo)",
   },
   warning: {
     icon: "text-[var(--warning)]",
-    glow: "shadow-[0_0_30px_-5px] shadow-amber-500/15",
+    glow: "shadow-[0_0_30px_-5px_var(--warning-halo)]",
     accent: "var(--warning)",
-    border: "rgba(245, 158, 11, 0.15)",
+    border: "var(--warning-halo)",
   },
   danger: {
     icon: "text-[var(--critical)]",
-    glow: "shadow-[0_0_30px_-5px] shadow-red-500/15",
+    glow: "shadow-[0_0_30px_-5px_var(--critical-halo)]",
     accent: "var(--critical)",
-    border: "rgba(239, 68, 68, 0.15)",
+    border: "var(--critical-halo)",
   },
   info: {
     icon: "text-[var(--accent)]",
-    glow: "shadow-[0_0_30px_-5px] shadow-cyan-500/15",
+    glow: "shadow-[0_0_30px_-5px_var(--accent-halo)]",
     accent: "var(--accent)",
-    border: "rgba(34, 211, 238, 0.15)",
+    border: "var(--accent-halo)",
   },
 };
 

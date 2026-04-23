@@ -12,10 +12,10 @@ type QueueItem = {
 };
 
 const toneStyles: Record<QueueItem["tone"], string> = {
-  critical: "border-[var(--critical)]/20 bg-[var(--critical)]/5",
-  warning: "border-amber-500/20 bg-amber-500/5",
-  success: "border-emerald-500/20 bg-emerald-500/5",
-  info: "border-sky-500/20 bg-sky-500/5",
+  critical: "border-[var(--critical-border)] bg-[var(--critical-faint)]",
+  warning: "border-[var(--warning-border)] bg-[var(--warning-faint)]",
+  success: "border-[var(--success-border)] bg-[var(--success-faint)]",
+  info: "border-[var(--info-border)] bg-[var(--info-faint)]",
 };
 
 const toneBadge: Record<QueueItem["tone"], "critical" | "warning" | "success" | "info"> = {
@@ -55,7 +55,7 @@ export function GovernanceActionQueue({ items }: { items: QueueItem[] }) {
           ))}
 
           {items.length === 0 && (
-            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+            <div className="rounded-lg border border-[var(--success-border)] bg-[var(--success-faint)] p-4">
               <div className="flex items-center gap-2 text-[var(--success)]">
                 <ShieldCheck className="h-4 w-4" />
                 <p className="text-sm font-medium">No governance blockers in the current queue.</p>

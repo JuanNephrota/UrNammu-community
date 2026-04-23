@@ -100,9 +100,13 @@ export function TopBar() {
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-base)]/80 backdrop-blur-md px-6">
-      {/* Left: live status indicator */}
+      {/* Left: live status indicator. Pulse only when there's something new to convey
+          (open alerts or workflow notifications); otherwise remain calm. */}
       <div className="flex items-center gap-2 text-[11px] text-[var(--text-faint)]">
-        <Activity className="h-3.5 w-3.5 text-[var(--accent)]" style={{ animation: "pulseGlow 2s ease-in-out infinite" }} />
+        <Activity
+          className={openCount > 0 ? "h-3.5 w-3.5 text-[var(--accent)]" : "h-3.5 w-3.5 text-[var(--text-muted)]"}
+          style={openCount > 0 ? { animation: "pulseGlow 2s ease-in-out infinite" } : undefined}
+        />
         <span className="hidden sm:inline">Governance Monitoring Active</span>
       </div>
 
@@ -140,7 +144,7 @@ export function TopBar() {
               <>
                 {workflowNotifications.length > 0 && (
                   <>
-                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
+                    <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-[var(--text-faint)]">
                       Notifications
                     </DropdownMenuLabel>
                     {workflowNotifications.map((item) => (
@@ -172,7 +176,7 @@ export function TopBar() {
                   </>
                 )}
                 {alerts.length > 0 && (
-                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-[var(--text-faint)]">
                     Open Alerts
                   </DropdownMenuLabel>
                 )}
@@ -233,7 +237,7 @@ export function TopBar() {
               <p className="text-[13px] font-medium text-[var(--text-primary)] leading-tight">
                 {session?.user?.name ?? "User"}
               </p>
-              <p className="text-[10px] text-[var(--accent)] font-semibold uppercase tracking-wider">
+              <p className="text-[11px] text-[var(--accent)] font-semibold uppercase tracking-wider">
                 {session?.user?.role?.replace("_", " ") ?? "VIEWER"}
               </p>
             </div>

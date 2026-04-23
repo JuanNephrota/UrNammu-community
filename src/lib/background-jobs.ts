@@ -5,7 +5,10 @@ import {
   syncAnthropicTelemetry,
   syncClaudeCodeAnalytics,
   syncGeminiTelemetry,
+  syncHeliconeTelemetry,
   syncOpenAITelemetry,
+  syncOpenRouterTelemetry,
+  syncPortkeyTelemetry,
 } from "./provider-telemetry";
 import { executeScan } from "./scan-executor";
 import {
@@ -24,10 +27,16 @@ type BackgroundActor = string;
 export type ProviderSyncJobResult = {
   anthropicUsageSynced: number;
   openaiUsageSynced: number;
+  openRouterUsageSynced: number;
+  heliconeUsageSynced: number;
+  portkeyUsageSynced: number;
   geminiUsageSynced: number;
   claudeCodeUsageSynced: number;
   anthropicCostBucketsSynced: number;
   openaiCostBucketsSynced: number;
+  openRouterCostBucketsSynced: number;
+  heliconeCostBucketsSynced: number;
+  portkeyCostBucketsSynced: number;
   geminiCostBucketsSynced: number;
   claudeCodeCostsSynced: number;
   rawSnapshotsStored: number;
@@ -150,9 +159,12 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     trigger: triggeredByUserId === "system" ? "scheduler" : "manual",
   });
 
-  const [anthropicResult, openaiResult, geminiResult, claudeCodeResult] = await Promise.all([
+  const [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, geminiResult, claudeCodeResult] = await Promise.all([
     syncAnthropicTelemetry(triggeredByUserId),
     syncOpenAITelemetry(triggeredByUserId),
+    syncOpenRouterTelemetry(triggeredByUserId),
+    syncHeliconeTelemetry(triggeredByUserId),
+    syncPortkeyTelemetry(triggeredByUserId),
     syncGeminiTelemetry(triggeredByUserId),
     syncClaudeCodeAnalytics(triggeredByUserId),
   ]);
@@ -160,10 +172,13 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
   const providerLabels: Record<string, string> = {
     anthropic: "Anthropic telemetry",
     openai: "OpenAI telemetry",
+    openrouter: "OpenRouter activity",
+    helicone: "Helicone request logs",
+    portkey: "Portkey analytics",
     gemini: "Gemini telemetry",
     claude_code: "Claude Code analytics",
   };
-  const rawResults = [anthropicResult, openaiResult, geminiResult, claudeCodeResult];
+  const rawResults = [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, geminiResult, claudeCodeResult];
   const skipped: string[] = [];
   const errors: string[] = [];
   for (const result of rawResults) {
@@ -179,15 +194,24 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
   const results: ProviderSyncJobResult = {
     anthropicUsageSynced: anthropicResult.success ? anthropicResult.usageBucketsUpserted : 0,
     openaiUsageSynced: openaiResult.success ? openaiResult.usageBucketsUpserted : 0,
+    openRouterUsageSynced: openRouterResult.success ? openRouterResult.usageBucketsUpserted : 0,
+    heliconeUsageSynced: heliconeResult.success ? heliconeResult.usageBucketsUpserted : 0,
+    portkeyUsageSynced: portkeyResult.success ? portkeyResult.usageBucketsUpserted : 0,
     geminiUsageSynced: geminiResult.success ? geminiResult.usageBucketsUpserted : 0,
     claudeCodeUsageSynced: claudeCodeResult.success ? claudeCodeResult.usageBucketsUpserted : 0,
     anthropicCostBucketsSynced: anthropicResult.success ? anthropicResult.costBucketsUpserted : 0,
     openaiCostBucketsSynced: openaiResult.success ? openaiResult.costBucketsUpserted : 0,
+    openRouterCostBucketsSynced: openRouterResult.success ? openRouterResult.costBucketsUpserted : 0,
+    heliconeCostBucketsSynced: heliconeResult.success ? heliconeResult.costBucketsUpserted : 0,
+    portkeyCostBucketsSynced: portkeyResult.success ? portkeyResult.costBucketsUpserted : 0,
     geminiCostBucketsSynced: geminiResult.success ? geminiResult.costBucketsUpserted : 0,
     claudeCodeCostsSynced: claudeCodeResult.success ? claudeCodeResult.costBucketsUpserted : 0,
     rawSnapshotsStored:
       (anthropicResult.success ? anthropicResult.rawSnapshotsStored : 0) +
       (openaiResult.success ? openaiResult.rawSnapshotsStored : 0) +
+      (openRouterResult.success ? openRouterResult.rawSnapshotsStored : 0) +
+      (heliconeResult.success ? heliconeResult.rawSnapshotsStored : 0) +
+      (portkeyResult.success ? portkeyResult.rawSnapshotsStored : 0) +
       (geminiResult.success ? geminiResult.rawSnapshotsStored : 0) +
       (claudeCodeResult.success ? claudeCodeResult.rawSnapshotsStored : 0),
     assistantsFound: 0,
@@ -255,6 +279,8 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     userId: triggeredByUserId,
     anthropicSuccess: anthropicResult.success,
     openaiSuccess: openaiResult.success,
+    openRouterSuccess: openRouterResult.success,
+    heliconeSuccess: heliconeResult.success,
     geminiSuccess: geminiResult.success,
     claudeCodeSuccess: claudeCodeResult.success,
     skipped: results.skipped,

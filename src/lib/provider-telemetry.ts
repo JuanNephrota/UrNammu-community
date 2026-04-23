@@ -16,6 +16,25 @@ import {
   listAssistants,
 } from "./openai-admin";
 import {
+  getOpenRouterActivity,
+  isOpenRouterConfigured,
+  normalizeOpenRouterActivityRows,
+} from "./openrouter-admin";
+import {
+  isHeliconeConfigured,
+  normalizeHeliconeRequestRows,
+  queryHeliconeRequests,
+} from "./helicone-admin";
+import {
+  getPortkeyCostGraph,
+  getPortkeyModelGroups,
+  getPortkeyTokensGraph,
+  getPortkeyUserGroups,
+  isPortkeyConfigured,
+  normalizePortkeyGraphPoints,
+  normalizePortkeyGroupedRows,
+} from "./portkey-admin";
+import {
   getGeminiBillingOverview,
   getGeminiBillingRows,
   getGeminiUsageMetadata,
@@ -40,7 +59,7 @@ type SyncSummary = {
   apiUsageLogsCreated: number;
 };
 
-type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini";
+type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini" | "openrouter" | "helicone" | "portkey";
 
 type SyncResult =
   | ({ provider: SyncProvider; success: true } & SyncSummary)
@@ -163,7 +182,7 @@ async function storeSnapshot(syncRunId: string, provider: string, resourceType: 
 }
 
 async function upsertDerivedUsageLog(args: {
-  provider: "claude" | "chatgpt";
+  provider: string;
   model: string | null;
   bucketDate: Date;
   inputTokens: number;
@@ -1143,5 +1162,748 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "openai", success: false, error: errorMessage };
+  }
+}
+
+export async function syncOpenRouterTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  if (!(await isOpenRouterConfigured())) {
+    return {
+      provider: "openrouter",
+      success: false,
+      skipped: true,
+      error: "OpenRouter provisioning key is not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("openrouter", triggeredByUserId);
+
+  try {
+    const activity = await getOpenRouterActivity();
+    const rows = normalizeOpenRouterActivityRows(activity);
+
+    await storeSnapshot(syncRun.id, "openrouter", "activity_summary", {
+      rowCount: rows.length,
+      sample: rows.slice(0, 10),
+    });
+
+    const rawSnapshotsStored = 1;
+    let projectsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    let costBucketsUpserted = 0;
+    let apiUsageLogsCreated = 0;
+
+    for (const row of rows) {
+      const bucketStart = new Date(`${row.date}T00:00:00.000Z`);
+      const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+      const model = row.modelPermaslug ?? row.model;
+      const outputTokens = row.completionTokens + row.reasoningTokens;
+      const totalTokens = row.promptTokens + outputTokens;
+      const dimensionKey = makeDimensionKey({
+        date: row.date,
+        model,
+        endpointId: row.endpointId,
+        upstreamProvider: row.providerName,
+      });
+
+      if (row.endpointId) {
+        await prisma.providerProject.upsert({
+          where: {
+            provider_externalId: { provider: "openrouter", externalId: row.endpointId },
+          },
+          update: {
+            name: model,
+            status: row.providerName,
+            metadata: toJsonValue({
+              endpointId: row.endpointId,
+              providerName: row.providerName,
+            }),
+            lastSeenAt: new Date(),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "openrouter",
+            externalId: row.endpointId,
+            name: model,
+            status: row.providerName,
+            metadata: toJsonValue({
+              endpointId: row.endpointId,
+              providerName: row.providerName,
+            }),
+            syncRunId: syncRun.id,
+          },
+        });
+        projectsUpserted++;
+      }
+
+      await prisma.usageBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: "openrouter",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: {
+          model,
+          projectExternalId: row.endpointId,
+          projectName: model,
+          inputTokens: row.promptTokens,
+          outputTokens,
+          totalTokens,
+          requestCount: row.requests,
+          metadata: toJsonValue({
+            source: "openrouter_activity_api",
+            provider_name: row.providerName,
+            byok_usage_inference: row.byokUsageInference,
+            reasoning_tokens: row.reasoningTokens,
+          }),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "openrouter",
+          bucketStart,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          model,
+          projectExternalId: row.endpointId,
+          projectName: model,
+          inputTokens: row.promptTokens,
+          outputTokens,
+          totalTokens,
+          requestCount: row.requests,
+          metadata: toJsonValue({
+            source: "openrouter_activity_api",
+            provider_name: row.providerName,
+            byok_usage_inference: row.byokUsageInference,
+            reasoning_tokens: row.reasoningTokens,
+          }),
+          syncRunId: syncRun.id,
+        },
+      });
+      usageBucketsUpserted++;
+
+      if (row.usage > 0) {
+        await prisma.costBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: "openrouter",
+              bucketStart,
+              bucketEnd,
+              granularity: "day",
+              dimensionKey,
+            },
+          },
+          update: {
+            amount: row.usage,
+            currency: "usd",
+            model,
+            projectExternalId: row.endpointId,
+            projectName: model,
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "openrouter_activity_api",
+              provider_name: row.providerName,
+            }),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "openrouter",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+            amount: row.usage,
+            currency: "usd",
+            model,
+            projectExternalId: row.endpointId,
+            projectName: model,
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "openrouter_activity_api",
+              provider_name: row.providerName,
+            }),
+            syncRunId: syncRun.id,
+          },
+        });
+        costBucketsUpserted++;
+      }
+
+      const created = await upsertDerivedUsageLog({
+        provider: "openrouter",
+        model,
+        bucketDate: bucketStart,
+        inputTokens: row.promptTokens,
+        outputTokens,
+        totalTokens,
+        cost: row.usage,
+        metadata: {
+          source: "openrouter_activity_api",
+          syncRunId: syncRun.id,
+          dimensionKey,
+          provider: "openrouter",
+        },
+      });
+      if (created) apiUsageLogsCreated++;
+    }
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted,
+      rawSnapshotsStored,
+      projectsUpserted,
+      actorsUpserted: 0,
+      apiUsageLogsCreated,
+    };
+
+    await completeSyncRun(syncRun.id, summary, {
+      coverage: {
+        rows: rows.length,
+      },
+    });
+
+    return { provider: "openrouter", success: true, syncRunId: syncRun.id, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "openrouter", success: false, error: errorMessage };
+  }
+}
+
+export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  if (!(await isPortkeyConfigured())) {
+    return {
+      provider: "portkey",
+      success: false,
+      skipped: true,
+      error: "Portkey API key is not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("portkey", triggeredByUserId);
+
+  try {
+    const end = new Date();
+    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const startTime = start.toISOString();
+    const endTime = end.toISOString();
+    const pageSize = 100;
+
+    async function readGroupedPages(
+      fetchPage: (args: { startTime: string; endTime: string; currentPage: number; pageSize: number }) => Promise<Record<string, unknown>>,
+      labelKeys: string[],
+    ) {
+      const rows = [];
+      for (let currentPage = 0; currentPage < 20; currentPage++) {
+        const payload = await fetchPage({
+          startTime,
+          endTime,
+          currentPage,
+          pageSize,
+        });
+        const normalized = normalizePortkeyGroupedRows(payload, labelKeys);
+        rows.push(...normalized);
+        if (normalized.length < pageSize) break;
+      }
+      return rows;
+    }
+
+    const [modelRows, userRows, tokenPoints, costPoints] = await Promise.all([
+      readGroupedPages(getPortkeyModelGroups, ["ai_model", "model"]),
+      readGroupedPages(getPortkeyUserGroups, ["user", "metadata_value"]),
+      getPortkeyTokensGraph({ startTime, endTime }).then(normalizePortkeyGraphPoints),
+      getPortkeyCostGraph({ startTime, endTime }).then(normalizePortkeyGraphPoints),
+    ]);
+
+    await storeSnapshot(syncRun.id, "portkey", "model_groups", {
+      rowCount: modelRows.length,
+      sample: modelRows.slice(0, 10),
+    });
+    await storeSnapshot(syncRun.id, "portkey", "user_groups", {
+      rowCount: userRows.length,
+      sample: userRows.slice(0, 10),
+    });
+    await storeSnapshot(syncRun.id, "portkey", "token_graph", {
+      points: tokenPoints.slice(0, 31),
+    });
+    await storeSnapshot(syncRun.id, "portkey", "cost_graph", {
+      points: costPoints.slice(0, 31),
+    });
+
+    const rawSnapshotsStored = 4;
+    let projectsUpserted = 0;
+    let actorsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    let costBucketsUpserted = 0;
+    let apiUsageLogsCreated = 0;
+
+    for (const row of modelRows) {
+      if (!row.label) continue;
+      await prisma.providerProject.upsert({
+        where: {
+          provider_externalId: { provider: "portkey", externalId: row.label },
+        },
+        update: {
+          name: row.label,
+          status: "active",
+          metadata: toJsonValue({
+            source: "portkey_analytics_api",
+            requests: row.requests,
+            cost: row.cost,
+            totalTokens: row.totalTokens,
+            promptTokens: row.promptTokens,
+            completionTokens: row.completionTokens,
+            lastSeenAt: row.lastSeenAt,
+            raw: row.raw,
+          }),
+          lastSeenAt: new Date(),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "portkey",
+          externalId: row.label,
+          name: row.label,
+          status: "active",
+          metadata: toJsonValue({
+            source: "portkey_analytics_api",
+            requests: row.requests,
+            cost: row.cost,
+            totalTokens: row.totalTokens,
+            promptTokens: row.promptTokens,
+            completionTokens: row.completionTokens,
+            lastSeenAt: row.lastSeenAt,
+            raw: row.raw,
+          }),
+          syncRunId: syncRun.id,
+        },
+      });
+      projectsUpserted++;
+    }
+
+    for (const row of userRows) {
+      if (!row.label) continue;
+      await prisma.providerActor.upsert({
+        where: {
+          provider_externalId: { provider: "portkey", externalId: row.label },
+        },
+        update: {
+          email: row.label.includes("@") ? row.label : null,
+          name: row.label,
+          metadata: toJsonValue({
+            source: "portkey_analytics_api",
+            requests: row.requests,
+            cost: row.cost,
+            totalTokens: row.totalTokens,
+            raw: row.raw,
+          }),
+          lastSeenAt: new Date(),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "portkey",
+          externalId: row.label,
+          email: row.label.includes("@") ? row.label : null,
+          name: row.label,
+          metadata: toJsonValue({
+            source: "portkey_analytics_api",
+            requests: row.requests,
+            cost: row.cost,
+            totalTokens: row.totalTokens,
+            raw: row.raw,
+          }),
+          syncRunId: syncRun.id,
+        },
+      });
+      actorsUpserted++;
+    }
+
+    const costByTimestamp = new Map(costPoints.map((point) => [point.timestamp, point.total / 100]));
+
+    for (const point of tokenPoints) {
+      const bucketStart = new Date(point.timestamp);
+      if (Number.isNaN(bucketStart.getTime())) continue;
+      const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+      const date = bucketStart.toISOString().split("T")[0] ?? bucketStart.toISOString();
+      const dimensionKey = makeDimensionKey({
+        date,
+        scope: "all",
+      });
+      const totalTokens = Math.max(0, Math.round(point.total));
+
+      await prisma.usageBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: "portkey",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: {
+          totalTokens,
+          inputTokens: totalTokens,
+          outputTokens: 0,
+          requestCount: null,
+          metadata: toJsonValue({
+            source: "portkey_analytics_api",
+            avgTokens: point.avg,
+          }),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "portkey",
+          bucketStart,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          inputTokens: totalTokens,
+          outputTokens: 0,
+          totalTokens,
+          requestCount: null,
+          metadata: toJsonValue({
+            source: "portkey_analytics_api",
+            avgTokens: point.avg,
+          }),
+          syncRunId: syncRun.id,
+        },
+      });
+      usageBucketsUpserted++;
+
+      const amount = costByTimestamp.get(point.timestamp) ?? 0;
+      if (amount > 0) {
+        await prisma.costBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: "portkey",
+              bucketStart,
+              bucketEnd,
+              granularity: "day",
+              dimensionKey,
+            },
+          },
+          update: {
+            amount,
+            currency: "usd",
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "portkey_analytics_api",
+            }),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "portkey",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+            amount,
+            currency: "usd",
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "portkey_analytics_api",
+            }),
+            syncRunId: syncRun.id,
+          },
+        });
+        costBucketsUpserted++;
+      }
+
+      const created = await upsertDerivedUsageLog({
+        provider: "portkey",
+        model: null,
+        bucketDate: bucketStart,
+        inputTokens: totalTokens,
+        outputTokens: 0,
+        totalTokens,
+        cost: amount,
+        metadata: {
+          source: "portkey_analytics_api",
+          syncRunId: syncRun.id,
+          dimensionKey,
+          provider: "portkey",
+        },
+      });
+      if (created) apiUsageLogsCreated++;
+    }
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted,
+      rawSnapshotsStored,
+      projectsUpserted,
+      actorsUpserted,
+      apiUsageLogsCreated,
+    };
+
+    await completeSyncRun(syncRun.id, summary, {
+      coverage: {
+        modelRows: modelRows.length,
+        userRows: userRows.length,
+        tokenPoints: tokenPoints.length,
+        costPoints: costPoints.length,
+      },
+    });
+
+    return { provider: "portkey", success: true, syncRunId: syncRun.id, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "portkey", success: false, error: errorMessage };
+  }
+}
+
+export async function syncHeliconeTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  if (!(await isHeliconeConfigured())) {
+    return {
+      provider: "helicone",
+      success: false,
+      skipped: true,
+      error: "Helicone API key is not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("helicone", triggeredByUserId);
+
+  try {
+    const end = new Date();
+    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const allRows = [];
+    const pageSize = 500;
+
+    for (let page = 0; page < 20; page++) {
+      const payload = await queryHeliconeRequests({
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        offset: page * pageSize,
+        limit: pageSize,
+      });
+      const rows = normalizeHeliconeRequestRows(payload);
+      allRows.push(...rows);
+      if (rows.length < pageSize) break;
+    }
+
+    await storeSnapshot(syncRun.id, "helicone", "request_summary", {
+      rowCount: allRows.length,
+      sample: allRows.slice(0, 10),
+    });
+
+    const rawSnapshotsStored = 1;
+    let actorsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    let costBucketsUpserted = 0;
+    let apiUsageLogsCreated = 0;
+    const seenActors = new Set<string>();
+
+    const aggregates = new Map<
+      string,
+      {
+        date: string;
+        model: string | null;
+        upstreamProvider: string | null;
+        actorId: string | null;
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        requestCount: number;
+        cost: number;
+      }
+    >();
+
+    for (const row of allRows) {
+      const date = row.requestCreatedAt.split("T")[0] ?? "";
+      if (!date) continue;
+      const key = makeDimensionKey({
+        date,
+        model: row.model,
+        upstreamProvider: row.provider,
+        actor: row.userId,
+      });
+
+      if (row.userId && !seenActors.has(row.userId)) {
+        seenActors.add(row.userId);
+        await prisma.providerActor.upsert({
+          where: {
+            provider_externalId: { provider: "helicone", externalId: row.userId },
+          },
+          update: {
+            email: row.userId.includes("@") ? row.userId : null,
+            name: row.userId,
+            metadata: toJsonValue({ source: "helicone_request_api" }),
+            lastSeenAt: new Date(),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "helicone",
+            externalId: row.userId,
+            email: row.userId.includes("@") ? row.userId : null,
+            name: row.userId,
+            metadata: toJsonValue({ source: "helicone_request_api" }),
+            syncRunId: syncRun.id,
+          },
+        });
+        actorsUpserted++;
+      }
+
+      const existing = aggregates.get(key);
+      if (existing) {
+        existing.promptTokens += row.promptTokens;
+        existing.completionTokens += row.completionTokens;
+        existing.totalTokens += row.totalTokens;
+        existing.requestCount += 1;
+        existing.cost += row.cost;
+      } else {
+        aggregates.set(key, {
+          date,
+          model: row.model,
+          upstreamProvider: row.provider,
+          actorId: row.userId,
+          promptTokens: row.promptTokens,
+          completionTokens: row.completionTokens,
+          totalTokens: row.totalTokens,
+          requestCount: 1,
+          cost: row.cost,
+        });
+      }
+    }
+
+    for (const aggregate of aggregates.values()) {
+      const bucketStart = new Date(`${aggregate.date}T00:00:00.000Z`);
+      const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+      const dimensionKey = makeDimensionKey({
+        date: aggregate.date,
+        model: aggregate.model,
+        upstreamProvider: aggregate.upstreamProvider,
+        actor: aggregate.actorId,
+      });
+
+      await prisma.usageBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: "helicone",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: {
+          model: aggregate.model,
+          actorExternalId: aggregate.actorId,
+          actorName: aggregate.actorId,
+          inputTokens: aggregate.promptTokens,
+          outputTokens: aggregate.completionTokens,
+          totalTokens: aggregate.totalTokens,
+          requestCount: aggregate.requestCount,
+          metadata: toJsonValue({
+            source: "helicone_request_api",
+            upstream_provider: aggregate.upstreamProvider,
+          }),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "helicone",
+          bucketStart,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          model: aggregate.model,
+          actorExternalId: aggregate.actorId,
+          actorName: aggregate.actorId,
+          inputTokens: aggregate.promptTokens,
+          outputTokens: aggregate.completionTokens,
+          totalTokens: aggregate.totalTokens,
+          requestCount: aggregate.requestCount,
+          metadata: toJsonValue({
+            source: "helicone_request_api",
+            upstream_provider: aggregate.upstreamProvider,
+          }),
+          syncRunId: syncRun.id,
+        },
+      });
+      usageBucketsUpserted++;
+
+      if (aggregate.cost > 0) {
+        await prisma.costBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: "helicone",
+              bucketStart,
+              bucketEnd,
+              granularity: "day",
+              dimensionKey,
+            },
+          },
+          update: {
+            amount: aggregate.cost,
+            currency: "usd",
+            model: aggregate.model,
+            actorName: aggregate.actorId,
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "helicone_request_api",
+              upstream_provider: aggregate.upstreamProvider,
+            }),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "helicone",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+            amount: aggregate.cost,
+            currency: "usd",
+            model: aggregate.model,
+            actorName: aggregate.actorId,
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "helicone_request_api",
+              upstream_provider: aggregate.upstreamProvider,
+            }),
+            syncRunId: syncRun.id,
+          },
+        });
+        costBucketsUpserted++;
+      }
+
+      const created = await upsertDerivedUsageLog({
+        provider: "helicone",
+        model: aggregate.model,
+        bucketDate: bucketStart,
+        inputTokens: aggregate.promptTokens,
+        outputTokens: aggregate.completionTokens,
+        totalTokens: aggregate.totalTokens,
+        cost: aggregate.cost,
+        metadata: {
+          source: "helicone_request_api",
+          syncRunId: syncRun.id,
+          dimensionKey,
+          provider: "helicone",
+        },
+      });
+      if (created) apiUsageLogsCreated++;
+    }
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted,
+      rawSnapshotsStored,
+      projectsUpserted: 0,
+      actorsUpserted,
+      apiUsageLogsCreated,
+    };
+
+    await completeSyncRun(syncRun.id, summary, {
+      coverage: {
+        rows: allRows.length,
+        uniqueActors: seenActors.size,
+      },
+    });
+
+    return { provider: "helicone", success: true, syncRunId: syncRun.id, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "helicone", success: false, error: errorMessage };
   }
 }

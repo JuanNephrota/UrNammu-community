@@ -45,6 +45,12 @@ const SETTINGS_KEYS = [
   "anthropic_admin_key",
   "anthropic_managed_system_id",
   "openai_admin_key",
+  "openrouter_provisioning_key",
+  "helicone_api_key",
+  "helicone_api_base_url",
+  "portkey_api_key",
+  "portkey_api_base_url",
+  "portkey_workspace_slug",
   "policy_enforcement_mode",
   "azure_subscription_id",
   "azure_resource_group",
@@ -143,6 +149,9 @@ export async function getSettingsPageData() {
     forgeSkills,
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasOpenAIAdminKey: !!settingsMap.openai_admin_key,
+    hasOpenRouterKey: !!settingsMap.openrouter_provisioning_key,
+    hasHeliconeKey: !!settingsMap.helicone_api_key,
+    hasPortkeyKey: !!settingsMap.portkey_api_key,
     hasGeminiBillingConfig:
       !!settingsMap.gemini_billing_service_account_key &&
       !!settingsMap.gemini_billing_project_id &&

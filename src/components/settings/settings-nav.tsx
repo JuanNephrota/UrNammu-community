@@ -7,6 +7,7 @@ import {
   Cpu,
   Eye,
   KeyRound,
+  Network,
   Search,
   Shield,
 } from "lucide-react";
@@ -27,6 +28,12 @@ const allItems: SettingsNavItem[] = [
     icon: Cog,
   },
   {
+    href: "/settings/integrations",
+    label: "Integrations",
+    description: "Every external service UrNammu connects to",
+    icon: Network,
+  },
+  {
     href: "/settings/general",
     label: "General",
     description: "Environment and model defaults",
@@ -35,7 +42,7 @@ const allItems: SettingsNavItem[] = [
   {
     href: "/settings/provider-admin",
     label: "Provider Admin APIs",
-    description: "Telemetry sync and admin API credentials",
+    description: "Anomaly, governance, and attribution tuning",
     icon: Eye,
   },
   {

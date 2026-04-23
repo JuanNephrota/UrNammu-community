@@ -71,10 +71,16 @@ export function OrgDataPanel() {
         const parts: string[] = [];
         if ((result.anthropicUsageSynced as number) > 0) parts.push(`${result.anthropicUsageSynced} Anthropic usage records`);
         if ((result.openaiUsageSynced as number) > 0) parts.push(`${result.openaiUsageSynced} OpenAI usage records`);
+        if ((result.openRouterUsageSynced as number) > 0) parts.push(`${result.openRouterUsageSynced} OpenRouter usage records`);
+        if ((result.heliconeUsageSynced as number) > 0) parts.push(`${result.heliconeUsageSynced} Helicone usage records`);
+        if ((result.portkeyUsageSynced as number) > 0) parts.push(`${result.portkeyUsageSynced} Portkey usage records`);
         if ((result.geminiUsageSynced as number) > 0) parts.push(`${result.geminiUsageSynced} Gemini usage records`);
         if ((result.claudeCodeUsageSynced as number) > 0) parts.push(`${result.claudeCodeUsageSynced} Claude Code usage records`);
         if ((result.anthropicCostBucketsSynced as number) > 0) parts.push(`${result.anthropicCostBucketsSynced} Anthropic cost buckets`);
         if ((result.openaiCostBucketsSynced as number) > 0) parts.push(`${result.openaiCostBucketsSynced} OpenAI cost buckets`);
+        if ((result.openRouterCostBucketsSynced as number) > 0) parts.push(`${result.openRouterCostBucketsSynced} OpenRouter cost buckets`);
+        if ((result.heliconeCostBucketsSynced as number) > 0) parts.push(`${result.heliconeCostBucketsSynced} Helicone cost buckets`);
+        if ((result.portkeyCostBucketsSynced as number) > 0) parts.push(`${result.portkeyCostBucketsSynced} Portkey cost buckets`);
         if ((result.geminiCostBucketsSynced as number) > 0) parts.push(`${result.geminiCostBucketsSynced} Gemini cost buckets`);
         if ((result.claudeCodeCostsSynced as number) > 0) parts.push(`${result.claudeCodeCostsSynced} Claude Code cost buckets`);
         if ((result.agentsCreated as number) > 0) parts.push(`${result.agentsCreated} new agents`);

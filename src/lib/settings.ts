@@ -47,6 +47,12 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.GOVERNANCE_ESCALATION_OVERDUE_DAYS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
     proxy_secret: process.env.PROXY_SECRET,
+    openrouter_provisioning_key: process.env.OPENROUTER_PROVISIONING_KEY,
+    helicone_api_key: process.env.HELICONE_API_KEY,
+    helicone_api_base_url: process.env.HELICONE_API_BASE_URL,
+    portkey_api_key: process.env.PORTKEY_API_KEY,
+    portkey_api_base_url: process.env.PORTKEY_API_BASE_URL,
+    portkey_workspace_slug: process.env.PORTKEY_WORKSPACE_SLUG,
     claude_code_telemetry_secret: process.env.CLAUDE_CODE_TELEMETRY_SECRET,
     claude_code_telemetry_retention_days:
       process.env.CLAUDE_CODE_TELEMETRY_RETENTION_DAYS,
@@ -162,6 +168,15 @@ export const AUTH_SETTINGS_KEYS = {
 export const PLATFORM_SETTINGS_KEYS = {
   PROXY_SECRET: "proxy_secret",
   PLATFORM_URL: "platform_url",
+} as const;
+
+export const THIRD_PARTY_PROXY_SETTINGS_KEYS = {
+  OPENROUTER_PROVISIONING_KEY: "openrouter_provisioning_key",
+  HELICONE_API_KEY: "helicone_api_key",
+  HELICONE_API_BASE_URL: "helicone_api_base_url",
+  PORTKEY_API_KEY: "portkey_api_key",
+  PORTKEY_API_BASE_URL: "portkey_api_base_url",
+  PORTKEY_WORKSPACE_SLUG: "portkey_workspace_slug",
 } as const;
 
 // Runtime policy-as-code enforcement controls. Evaluated by the Azure Functions
