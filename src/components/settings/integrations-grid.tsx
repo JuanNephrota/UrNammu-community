@@ -35,6 +35,8 @@ import {
   ProviderSection,
 } from "@/app/(dashboard)/settings/admin-api-settings";
 import { GeminiBillingSettings } from "./gemini-billing-settings";
+import { LiteLLMSettings } from "./litellm-settings";
+import { DatadogSettings } from "./datadog-settings";
 
 type Category =
   | "AI Models"
@@ -72,7 +74,18 @@ export interface IntegrationsGridProps {
   hasOpenRouterKey: boolean;
   hasHeliconeKey: boolean;
   hasPortkeyKey: boolean;
+  hasLiteLLMKey: boolean;
   hasGeminiBillingConfig: boolean;
+  litellm: {
+    baseUrl: string;
+    hasApiKey: boolean;
+  };
+  datadog: {
+    hasApiKey: boolean;
+    hasAppKey: boolean;
+    site: string;
+    enabled: boolean;
+  };
   geminiBilling: {
     projectId: string;
     dataset: string;
@@ -163,6 +176,14 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
       connected: props.hasPortkeyKey,
     },
     {
+      id: "litellm",
+      category: "AI Gateways",
+      name: "LiteLLM Proxy",
+      description: "Pull spend logs and team usage from a self-hosted LiteLLM proxy.",
+      icon: Network,
+      connected: props.hasLiteLLMKey,
+    },
+    {
       id: "google-signin",
       category: "Identity",
       name: "Google Sign-In",
@@ -204,6 +225,15 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
         !!props.azureMonitor.subscriptionId &&
         !!props.azureMonitor.functionAppName &&
         props.azureMonitor.hasClientSecret,
+    },
+    {
+      id: "datadog",
+      category: "Observability",
+      name: "Datadog",
+      description: "Forward governance alerts and sync events to your Datadog org as events.",
+      icon: Gauge,
+      connected: props.datadog.hasApiKey,
+      statusLabel: props.datadog.enabled ? "Forwarding on" : undefined,
     },
     {
       id: "forge",
@@ -336,10 +366,14 @@ function renderModalBody(id: string, props: IntegrationsGridProps) {
       return renderProviderSection("helicone", props.hasHeliconeKey);
     case "portkey":
       return renderProviderSection("portkey", props.hasPortkeyKey);
+    case "litellm":
+      return <LiteLLMSettings initial={props.litellm} />;
     case "gemini-billing":
       return <GeminiBillingSettings initial={props.geminiBilling} />;
     case "azure-monitor":
       return <AzureMonitorSettings initial={props.azureMonitor} />;
+    case "datadog":
+      return <DatadogSettings initial={props.datadog} />;
     case "forge":
       return <ForgeSkillsSettings initial={props.forgeSkills} />;
     case "google-signin":

@@ -7,7 +7,6 @@ import {
   Cpu,
   Eye,
   KeyRound,
-  Network,
   Search,
   Shield,
 } from "lucide-react";
@@ -26,12 +25,6 @@ const allItems: SettingsNavItem[] = [
     label: "Overview",
     description: "Jump to a settings area quickly",
     icon: Cog,
-  },
-  {
-    href: "/settings/integrations",
-    label: "Integrations",
-    description: "Every external service UrNammu connects to",
-    icon: Network,
   },
   {
     href: "/settings/general",

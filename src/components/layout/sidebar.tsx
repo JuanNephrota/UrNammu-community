@@ -20,6 +20,7 @@ import {
   Presentation,
   Activity,
   Sparkles,
+  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -57,6 +58,7 @@ const navItems = [
     items: [
       { name: "Alerts", href: "/alerts", icon: Bell },
       { name: "Proxy Health", href: "/proxy-health", icon: Activity },
+      { name: "Integrations", href: "/integrations", icon: Network },
       { name: "Settings", href: "/settings", icon: Settings },
     ],
   },

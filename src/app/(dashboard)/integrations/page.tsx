@@ -1,10 +1,11 @@
 import { requireRole } from "@/lib/auth-guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Network } from "lucide-react";
+import { PageHeader } from "@/components/layout/page-header";
 import { IntegrationsGrid } from "@/components/settings/integrations-grid";
-import { getSettingsPageData } from "../data";
+import { getSettingsPageData } from "../settings/data";
 
-export default async function IntegrationsSettingsPage() {
+export default async function IntegrationsPage() {
   await requireRole(["ADMIN"]);
 
   const {
@@ -17,6 +18,7 @@ export default async function IntegrationsSettingsPage() {
     hasOpenRouterKey,
     hasHeliconeKey,
     hasPortkeyKey,
+    hasLiteLLMKey,
     hasGeminiBillingConfig,
     azureMonitor,
     forgeSkills,
@@ -50,17 +52,23 @@ export default async function IntegrationsSettingsPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Integrations"
+        description="Every external service UrNammu connects to, grouped by purpose"
+      />
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Network className="h-4 w-4 text-[var(--accent)]" />
-            Integrations
+            Connected services
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
-            Every external service UrNammu connects to, grouped by what it does. Click a tile to
-            configure credentials, connection details, and sync options.
+            Click a tile to configure credentials, connection details, and sync options. Identity
+            providers and shadow AI discovery link out to the settings pages where their full
+            scan / auth configuration lives.
           </p>
         </CardContent>
       </Card>
@@ -76,7 +84,18 @@ export default async function IntegrationsSettingsPage() {
         hasOpenRouterKey={hasOpenRouterKey}
         hasHeliconeKey={hasHeliconeKey}
         hasPortkeyKey={hasPortkeyKey}
+        hasLiteLLMKey={hasLiteLLMKey}
         hasGeminiBillingConfig={hasGeminiBillingConfig}
+        litellm={{
+          baseUrl: settingsMap.litellm_api_base_url ?? "",
+          hasApiKey: !!settingsMap.litellm_api_key,
+        }}
+        datadog={{
+          hasApiKey: !!settingsMap.datadog_api_key,
+          hasAppKey: !!settingsMap.datadog_app_key,
+          site: settingsMap.datadog_site ?? "datadoghq.com",
+          enabled: settingsMap.datadog_enabled === "true",
+        }}
         geminiBilling={{
           projectId: settingsMap.gemini_billing_project_id ?? "",
           dataset: settingsMap.gemini_billing_dataset ?? "",

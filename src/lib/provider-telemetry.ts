@@ -26,6 +26,11 @@ import {
   queryHeliconeRequests,
 } from "./helicone-admin";
 import {
+  isLiteLLMConfigured,
+  normalizeLiteLLMSpendRows,
+  queryLiteLLMSpendLogs,
+} from "./litellm-admin";
+import {
   getPortkeyCostGraph,
   getPortkeyModelGroups,
   getPortkeyTokensGraph,
@@ -59,7 +64,7 @@ type SyncSummary = {
   apiUsageLogsCreated: number;
 };
 
-type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini" | "openrouter" | "helicone" | "portkey";
+type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini" | "openrouter" | "helicone" | "portkey" | "litellm";
 
 type SyncResult =
   | ({ provider: SyncProvider; success: true } & SyncSummary)
@@ -1905,5 +1910,297 @@ export async function syncHeliconeTelemetry(triggeredByUserId: string): Promise<
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "helicone", success: false, error: errorMessage };
+  }
+}
+
+export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+  if (!(await isLiteLLMConfigured())) {
+    return {
+      provider: "litellm",
+      success: false,
+      skipped: true,
+      error: "LiteLLM master key and base URL are not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("litellm", triggeredByUserId);
+
+  try {
+    const end = new Date();
+    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const payload = await queryLiteLLMSpendLogs({
+      startDate: start.toISOString().slice(0, 10),
+      endDate: end.toISOString().slice(0, 10),
+    });
+    const rows = normalizeLiteLLMSpendRows(payload);
+
+    await storeSnapshot(syncRun.id, "litellm", "spend_logs", {
+      rowCount: rows.length,
+      sample: rows.slice(0, 10),
+    });
+
+    const rawSnapshotsStored = 1;
+    let actorsUpserted = 0;
+    let projectsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    let costBucketsUpserted = 0;
+    let apiUsageLogsCreated = 0;
+    const seenActors = new Set<string>();
+    const seenTeams = new Set<string>();
+
+    const aggregates = new Map<
+      string,
+      {
+        date: string;
+        model: string | null;
+        upstreamProvider: string | null;
+        actorId: string | null;
+        actorName: string | null;
+        teamId: string | null;
+        teamName: string | null;
+        apiKeyExternalId: string | null;
+        apiKeyName: string | null;
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        requestCount: number;
+        cost: number;
+      }
+    >();
+
+    for (const row of rows) {
+      const date = row.startTime.split("T")[0] ?? "";
+      if (!date) continue;
+      const dimensionKey = makeDimensionKey({
+        date,
+        model: row.model,
+        upstreamProvider: row.provider,
+        actor: row.userId,
+        team: row.teamId,
+        apiKey: row.apiKeyExternalId,
+      });
+
+      if (row.userId && !seenActors.has(row.userId)) {
+        seenActors.add(row.userId);
+        await prisma.providerActor.upsert({
+          where: {
+            provider_externalId: { provider: "litellm", externalId: row.userId },
+          },
+          update: {
+            email: row.userId.includes("@") ? row.userId : null,
+            name: row.userId,
+            metadata: toJsonValue({ source: "litellm_spend_logs" }),
+            lastSeenAt: new Date(),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "litellm",
+            externalId: row.userId,
+            email: row.userId.includes("@") ? row.userId : null,
+            name: row.userId,
+            metadata: toJsonValue({ source: "litellm_spend_logs" }),
+            syncRunId: syncRun.id,
+          },
+        });
+        actorsUpserted++;
+      }
+
+      if (row.teamId && !seenTeams.has(row.teamId)) {
+        seenTeams.add(row.teamId);
+        await prisma.providerProject.upsert({
+          where: {
+            provider_externalId: { provider: "litellm", externalId: row.teamId },
+          },
+          update: {
+            name: row.teamName ?? row.teamId,
+            status: "active",
+            metadata: toJsonValue({ source: "litellm_spend_logs" }),
+            lastSeenAt: new Date(),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "litellm",
+            externalId: row.teamId,
+            name: row.teamName ?? row.teamId,
+            status: "active",
+            metadata: toJsonValue({ source: "litellm_spend_logs" }),
+            syncRunId: syncRun.id,
+          },
+        });
+        projectsUpserted++;
+      }
+
+      const existing = aggregates.get(dimensionKey);
+      if (existing) {
+        existing.promptTokens += row.promptTokens;
+        existing.completionTokens += row.completionTokens;
+        existing.totalTokens += row.totalTokens;
+        existing.requestCount += 1;
+        existing.cost += row.cost;
+      } else {
+        aggregates.set(dimensionKey, {
+          date,
+          model: row.model,
+          upstreamProvider: row.provider,
+          actorId: row.userId,
+          actorName: row.userId,
+          teamId: row.teamId,
+          teamName: row.teamName,
+          apiKeyExternalId: row.apiKeyExternalId,
+          apiKeyName: row.apiKeyName,
+          promptTokens: row.promptTokens,
+          completionTokens: row.completionTokens,
+          totalTokens: row.totalTokens,
+          requestCount: 1,
+          cost: row.cost,
+        });
+      }
+    }
+
+    for (const [dimensionKey, aggregate] of aggregates.entries()) {
+      const bucketStart = new Date(`${aggregate.date}T00:00:00.000Z`);
+      const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+
+      await prisma.usageBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: "litellm",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: {
+          model: aggregate.model,
+          projectExternalId: aggregate.teamId,
+          projectName: aggregate.teamName,
+          actorExternalId: aggregate.actorId,
+          actorName: aggregate.actorName,
+          apiKeyExternalId: aggregate.apiKeyExternalId,
+          apiKeyName: aggregate.apiKeyName,
+          inputTokens: aggregate.promptTokens,
+          outputTokens: aggregate.completionTokens,
+          totalTokens: aggregate.totalTokens,
+          requestCount: aggregate.requestCount,
+          metadata: toJsonValue({
+            source: "litellm_spend_logs",
+            upstream_provider: aggregate.upstreamProvider,
+          }),
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "litellm",
+          bucketStart,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          model: aggregate.model,
+          projectExternalId: aggregate.teamId,
+          projectName: aggregate.teamName,
+          actorExternalId: aggregate.actorId,
+          actorName: aggregate.actorName,
+          apiKeyExternalId: aggregate.apiKeyExternalId,
+          apiKeyName: aggregate.apiKeyName,
+          inputTokens: aggregate.promptTokens,
+          outputTokens: aggregate.completionTokens,
+          totalTokens: aggregate.totalTokens,
+          requestCount: aggregate.requestCount,
+          metadata: toJsonValue({
+            source: "litellm_spend_logs",
+            upstream_provider: aggregate.upstreamProvider,
+          }),
+          syncRunId: syncRun.id,
+        },
+      });
+      usageBucketsUpserted++;
+
+      if (aggregate.cost > 0) {
+        await prisma.costBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: "litellm",
+              bucketStart,
+              bucketEnd,
+              granularity: "day",
+              dimensionKey,
+            },
+          },
+          update: {
+            amount: aggregate.cost,
+            currency: "usd",
+            model: aggregate.model,
+            projectExternalId: aggregate.teamId,
+            projectName: aggregate.teamName,
+            actorName: aggregate.actorName,
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "litellm_spend_logs",
+              upstream_provider: aggregate.upstreamProvider,
+            }),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "litellm",
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+            amount: aggregate.cost,
+            currency: "usd",
+            model: aggregate.model,
+            projectExternalId: aggregate.teamId,
+            projectName: aggregate.teamName,
+            actorName: aggregate.actorName,
+            lineItem: "proxy",
+            metadata: toJsonValue({
+              source: "litellm_spend_logs",
+              upstream_provider: aggregate.upstreamProvider,
+            }),
+            syncRunId: syncRun.id,
+          },
+        });
+        costBucketsUpserted++;
+      }
+
+      const created = await upsertDerivedUsageLog({
+        provider: "litellm",
+        model: aggregate.model,
+        bucketDate: bucketStart,
+        inputTokens: aggregate.promptTokens,
+        outputTokens: aggregate.completionTokens,
+        totalTokens: aggregate.totalTokens,
+        cost: aggregate.cost,
+        metadata: {
+          source: "litellm_spend_logs",
+          syncRunId: syncRun.id,
+          dimensionKey,
+          provider: "litellm",
+        },
+      });
+      if (created) apiUsageLogsCreated++;
+    }
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted,
+      rawSnapshotsStored,
+      projectsUpserted,
+      actorsUpserted,
+      apiUsageLogsCreated,
+    };
+
+    await completeSyncRun(syncRun.id, summary, {
+      coverage: {
+        rows: rows.length,
+        uniqueActors: seenActors.size,
+        uniqueTeams: seenTeams.size,
+      },
+    });
+
+    return { provider: "litellm", success: true, syncRunId: syncRun.id, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "litellm", success: false, error: errorMessage };
   }
 }

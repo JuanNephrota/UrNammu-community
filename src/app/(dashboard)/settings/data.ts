@@ -51,6 +51,12 @@ const SETTINGS_KEYS = [
   "portkey_api_key",
   "portkey_api_base_url",
   "portkey_workspace_slug",
+  "litellm_api_key",
+  "litellm_api_base_url",
+  "datadog_api_key",
+  "datadog_app_key",
+  "datadog_site",
+  "datadog_enabled",
   "policy_enforcement_mode",
   "azure_subscription_id",
   "azure_resource_group",
@@ -152,6 +158,11 @@ export async function getSettingsPageData() {
     hasOpenRouterKey: !!settingsMap.openrouter_provisioning_key,
     hasHeliconeKey: !!settingsMap.helicone_api_key,
     hasPortkeyKey: !!settingsMap.portkey_api_key,
+    hasLiteLLMKey:
+      !!settingsMap.litellm_api_key && !!settingsMap.litellm_api_base_url,
+    hasDatadogKey: !!settingsMap.datadog_api_key,
+    datadogEnabled: settingsMap.datadog_enabled === "true",
+    datadogSite: settingsMap.datadog_site ?? "datadoghq.com",
     hasGeminiBillingConfig:
       !!settingsMap.gemini_billing_service_account_key &&
       !!settingsMap.gemini_billing_project_id &&

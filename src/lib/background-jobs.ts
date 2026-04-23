@@ -1,11 +1,13 @@
 import { prisma } from "./prisma";
 import { fetchOpenAIOrgData, listAssistants } from "./openai-admin";
 import { logger } from "./observability";
+import { notifyDatadog } from "./datadog-client";
 import {
   syncAnthropicTelemetry,
   syncClaudeCodeAnalytics,
   syncGeminiTelemetry,
   syncHeliconeTelemetry,
+  syncLiteLLMTelemetry,
   syncOpenAITelemetry,
   syncOpenRouterTelemetry,
   syncPortkeyTelemetry,
@@ -30,6 +32,7 @@ export type ProviderSyncJobResult = {
   openRouterUsageSynced: number;
   heliconeUsageSynced: number;
   portkeyUsageSynced: number;
+  litellmUsageSynced: number;
   geminiUsageSynced: number;
   claudeCodeUsageSynced: number;
   anthropicCostBucketsSynced: number;
@@ -37,6 +40,7 @@ export type ProviderSyncJobResult = {
   openRouterCostBucketsSynced: number;
   heliconeCostBucketsSynced: number;
   portkeyCostBucketsSynced: number;
+  litellmCostBucketsSynced: number;
   geminiCostBucketsSynced: number;
   claudeCodeCostsSynced: number;
   rawSnapshotsStored: number;
@@ -136,6 +140,24 @@ async function syncGovernanceAutomationAlerts(input: {
         aiSystemId: candidate.aiSystemId,
       },
     });
+
+    await notifyDatadog({
+      title: `[UrNammu] ${candidate.title}`,
+      text: candidate.description,
+      tags: [
+        "source:urnammu",
+        `alert_source:${input.source}`,
+        `severity:${candidate.severity.toLowerCase()}`,
+        `ai_system:${candidate.aiSystemId}`,
+      ],
+      alertType:
+        candidate.severity === "HIGH"
+          ? "error"
+          : candidate.severity === "MEDIUM"
+            ? "warning"
+            : "info",
+      aggregationKey: `urnammu:${input.source}:${candidate.aiSystemId}`,
+    });
   }
 
   for (const alert of openAlerts) {
@@ -159,12 +181,13 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     trigger: triggeredByUserId === "system" ? "scheduler" : "manual",
   });
 
-  const [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, geminiResult, claudeCodeResult] = await Promise.all([
+  const [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, litellmResult, geminiResult, claudeCodeResult] = await Promise.all([
     syncAnthropicTelemetry(triggeredByUserId),
     syncOpenAITelemetry(triggeredByUserId),
     syncOpenRouterTelemetry(triggeredByUserId),
     syncHeliconeTelemetry(triggeredByUserId),
     syncPortkeyTelemetry(triggeredByUserId),
+    syncLiteLLMTelemetry(triggeredByUserId),
     syncGeminiTelemetry(triggeredByUserId),
     syncClaudeCodeAnalytics(triggeredByUserId),
   ]);
@@ -175,10 +198,11 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     openrouter: "OpenRouter activity",
     helicone: "Helicone request logs",
     portkey: "Portkey analytics",
+    litellm: "LiteLLM spend logs",
     gemini: "Gemini telemetry",
     claude_code: "Claude Code analytics",
   };
-  const rawResults = [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, geminiResult, claudeCodeResult];
+  const rawResults = [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, litellmResult, geminiResult, claudeCodeResult];
   const skipped: string[] = [];
   const errors: string[] = [];
   for (const result of rawResults) {
@@ -197,6 +221,7 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     openRouterUsageSynced: openRouterResult.success ? openRouterResult.usageBucketsUpserted : 0,
     heliconeUsageSynced: heliconeResult.success ? heliconeResult.usageBucketsUpserted : 0,
     portkeyUsageSynced: portkeyResult.success ? portkeyResult.usageBucketsUpserted : 0,
+    litellmUsageSynced: litellmResult.success ? litellmResult.usageBucketsUpserted : 0,
     geminiUsageSynced: geminiResult.success ? geminiResult.usageBucketsUpserted : 0,
     claudeCodeUsageSynced: claudeCodeResult.success ? claudeCodeResult.usageBucketsUpserted : 0,
     anthropicCostBucketsSynced: anthropicResult.success ? anthropicResult.costBucketsUpserted : 0,
@@ -204,6 +229,7 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     openRouterCostBucketsSynced: openRouterResult.success ? openRouterResult.costBucketsUpserted : 0,
     heliconeCostBucketsSynced: heliconeResult.success ? heliconeResult.costBucketsUpserted : 0,
     portkeyCostBucketsSynced: portkeyResult.success ? portkeyResult.costBucketsUpserted : 0,
+    litellmCostBucketsSynced: litellmResult.success ? litellmResult.costBucketsUpserted : 0,
     geminiCostBucketsSynced: geminiResult.success ? geminiResult.costBucketsUpserted : 0,
     claudeCodeCostsSynced: claudeCodeResult.success ? claudeCodeResult.costBucketsUpserted : 0,
     rawSnapshotsStored:
@@ -212,6 +238,7 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
       (openRouterResult.success ? openRouterResult.rawSnapshotsStored : 0) +
       (heliconeResult.success ? heliconeResult.rawSnapshotsStored : 0) +
       (portkeyResult.success ? portkeyResult.rawSnapshotsStored : 0) +
+      (litellmResult.success ? litellmResult.rawSnapshotsStored : 0) +
       (geminiResult.success ? geminiResult.rawSnapshotsStored : 0) +
       (claudeCodeResult.success ? claudeCodeResult.rawSnapshotsStored : 0),
     assistantsFound: 0,
@@ -281,6 +308,8 @@ export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Pr
     openaiSuccess: openaiResult.success,
     openRouterSuccess: openRouterResult.success,
     heliconeSuccess: heliconeResult.success,
+    portkeySuccess: portkeyResult.success,
+    litellmSuccess: litellmResult.success,
     geminiSuccess: geminiResult.success,
     claudeCodeSuccess: claudeCodeResult.success,
     skipped: results.skipped,

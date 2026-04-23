@@ -5,7 +5,6 @@ import {
   Cpu,
   Eye,
   KeyRound,
-  Network,
   Search,
   Shield,
 } from "lucide-react";
@@ -19,32 +18,10 @@ export default async function SettingsOverviewPage() {
     providerLabel,
     modelLabel,
     users,
-    hasAnthropicAdminKey,
-    hasOpenAIAdminKey,
-    hasOpenRouterKey,
-    hasHeliconeKey,
-    hasPortkeyKey,
-    hasGeminiBillingConfig,
     settingsMap,
   } = await getSettingsPageData();
 
-  const integrationsConnected =
-    Number(hasAnthropicAdminKey) +
-    Number(hasOpenAIAdminKey) +
-    Number(hasOpenRouterKey) +
-    Number(hasHeliconeKey) +
-    Number(hasPortkeyKey) +
-    Number(hasGeminiBillingConfig);
-
   const cards = [
-    {
-      href: "/settings/integrations",
-      title: "Integrations",
-      description: "Every external service UrNammu connects to, grouped by purpose.",
-      icon: Network,
-      badge: `${integrationsConnected} provider integrations connected`,
-      visible: isAdmin,
-    },
     {
       href: "/settings/general",
       title: "General",

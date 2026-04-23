@@ -122,6 +122,24 @@ export const PROVIDERS: ProviderConfig[] = [
     credentialLabel: "API Key",
     color: "var(--success)",
   },
+  {
+    id: "litellm",
+    name: "LiteLLM Proxy",
+    description: "Pull spend logs and team usage from a self-hosted LiteLLM proxy so UrNammu can attribute gateway traffic back to projects and actors.",
+    keyPlaceholder: "sk-litellm-...",
+    testEndpoint: "/api/settings/test-litellm",
+    settingKey: "litellm_api_key",
+    hasKey: false,
+    setupSteps: [
+      "Deploy the LiteLLM proxy (self-hosted) and note its base URL.",
+      "Generate a master key (sk-...) on that proxy or grab one from your secret store.",
+      "Paste the master key below and set litellm_api_base_url to the proxy URL (e.g., https://litellm.internal).",
+    ],
+    docsUrl: "https://docs.litellm.ai/docs/proxy/ui_logs_spend",
+    docsLabel: "LiteLLM Proxy Spend Logs Docs",
+    credentialLabel: "Master Key",
+    color: "var(--accent)",
+  },
 ];
 
 interface Props {
@@ -130,6 +148,7 @@ interface Props {
   hasOpenRouterKey: boolean;
   hasHeliconeKey: boolean;
   hasPortkeyKey: boolean;
+  hasLiteLLMKey: boolean;
   hasGeminiBillingConfig: boolean;
   providerSyncEnabled: boolean;
   providerSyncIntervalHours: number;
@@ -157,6 +176,7 @@ export function AdminAPISettings({
   hasOpenRouterKey,
   hasHeliconeKey,
   hasPortkeyKey,
+  hasLiteLLMKey,
   hasGeminiBillingConfig,
   providerSyncEnabled: initialProviderSyncEnabled,
   providerSyncIntervalHours: initialProviderSyncIntervalHours,
@@ -216,7 +236,11 @@ export function AdminAPISettings({
             ? hasOpenRouterKey
             : p.id === "helicone"
               ? hasHeliconeKey
-              : hasPortkeyKey,
+              : p.id === "portkey"
+                ? hasPortkeyKey
+                : p.id === "litellm"
+                  ? hasLiteLLMKey
+                  : false,
   }));
 
   async function handleSaveSchedule() {

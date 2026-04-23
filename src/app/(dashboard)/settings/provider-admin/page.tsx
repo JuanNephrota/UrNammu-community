@@ -12,6 +12,7 @@ export default async function ProviderAdminSettingsPage() {
     hasOpenRouterKey,
     hasHeliconeKey,
     hasPortkeyKey,
+    hasLiteLLMKey,
     hasGeminiBillingConfig,
     settingsMap,
   } = await getSettingsPageData();
@@ -28,6 +29,7 @@ export default async function ProviderAdminSettingsPage() {
       hasOpenRouterKey={hasOpenRouterKey}
       hasHeliconeKey={hasHeliconeKey}
       hasPortkeyKey={hasPortkeyKey}
+      hasLiteLLMKey={hasLiteLLMKey}
       hasGeminiBillingConfig={hasGeminiBillingConfig}
       providerSyncEnabled={settingsMap.provider_sync_enabled !== "false"}
       providerSyncIntervalHours={parseInt(settingsMap.provider_sync_interval_hours ?? "6")}

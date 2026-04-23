@@ -53,6 +53,12 @@ export async function getSetting(key: string): Promise<string | null> {
     portkey_api_key: process.env.PORTKEY_API_KEY,
     portkey_api_base_url: process.env.PORTKEY_API_BASE_URL,
     portkey_workspace_slug: process.env.PORTKEY_WORKSPACE_SLUG,
+    litellm_api_key: process.env.LITELLM_API_KEY,
+    litellm_api_base_url: process.env.LITELLM_API_BASE_URL,
+    datadog_api_key: process.env.DATADOG_API_KEY,
+    datadog_app_key: process.env.DATADOG_APP_KEY,
+    datadog_site: process.env.DATADOG_SITE,
+    datadog_enabled: process.env.DATADOG_ENABLED,
     claude_code_telemetry_secret: process.env.CLAUDE_CODE_TELEMETRY_SECRET,
     claude_code_telemetry_retention_days:
       process.env.CLAUDE_CODE_TELEMETRY_RETENTION_DAYS,
@@ -177,7 +183,31 @@ export const THIRD_PARTY_PROXY_SETTINGS_KEYS = {
   PORTKEY_API_KEY: "portkey_api_key",
   PORTKEY_API_BASE_URL: "portkey_api_base_url",
   PORTKEY_WORKSPACE_SLUG: "portkey_workspace_slug",
+  LITELLM_API_KEY: "litellm_api_key",
+  LITELLM_API_BASE_URL: "litellm_api_base_url",
 } as const;
+
+// Datadog outbound event forwarding. When enabled, governance alerts and
+// other notable events get shipped as Datadog events for correlation with
+// the customer's existing observability stack.
+export const DATADOG_SETTINGS_KEYS = {
+  API_KEY: "datadog_api_key",
+  APP_KEY: "datadog_app_key",
+  SITE: "datadog_site",
+  ENABLED: "datadog_enabled",
+} as const;
+
+export const DATADOG_SUPPORTED_SITES = [
+  "datadoghq.com",
+  "us3.datadoghq.com",
+  "us5.datadoghq.com",
+  "datadoghq.eu",
+  "ap1.datadoghq.com",
+  "ddog-gov.com",
+] as const;
+
+export type DatadogSite = (typeof DATADOG_SUPPORTED_SITES)[number];
+export const DATADOG_DEFAULT_SITE: DatadogSite = "datadoghq.com";
 
 // Runtime policy-as-code enforcement controls. Evaluated by the Azure Functions
 // proxy. Default is "off" — changing this is the explicit opt-in to prevention.
