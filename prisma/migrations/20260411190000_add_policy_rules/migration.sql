@@ -1,0 +1,2 @@
+ALTER TABLE "Policy"
+ADD COLUMN "rules" JSONB;

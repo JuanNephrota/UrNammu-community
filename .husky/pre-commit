@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Nammu pre-commit hook
+#
+# Runs three fast checks against staged files so problems are caught
+# before the push even leaves the machine:
+#   1. eslint --fix on staged TypeScript files (via lint-staged)
+#   2. grep for common secret patterns in every staged text file
+#   3. tsc --noEmit across the project (fast on incremental builds)
+#
+# GitHub push protection is the primary defense. This hook is belt & braces.
+# Skip with `git commit --no-verify` in a genuine emergency.
+
+set -euo pipefail
+
+# 1. Run lint-staged (handles eslint and the per-file secret grep).
+npx --no-install lint-staged
+
+# 2. Project-wide typecheck. `tsc --noEmit` is incremental and typically
+#    sub-second after the first run. If this gets slow, narrow it to the
+#    staged files with a tool like `tsc-files`.
+npx --no-install tsc --noEmit

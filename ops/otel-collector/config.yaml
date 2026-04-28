@@ -1,0 +1,93 @@
+# OTel Collector gateway for Claude Code telemetry.
+#
+# Pipeline:
+#   Claude Code clients (OTLP/HTTP, bearer auth)
+#     → receivers.otlp
+#     → memory_limiter → filter/claude_code_only → resource → batch
+#     → exporters.otlp_http (UrNammu /api/telemetry/claude-code)
+#
+# Loaded by the Container App via `--config=env:OTEL_CONFIG`. Two bearer
+# tokens, both injected as ACA secrets:
+#   INGEST_BEARER_TOKEN  — dev-facing, rotated in ACA secret
+#   FORWARD_BEARER_TOKEN — server-to-server, matches UrNammu setting
+#                          `claude_code_telemetry_secret`
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
+
+extensions:
+  bearertokenauth:
+    scheme: Bearer
+    token: ${env:INGEST_BEARER_TOKEN}
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+processors:
+  # Always first — keeps the collector from OOM-killing itself on a flood.
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 400
+    spike_limit_mib: 100
+
+  # Belt-and-braces: only metrics whose name starts with claude_code. get
+  # through. The route handler re-applies the same check as a second layer.
+  filter/claude_code_only:
+    metrics:
+      include:
+        match_type: regexp
+        metric_names:
+          - '^claude_code\..*'
+
+  # Strip noisy attrs the SDK adds to every resource; we don't store them.
+  resource:
+    attributes:
+      - key: telemetry.sdk.name
+        action: delete
+      - key: telemetry.sdk.language
+        action: delete
+      - key: telemetry.sdk.version
+        action: delete
+      - key: service.name
+        action: delete
+
+  batch:
+    timeout: 10s
+    send_batch_size: 1000
+    send_batch_max_size: 1500
+
+exporters:
+  otlp_http/urnammu:
+    metrics_endpoint: ${env:URNAMMU_TELEMETRY_URL}
+    encoding: json
+    compression: gzip
+    headers:
+      Authorization: "Bearer ${env:FORWARD_BEARER_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+
+service:
+  extensions: [bearertokenauth, health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors:
+        - memory_limiter
+        - filter/claude_code_only
+        - resource
+        - batch
+      exporters: [otlp_http/urnammu]
+  telemetry:
+    logs:
+      level: info

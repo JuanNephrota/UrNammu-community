@@ -1,0 +1,114 @@
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # Main Next.js application (root)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Detroit
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - main-app
+    commit-message:
+      prefix: deps
+      include: scope
+    groups:
+      # Bundle routine patch/minor upgrades into a single PR per ecosystem.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        # Keep framework-major and security updates out of the group so they
+        # get reviewed individually.
+        exclude-patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@prisma/*"
+          - "prisma"
+          - "next-auth"
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    ignore:
+      # Framework majors deserve a dedicated upgrade plan, not a surprise PR.
+      - dependency-name: next
+        update-types: [version-update:semver-major]
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+      - dependency-name: "@prisma/client"
+        update-types: [version-update:semver-major]
+      - dependency-name: prisma
+        update-types: [version-update:semver-major]
+
+  # ---------------------------------------------------------------------------
+  # Companion Azure Functions proxy
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/ai-proxy"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Detroit
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ai-proxy
+    commit-message:
+      prefix: deps(ai-proxy)
+      include: scope
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - "@azure/functions"
+          - "@prisma/*"
+          - "prisma"
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "@azure/functions"
+        update-types: [version-update:semver-major]
+      - dependency-name: "@prisma/client"
+        update-types: [version-update:semver-major]
+      - dependency-name: prisma
+        update-types: [version-update:semver-major]
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions themselves — keep pinned SHAs current
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Detroit
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"

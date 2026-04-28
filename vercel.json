@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/scheduler/maintenance",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/prune-claude-code-metrics",
+      "schedule": "23 3 * * *"
+    }
+  ]
+}
