@@ -5,12 +5,13 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleWorkspaceSettings } from "../google-workspace-settings";
+import { NetskopeSettings } from "../netskope-settings";
 import { getSettingsPageData } from "../data";
 
 export default async function ShadowAISettingsPage() {
   await requireRole(["ADMIN"]);
 
-  const [{ settingsMap }, lastSuccessfulScan] = await Promise.all([
+  const [{ settingsMap, proxySecret, platformUrl }, lastSuccessfulScan] = await Promise.all([
     getSettingsPageData(),
     prisma.scanHistory.findFirst({
       where: { status: "completed", completedAt: { not: null } },
@@ -145,6 +146,11 @@ export default async function ShadowAISettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <NetskopeSettings
+        webhookUrl={`${platformUrl}/api/discovered-tools/ingest/netskope`}
+        proxySecret={proxySecret}
+      />
 
       <GoogleWorkspaceSettings
         hasServiceKey={!!settingsMap.google_service_account_key}
