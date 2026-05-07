@@ -4,7 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
-  Bot,
   Building2,
   Database,
   ExternalLink,
@@ -29,7 +28,6 @@ import {
 } from "@/components/ui/dialog";
 import { AIProviderSettings } from "@/app/(dashboard)/settings/ai-provider-settings";
 import { AzureMonitorSettings } from "@/app/(dashboard)/settings/azure-monitor-settings";
-import { ForgeSkillsSettings } from "@/app/(dashboard)/settings/forge-skills-settings";
 import {
   PROVIDERS,
   ProviderSection,
@@ -44,8 +42,7 @@ type Category =
   | "AI Gateways"
   | "Identity"
   | "Directory Discovery"
-  | "Observability"
-  | "Skills";
+  | "Observability";
 
 const CATEGORY_ORDER: Category[] = [
   "AI Models",
@@ -54,7 +51,6 @@ const CATEGORY_ORDER: Category[] = [
   "Identity",
   "Directory Discovery",
   "Observability",
-  "Skills",
 ];
 
 interface IntegrationTile {
@@ -101,12 +97,6 @@ export interface IntegrationsGridProps {
     hasTenantId: boolean;
     hasClientId: boolean;
     hasClientSecret: boolean;
-  };
-  forgeSkills: {
-    baseUrl: string;
-    hasApiKey: boolean;
-    syncEnabled: boolean;
-    lastSince: string | null;
   };
   googleWorkspaceConnected: boolean;
   microsoftShadowAIConnected: boolean;
@@ -234,14 +224,6 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
       icon: Gauge,
       connected: props.datadog.hasApiKey,
       statusLabel: props.datadog.enabled ? "Forwarding on" : undefined,
-    },
-    {
-      id: "forge",
-      category: "Skills",
-      name: "Forge Skills",
-      description: "Syncs the Forge skill catalog into the AI Skills registry.",
-      icon: Bot,
-      connected: props.forgeSkills.hasApiKey,
     },
   ];
 
@@ -374,8 +356,6 @@ function renderModalBody(id: string, props: IntegrationsGridProps) {
       return <AzureMonitorSettings initial={props.azureMonitor} />;
     case "datadog":
       return <DatadogSettings initial={props.datadog} />;
-    case "forge":
-      return <ForgeSkillsSettings initial={props.forgeSkills} />;
     case "google-signin":
     case "microsoft-signin":
       return (

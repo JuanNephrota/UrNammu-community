@@ -21,7 +21,6 @@ export default async function IntegrationsPage() {
     hasLiteLLMKey,
     hasGeminiBillingConfig,
     azureMonitor,
-    forgeSkills,
   } = await getSettingsPageData();
 
   const googleSignInConnected =
@@ -104,7 +103,6 @@ export default async function IntegrationsPage() {
           hasServiceAccountKey: !!settingsMap.gemini_billing_service_account_key,
         }}
         azureMonitor={azureMonitor}
-        forgeSkills={forgeSkills}
         googleWorkspaceConnected={googleWorkspaceConnected}
         microsoftShadowAIConnected={microsoftShadowAIConnected}
         googleSignInConnected={googleSignInConnected}

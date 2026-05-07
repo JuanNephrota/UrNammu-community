@@ -65,10 +65,6 @@ const SETTINGS_KEYS = [
   "azure_tenant_id",
   "azure_client_id",
   "azure_client_secret",
-  "forge_integration_key",
-  "forge_base_url",
-  "forge_sync_enabled",
-  "forge_skills_last_since",
 ] as const;
 
 export async function getSettingsPageData() {
@@ -122,13 +118,6 @@ export async function getSettingsPageData() {
 
   const policyEnforcementMode = parseEnforcementMode(settingsMap.policy_enforcement_mode);
 
-  const forgeSkills = {
-    baseUrl: settingsMap.forge_base_url ?? "",
-    hasApiKey: !!settingsMap.forge_integration_key,
-    syncEnabled: settingsMap.forge_sync_enabled === "true",
-    lastSince: settingsMap.forge_skills_last_since ?? null,
-  };
-
   const azureMonitor = {
     subscriptionId: settingsMap.azure_subscription_id ?? "",
     resourceGroup: settingsMap.azure_resource_group ?? "",
@@ -152,7 +141,6 @@ export async function getSettingsPageData() {
     modelLabel,
     policyEnforcementMode,
     azureMonitor,
-    forgeSkills,
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasOpenAIAdminKey: !!settingsMap.openai_admin_key,
     hasOpenRouterKey: !!settingsMap.openrouter_provisioning_key,

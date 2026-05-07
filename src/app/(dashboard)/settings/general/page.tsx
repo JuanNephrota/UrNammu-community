@@ -2,7 +2,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AIProviderSettings } from "../ai-provider-settings";
 import { PolicyEnforcementSettings } from "../policy-enforcement-settings";
 import { AzureMonitorSettings } from "../azure-monitor-settings";
-import { ForgeSkillsSettings } from "../forge-skills-settings";
 import { getSettingsPageData } from "../data";
 
 export default async function GeneralSettingsPage() {
@@ -15,7 +14,6 @@ export default async function GeneralSettingsPage() {
     hasAiKey,
     policyEnforcementMode,
     azureMonitor,
-    forgeSkills,
   } = await getSettingsPageData();
 
   return (
@@ -51,7 +49,6 @@ export default async function GeneralSettingsPage() {
           />
           <PolicyEnforcementSettings currentMode={policyEnforcementMode} />
           <AzureMonitorSettings initial={azureMonitor} />
-          <ForgeSkillsSettings initial={forgeSkills} />
         </>
       )}
     </div>

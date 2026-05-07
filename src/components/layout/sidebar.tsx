@@ -19,7 +19,6 @@ import {
   Building2,
   Presentation,
   Activity,
-  Sparkles,
   Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -38,7 +37,6 @@ const navItems = [
     items: [
       { name: "AI Systems", href: "/registry", icon: Database },
       { name: "AI Agents", href: "/agents", icon: Bot },
-      { name: "AI Skills", href: "/registry/skills", icon: Sparkles },
     ],
   },
   {
