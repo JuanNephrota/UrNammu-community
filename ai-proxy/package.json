@@ -13,7 +13,7 @@
     "devDependencies": "azure-functions-core-tools is NOT listed here because it ships an npm-shrinkwrap.json pinning brace-expansion@2.0.2 (CVE GHSA-f886-m6hf-6m8v). Install it globally (npm i -g azure-functions-core-tools@4) to use 'func start' locally or 'func azure functionapp publish' to deploy."
   },
   "dependencies": {
-    "@azure/functions": "^4.0.0-alpha.1",
+    "@azure/functions": "^4.14.0",
     "@prisma/client": "^6.19.3",
     "prisma": "^6.19.3"
   },
