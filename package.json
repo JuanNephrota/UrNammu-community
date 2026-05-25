@@ -34,7 +34,7 @@
     "seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.95.1",
+    "@anthropic-ai/sdk": "^0.98.0",
     "@auth/prisma-adapter": "^2.11.2",
     "@azure/identity": "^4.13.1",
     "@azure/monitor-query-metrics": "^1.0.0",
@@ -55,15 +55,15 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "crowdstrike-falcon": "^0.6.0",
-    "date-fns": "^4.1.0",
+    "date-fns": "^4.3.0",
     "dotenv": "^17.4.2",
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
-    "lucide-react": "^1.14.0",
-    "motion": "^12.38.0",
+    "lucide-react": "^1.16.0",
+    "motion": "^12.40.0",
     "next": "16.2.6",
     "next-auth": "^4.24.13",
-    "openai": "^6.37.0",
+    "openai": "^6.39.0",
     "prisma": "^6.19.3",
     "react": "19.2.6",
     "react-dom": "19.2.5",
@@ -79,9 +79,9 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.4",
+    "lint-staged": "^17.0.5",
     "tailwindcss": "^4",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.3",
     "typescript": "^6"
   }
 }
