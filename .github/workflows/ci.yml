@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel in-progress runs on the same ref when a new commit lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Main Next.js application
+  # ---------------------------------------------------------------------------
+  main-app:
+    name: Main app — typecheck, lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Prisma v6 validates DATABASE_URL exists even during `prisma generate`
+    # (which doesn't actually connect). The postinstall script runs
+    # `prisma generate && husky`, so the variable must be present from the
+    # very first `npm ci`. A placeholder is sufficient — no real DB needed.
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Bump heap — default 2 GB is not enough for the current project graph
+      # (Prisma client + Next.js types + growing schema), and tsc OOMs on
+      # the runner. ubuntu-latest has ~7 GB; 4 GB is a safe cap.
+      - name: Typecheck
+        run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # Companion Azure Functions proxy (ai-proxy/)
+  # ---------------------------------------------------------------------------
+  ai-proxy:
+    name: ai-proxy — typecheck, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ai-proxy
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ai-proxy/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # ai-proxy schema drift gate
+  # ---------------------------------------------------------------------------
+  # Both Prisma schemas point at the same database (main app owns migrations;
+  # the proxy only reads/writes existing tables). Drift between them fails
+  # silently at runtime, so block it here. Pure-Node script — no npm ci needed.
+  schema-drift:
+    name: Prisma — ai-proxy schema drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Check shared-model drift
+        run: node scripts/check-schema-drift.mjs
+
+  # ---------------------------------------------------------------------------
+  # Prisma migration safety gate
+  # ---------------------------------------------------------------------------
+  # Flags destructive schema changes (DROP TABLE, DROP COLUMN, NOT NULL without
+  # default, etc.) on PRs touching `prisma/migrations/`. Does NOT apply the
+  # migration — just surfaces the SQL diff so reviewers know what will happen
+  # at the next `prisma migrate deploy`.
+  migration-check:
+    name: Prisma — migration safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Detect schema changes
+        id: detect
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^prisma/(schema\.prisma|migrations/)' >/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Print migration diff
+        if: steps.detect.outputs.changed == 'true'
+        run: |
+          echo "::group::Schema / migration files changed in this PR"
+          git diff --stat origin/${{ github.base_ref }}...HEAD -- prisma/schema.prisma prisma/migrations/
+          echo "::endgroup::"
+          echo "::group::Destructive operations (if any)"
+          # Surface common destructive patterns so a reviewer notices.
+          if git diff origin/${{ github.base_ref }}...HEAD -- prisma/migrations/ | grep -Ei '\b(DROP TABLE|DROP COLUMN|DELETE FROM|TRUNCATE|ALTER.*DROP|NOT NULL)\b'; then
+            echo ""
+            echo "::warning::Destructive or non-null-without-default operations detected in migrations. Double-check the migration will run safely against production."
+          else
+            echo "None detected."
+          fi
+          echo "::endgroup::"
+
+  # ---------------------------------------------------------------------------
+  # CodeQL (supplements Aikido)
+  # ---------------------------------------------------------------------------
+  # If you enable GitHub's default CodeQL setup in the repo settings, delete
+  # this job — the default setup runs automatically. Keep it if you prefer
+  # explicit workflow control.
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2

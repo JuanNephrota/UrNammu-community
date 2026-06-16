@@ -1,0 +1,5 @@
+# Local-only authoring assets — not part of the app build
+demo-video
+
+# Standalone Azure Functions project (separate deploy)
+ai-proxy

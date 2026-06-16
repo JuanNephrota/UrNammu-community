@@ -1,0 +1,171 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Minimal schema — only tables the proxy reads/writes.
+// The full schema lives in the main Nammu app.
+
+model User {
+  id    String  @id @default(cuid())
+  email String  @unique
+  name  String?
+
+  apiUsageLogs APIUsageLog[]
+}
+
+model APIUsageLog {
+  id               String  @id @default(cuid())
+  user             User?   @relation(fields: [userId], references: [id])
+  userId           String?
+  provider         String
+  model            String?
+  department       String?
+  aiSystemId       String?
+  promptTokens     Int     @default(0)
+  completionTokens Int     @default(0)
+  totalTokens      Int     @default(0)
+  cost             Float   @default(0)
+  promptMetadata   Json?
+  flagged          Boolean @default(false)
+  flagCategory     String?
+  flagReason       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([aiSystemId, createdAt])
+  @@index([flagCategory, createdAt])
+}
+
+// Policy denials — proxy writes; main app owns migrations.
+model PolicyDenial {
+  id              String   @id @default(cuid())
+  provider        String
+  model           String?
+  aiSystemId      String?
+  userEmail       String?
+  department      String?
+  mode            String
+  policyIds       String[]
+  reasons         Json
+  promptExcerpt   String?
+  requestMetadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([aiSystemId, createdAt])
+  @@index([mode, createdAt])
+}
+
+// Policy + PolicyAssignment — proxy reads these to enforce at request time.
+// Must stay schema-compatible with the main app's definitions.
+model Policy {
+  id      String  @id @default(cuid())
+  name    String
+  rules   Json?
+  status  String  @default("DRAFT")
+
+  assignments PolicyAssignment[]
+}
+
+model PolicyAssignment {
+  id          String  @id @default(cuid())
+  policy      Policy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policyId    String
+  aiSystemId  String
+
+  @@unique([policyId, aiSystemId])
+  @@index([aiSystemId])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// -- Normalized telemetry (proxy writes; main app owns migrations) ------------
+// These models mirror the main app's schema so the proxy can write into the
+// same UsageBucket / CostBucket / ProviderSyncRun tables. The main Nammu app
+// is the source of truth for the underlying migrations — the proxy never runs
+// prisma migrate; it only reads & writes the already-existing tables.
+
+enum ProviderSyncStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model ProviderSyncRun {
+  id                String             @id @default(cuid())
+  provider          String
+  syncType          String
+  status            ProviderSyncStatus @default(RUNNING)
+  triggeredByUserId String?
+  startedAt         DateTime           @default(now())
+  completedAt      DateTime?
+  recordsProcessed  Int                @default(0)
+  errorMessage      String?
+  metadata          Json?
+
+  usageBuckets UsageBucket[]
+  costBuckets  CostBucket[]
+}
+
+model UsageBucket {
+  id                String          @id @default(cuid())
+  provider          String
+  bucketStart       DateTime
+  bucketEnd         DateTime
+  granularity       String
+  dimensionKey      String
+  model             String?
+  projectExternalId String?
+  projectName       String?
+  actorExternalId   String?
+  actorName         String?
+  apiKeyExternalId  String?
+  apiKeyName        String?
+  inputTokens       Int             @default(0)
+  outputTokens      Int             @default(0)
+  totalTokens       Int             @default(0)
+  cacheReadTokens     Int           @default(0)
+  cacheCreationTokens Int           @default(0)
+  requestCount      Int?
+  metadata          Json?
+  syncRun           ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId         String
+  aiSystemId        String?
+  createdAt         DateTime        @default(now())
+
+  @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
+}
+
+model CostBucket {
+  id                String          @id @default(cuid())
+  provider          String
+  bucketStart       DateTime
+  bucketEnd         DateTime
+  granularity       String
+  dimensionKey      String
+  amount            Float           @default(0)
+  currency          String          @default("usd")
+  model             String?
+  projectExternalId String?
+  projectName       String?
+  actorExternalId   String?
+  actorName         String?
+  lineItem          String?
+  metadata          Json?
+  syncRun           ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId         String
+  createdAt         DateTime        @default(now())
+
+  @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
+}

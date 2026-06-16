@@ -1,0 +1,65 @@
+name: ✨ Feature request
+description: Suggest a new capability or improvement.
+title: "feat: <short description>"
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check existing issues and
+        [Discussions](https://github.com/JuanNephrota/Nammu/discussions) —
+        your idea may already be under discussion.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operator problem does this solve?
+      placeholder: As a compliance officer, I want to … because …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What do you want the product to do? Sketch the UI, API, or workflow.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: I also considered … but it has the following trade-offs …
+    validations:
+      required: false
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which module is most affected?
+      options:
+        - Dashboard
+        - Registry (AI systems)
+        - Agents
+        - Risk Center
+        - Compliance
+        - Shadow AI Discovery
+        - Oversight (telemetry / cost)
+        - Alerts
+        - Settings / Integrations
+        - API proxy
+        - Background jobs
+        - Documentation
+        - Cross-cutting
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This change is not security-sensitive (auth, crypto, secret handling). If it is, I will flag it in the PR and ensure CODEOWNERS review.
+          required: true

@@ -1,0 +1,43 @@
+# Code owners for Nammu
+#
+# Every file has a fallback owner; security-sensitive paths require review
+# from the listed owners. Pair this with a branch-protection rule on `main`
+# that has "Require review from Code Owners" enabled.
+#
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+# -- Fallback ------------------------------------------------------------------
+*                                          @JuanNephrota
+
+# -- Security-sensitive: auth, proxy, crypto ----------------------------------
+/src/lib/auth.ts                           @JuanNephrota
+/src/lib/auth-guard.ts                     @JuanNephrota
+/src/lib/settings.ts                       @JuanNephrota
+/src/lib/anthropic-proxy.ts                @JuanNephrota
+/src/lib/proxy-bucket-writer.ts            @JuanNephrota
+/src/lib/mcp-passthrough.ts                @JuanNephrota
+/src/lib/governed-system-match.ts          @JuanNephrota
+/src/lib/approval-blockers.ts              @JuanNephrota
+/src/app/api/auth/**                       @JuanNephrota
+/src/app/api/proxy/**                      @JuanNephrota
+/src/app/api/admin-sync/**                 @JuanNephrota
+/src/app/api/scheduler/**                  @JuanNephrota
+/src/app/api/settings/**                   @JuanNephrota
+
+# -- Database: migrations and schema ------------------------------------------
+# A bad migration can destroy data on the next `prisma migrate deploy`.
+# Treat as security-sensitive.
+/prisma/schema.prisma                      @JuanNephrota
+/prisma/migrations/**                      @JuanNephrota
+/prisma/seed.ts                            @JuanNephrota
+
+# -- Companion proxy (Azure Functions) ----------------------------------------
+/ai-proxy/**                               @JuanNephrota
+
+# -- CI, deployment, and repo config ------------------------------------------
+/.github/**                                @JuanNephrota
+/vercel.json                               @JuanNephrota
+/next.config.*                             @JuanNephrota
+/tsconfig.json                             @JuanNephrota
+/package.json                              @JuanNephrota
+/package-lock.json                         @JuanNephrota

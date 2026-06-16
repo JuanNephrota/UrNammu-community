@@ -1,0 +1,40 @@
+wing: ai_gov
+rooms:
+- name: prisma
+  description: Files from prisma/
+  keywords:
+  - prisma
+  - prisma
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: public
+  description: Files from public/
+  keywords:
+  - public
+  - public
+- name: ai_proxy
+  description: Files from ai-proxy/
+  keywords:
+  - ai_proxy
+  - ai-proxy
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: src
+  description: Files from src/
+  keywords:
+  - src
+  - src
+- name: frontend
+  description: Files from components/
+  keywords:
+  - frontend
+  - components
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []

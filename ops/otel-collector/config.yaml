@@ -1,0 +1,205 @@
+# OTel Collector gateway for Claude Code + Cursor telemetry.
+#
+# Reference copy of the deployed Collector config. The config that actually
+# runs is embedded inside deploy-infra.bicep as the `collectorConfig` var
+# (Bicep escapes env refs as $${env:...}; this copy uses plain ${env:...}).
+# KEEP THE TWO IN SYNC.
+#
+# Pipelines:
+#   Claude Code clients (OTLP/HTTP metrics + logs, bearer auth)
+#     metrics → filter/claude_code_only → resource → batch → otlp_http/urnammu
+#     logs    → strip_log_content → batch → otlp_http/urnammu
+#   Cursor clients (cursor-otel-hook, OTLP/HTTP traces, bearer auth)
+#     traces  → filter/cursor_only → strip_cursor_content → batch
+#               ├→ otlp_http/urnammu_cursor_traces  (raw spans → CursorSpan)
+#               └→ spanmetrics connector → metrics/cursor → otlp_http/urnammu_cursor_metrics
+#
+# Loaded by the Container App via `--config=env:OTEL_CONFIG`. Bearer tokens
+# injected as ACA secrets:
+#   INGEST_BEARER_TOKEN          — dev-facing (both Claude Code and Cursor present this)
+#   FORWARD_BEARER_TOKEN         — server-to-server, matches claude_code_telemetry_secret
+#   CURSOR_FORWARD_BEARER_TOKEN  — server-to-server, matches cursor_telemetry_secret
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
+
+extensions:
+  bearertokenauth:
+    scheme: Bearer
+    token: ${env:INGEST_BEARER_TOKEN}
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+processors:
+  # Always first — keeps the collector from OOM-killing itself on a flood.
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 400
+    spike_limit_mib: 100
+
+  # Belt-and-braces: only metrics whose name starts with claude_code. get
+  # through. The route handler re-applies the same check as a second layer.
+  filter/claude_code_only:
+    metrics:
+      include:
+        match_type: regexp
+        metric_names:
+          - '^claude_code\..*'
+
+  # Strip noisy attrs the SDK adds to every resource; we don't store them.
+  # Runs on the Claude Code pipelines ONLY — NOT on traces/cursor, which needs
+  # service.name to tag Cursor.
+  resource:
+    attributes:
+      - key: telemetry.sdk.name
+        action: delete
+      - key: telemetry.sdk.language
+        action: delete
+      - key: telemetry.sdk.version
+        action: delete
+      - key: service.name
+        action: delete
+
+  # Claude Code events content scrub. `prompt` intentionally left for in-memory
+  # dangerous-prompt detection (Option A) at UrNammu.
+  attributes/strip_log_content:
+    actions:
+      - key: tool_input
+        action: delete
+      - key: tool_parameters
+        action: delete
+      - key: error
+        action: delete
+      - key: body
+        action: delete
+
+  # Keep only Cursor spans (service.name=cursor-agent) on the Cursor pipelines.
+  filter/cursor_only:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] != "cursor-agent"'
+
+  # Cursor span content scrub. gen_ai.prompt / prompt are intentionally left
+  # for in-memory dangerous-prompt detection at UrNammu (Option A).
+  attributes/strip_cursor_content:
+    actions:
+      - key: gen_ai.tool.arguments
+        action: delete
+      - key: gen_ai.completion
+        action: delete
+      - key: gen_ai.content
+        action: delete
+      - key: tool_arguments
+        action: delete
+      - key: completion
+        action: delete
+      - key: input
+        action: delete
+      - key: output
+        action: delete
+      - key: body
+        action: delete
+
+  batch:
+    timeout: 10s
+    send_batch_size: 1000
+    send_batch_max_size: 1500
+
+connectors:
+  # Derives cursor.calls (Sum) + cursor.duration (Histogram) from the Cursor
+  # span stream. Cursor's hook carries no tokens/cost, so this is the only
+  # "metrics" surface available for Cursor.
+  spanmetrics:
+    namespace: cursor
+    histogram:
+      explicit:
+        buckets: [10ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 30s]
+    dimensions:
+      - name: gen_ai.tool.name
+      - name: langsmith.span.kind
+      - name: langsmith.metadata.hook_event
+      - name: langsmith.trace.session_id
+      - name: gen_ai.request.model
+    metrics_flush_interval: 30s
+
+exporters:
+  otlp_http/urnammu:
+    metrics_endpoint: ${env:URNAMMU_TELEMETRY_URL}
+    logs_endpoint: ${env:URNAMMU_EVENTS_URL}
+    encoding: json
+    compression: none
+    headers:
+      Authorization: "Bearer ${env:FORWARD_BEARER_TOKEN}"
+      x-vercel-protection-bypass: ${env:VERCEL_PROTECTION_BYPASS}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+
+  otlp_http/urnammu_cursor_traces:
+    traces_endpoint: ${env:URNAMMU_CURSOR_TRACES_URL}
+    encoding: json
+    compression: none
+    headers:
+      Authorization: "Bearer ${env:CURSOR_FORWARD_BEARER_TOKEN}"
+      x-vercel-protection-bypass: ${env:VERCEL_PROTECTION_BYPASS}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+
+  otlp_http/urnammu_cursor_metrics:
+    metrics_endpoint: ${env:URNAMMU_CURSOR_METRICS_URL}
+    encoding: json
+    compression: none
+    headers:
+      Authorization: "Bearer ${env:CURSOR_FORWARD_BEARER_TOKEN}"
+      x-vercel-protection-bypass: ${env:VERCEL_PROTECTION_BYPASS}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+
+service:
+  extensions: [bearertokenauth, health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/claude_code_only, resource, batch]
+      exporters: [otlp_http/urnammu]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/strip_log_content, batch]
+      exporters: [otlp_http/urnammu]
+    traces/cursor:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/cursor_only, attributes/strip_cursor_content, batch]
+      exporters: [otlp_http/urnammu_cursor_traces, spanmetrics]
+    metrics/cursor:
+      receivers: [spanmetrics]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/urnammu_cursor_metrics]
+  telemetry:
+    logs:
+      level: info
