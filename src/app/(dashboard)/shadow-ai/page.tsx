@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload } from "lucide-react";
+import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +46,10 @@ type ScanStatus = {
       lastScan: ScanHistorySummary | null;
     };
     microsoft365: {
+      configured: boolean;
+      lastScan: ScanHistorySummary | null;
+    };
+    hexnode: {
       configured: boolean;
       lastScan: ScanHistorySummary | null;
     };
@@ -123,48 +127,81 @@ export default function ShadowAIPage() {
       .catch((err) => console.error("Failed to fetch ingestion runs:", err));
   }, [fetchTools]);
 
-  async function handleScan(provider: "google_workspace" | "microsoft_365") {
-    setScanning(true);
-    setScanResult(
-      provider === "google_workspace"
-        ? "Scanning Google Workspace..."
-        : "Scanning Microsoft 365..."
-    );
-    try {
-      const res = await fetch("/api/discovered-tools/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider }),
-      });
-      const data = await res.json();
+  // Scan every configured provider in turn. The scan endpoint runs one
+  // provider per request and rejects with 409 while another scan is in
+  // progress, so providers must be scanned sequentially rather than in
+  // parallel.
+  async function handleScanAll() {
+    const sources = scanStatus?.sources;
+    const providers: { id: "google_workspace" | "microsoft_365" | "hexnode"; label: string }[] = [];
+    if (sources?.googleWorkspace.configured)
+      providers.push({ id: "google_workspace", label: "Google Workspace" });
+    if (sources?.microsoft365.configured)
+      providers.push({ id: "microsoft_365", label: "Microsoft 365" });
+    if (sources?.hexnode.configured)
+      providers.push({ id: "hexnode", label: "Hexnode" });
 
-      if (res.ok) {
-        if (data.status === "completed") {
-          setScanResult(
-            `Scan complete: ${data.toolsFound} AI tools found, ${data.newToolsAdded} new, ${data.updatedTools} updated.`
-          );
-        } else if (data.status === "failed") {
-          setScanResult(`Scan failed: ${data.errorMessage ?? "Unknown error"}`);
-        } else {
-          setScanResult(`Scan finished with status: ${data.status}`);
-        }
-        fetchTools();
-        // Refresh scan status
-        const statusRes = await fetch("/api/discovered-tools/scan");
-        if (statusRes.ok) setScanStatus(await statusRes.json());
-      } else {
-        setScanResult(`Scan failed: ${data.error}${data.details ? ` — ${data.details}` : ""}`);
-      }
-    } catch {
+    if (providers.length === 0) {
       setScanResult(
-        provider === "google_workspace"
-          ? "Scan timed out or network error. For large organizations, try reducing the lookback period in Settings > Shadow AI."
-          : "Scan timed out or network error. Check the Microsoft Graph app credentials in Settings > Shadow AI."
+        "No sources configured. Connect Google Workspace, Microsoft 365, or Hexnode in Settings > Shadow AI."
       );
+      return;
+    }
+
+    setScanning(true);
+    const summaries: string[] = [];
+    try {
+      for (const provider of providers) {
+        setScanResult(
+          `Scanning ${provider.label}${
+            providers.length > 1
+              ? ` (${providers.indexOf(provider) + 1}/${providers.length})`
+              : ""
+          }...`
+        );
+        try {
+          const res = await fetch("/api/discovered-tools/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider: provider.id }),
+          });
+          const data = await res.json();
+
+          if (res.ok && data.status === "completed") {
+            summaries.push(
+              `${provider.label}: ${data.toolsFound} found, ${data.newToolsAdded} new, ${data.updatedTools} updated`
+            );
+          } else if (res.ok && data.status === "failed") {
+            summaries.push(
+              `${provider.label}: failed (${data.errorMessage ?? "unknown error"})`
+            );
+          } else {
+            summaries.push(
+              `${provider.label}: failed (${data.error ?? data.status ?? "unknown error"})`
+            );
+          }
+        } catch {
+          summaries.push(`${provider.label}: timed out or network error`);
+        }
+      }
+
+      setScanResult(`Scan complete — ${summaries.join("; ")}.`);
+      fetchTools();
+      // Refresh scan status after all providers finish.
+      const statusRes = await fetch("/api/discovered-tools/scan");
+      if (statusRes.ok) setScanStatus(await statusRes.json());
     } finally {
       setScanning(false);
     }
   }
+
+  const configuredSourceCount = scanStatus?.sources
+    ? [
+        scanStatus.sources.googleWorkspace.configured,
+        scanStatus.sources.microsoft365.configured,
+        scanStatus.sources.hexnode.configured,
+      ].filter(Boolean).length
+    : 0;
 
   function sourceBadgeLabel(source: string) {
     if (source === "google_workspace") return "GOOGLE";
@@ -358,30 +395,26 @@ export default function ShadowAIPage() {
         description="Detect and manage unauthorized AI tool usage"
       >
         <Button
-          onClick={() => handleScan("google_workspace")}
-          disabled={scanning}
+          onClick={handleScanAll}
+          disabled={scanning || configuredSourceCount === 0}
           variant="outline"
           className="gap-2"
+          title={
+            configuredSourceCount === 0
+              ? "Connect a source in Settings > Shadow AI to enable scanning"
+              : `Scan all ${configuredSourceCount} configured source(s)`
+          }
         >
           {scanning ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <RefreshCw className="h-4 w-4" />
           )}
-          {scanning ? "Scanning..." : "Scan Google Workspace"}
-        </Button>
-        <Button
-          onClick={() => handleScan("microsoft_365")}
-          disabled={scanning}
-          variant="outline"
-          className="gap-2"
-        >
-          {scanning ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Building2 className="h-4 w-4" />
-          )}
-          {scanning ? "Scanning..." : "Scan Microsoft 365"}
+          {scanning
+            ? "Scanning..."
+            : configuredSourceCount > 0
+              ? `Scan All Sources (${configuredSourceCount})`
+              : "Scan All Sources"}
         </Button>
         <Button variant="ghost" asChild>
           <Link href="/settings/shadow-ai">Shadow AI Settings</Link>
@@ -470,6 +503,7 @@ export default function ShadowAIPage() {
                     <option value="browser_extension">Browser Extension</option>
                     <option value="google_workspace">Google Workspace</option>
                     <option value="microsoft_365">Microsoft 365</option>
+                    <option value="hexnode">Hexnode</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -517,6 +551,17 @@ export default function ShadowAIPage() {
               <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
                 <Wifi className="h-3.5 w-3.5" />
                 <span>Microsoft 365 not configured</span>
+              </div>
+            )}
+            {scanStatus?.sources?.hexnode.configured ? (
+              <div className="flex items-center gap-2 text-xs text-[var(--success)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Hexnode connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Hexnode not configured</span>
               </div>
             )}
             {scanStatus?.lastScan?.completedAt && (
