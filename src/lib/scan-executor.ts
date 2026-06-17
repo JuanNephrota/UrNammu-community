@@ -5,9 +5,13 @@ import {
   isMicrosoft365Configured,
   runMicrosoft365Scan,
 } from "./microsoft-365-shadow-ai";
+import { isHexnodeConfigured, runHexnodeScan } from "./hexnode";
 import { findMatchingGovernedSystem } from "./governed-system-match";
 
-export type ShadowAIScanProvider = "google_workspace" | "microsoft_365";
+export type ShadowAIScanProvider =
+  | "google_workspace"
+  | "microsoft_365"
+  | "hexnode";
 
 interface ScanResult {
   scanId: string;
@@ -41,6 +45,10 @@ export async function executeScan(
     throw new Error("Microsoft 365 Shadow AI not configured.");
   }
 
+  if (provider === "hexnode" && !(await isHexnodeConfigured())) {
+    throw new Error("Hexnode not configured.");
+  }
+
   // Use existing scan record or create a new one
   const scanId =
     existingScanId ??
@@ -58,7 +66,9 @@ export async function executeScan(
     const result =
       provider === "google_workspace"
         ? await runFullScan()
-        : await runMicrosoft365Scan();
+        : provider === "hexnode"
+          ? await runHexnodeScan()
+          : await runMicrosoft365Scan();
 
     let newToolsAdded = 0;
     let updatedTools = 0;
@@ -111,7 +121,9 @@ export async function executeScan(
         const baseNotes =
           provider === "google_workspace"
             ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`
-            : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`;
+            : provider === "hexnode"
+              ? `Auto-discovered via Hexnode device scan. Found on ${discovery.userCount} managed device(s).${discovery.notes ? ` ${discovery.notes}` : ""}`
+              : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`;
 
         let tool;
         try {
@@ -169,7 +181,9 @@ export async function executeScan(
               description:
                 provider === "google_workspace"
                   ? `${discovery.toolName} (${discovery.vendor}) discovered via Google Workspace OAuth scan. ${discovery.userCount} user(s) have authorized this tool.`
-                  : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
+                  : provider === "hexnode"
+                    ? `${discovery.toolName} (${discovery.vendor}) discovered via Hexnode device scan. Installed on ${discovery.userCount} managed device(s).`
+                    : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
               severity: discovery.userCount >= 10 ? "HIGH" : "MEDIUM",
               source: "shadow_ai",
               relatedToolId: tool.id,

@@ -18,11 +18,13 @@ import {
   GOVERNANCE_AUTOMATION_SETTINGS_KEYS,
   getSetting,
   GOOGLE_SETTINGS_KEYS,
+  HEXNODE_SETTINGS_KEYS,
   MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
   PROVIDER_SYNC_SETTINGS_KEYS,
 } from "./settings";
 import { isGoogleWorkspaceConfigured } from "./google-workspace";
 import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
+import { isHexnodeConfigured } from "./hexnode";
 import { evaluateGovernanceAutomation } from "./governance-automation";
 
 type BackgroundActor = string;
@@ -70,6 +72,12 @@ export type ScheduledMaintenanceResult = {
     result?: Awaited<ReturnType<typeof executeScan>>;
   };
   microsoft365Scan: {
+    enabled: boolean;
+    due: boolean;
+    skippedReason?: string;
+    result?: Awaited<ReturnType<typeof executeScan>>;
+  };
+  hexnodeScan: {
     enabled: boolean;
     due: boolean;
     skippedReason?: string;
@@ -372,14 +380,19 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     googleScanIntervalRaw,
     microsoftScanEnabledRaw,
     microsoftScanIntervalRaw,
+    hexnodeScanEnabledRaw,
+    hexnodeScanIntervalRaw,
     latestTelemetryRun,
     latestGoogleScan,
     latestMicrosoftScan,
+    latestHexnodeScan,
     runningTelemetryRun,
     runningGoogleScan,
     runningMicrosoftScan,
+    runningHexnodeScan,
     googleConfigured,
     microsoftConfigured,
+    hexnodeConfigured,
     reviewNoticeDaysRaw,
     exceptionNoticeDaysRaw,
     escalationOverdueDaysRaw,
@@ -390,6 +403,8 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     getSetting(GOOGLE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
     getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_ENABLED),
     getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
+    getSetting(HEXNODE_SETTINGS_KEYS.SCAN_ENABLED),
+    getSetting(HEXNODE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
     prisma.providerSyncRun.findFirst({
       where: {
         syncType: "telemetry",
@@ -400,6 +415,7 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     }),
     getLatestCompletedScan("google_workspace"),
     getLatestCompletedScan("microsoft_365"),
+    getLatestCompletedScan("hexnode"),
     prisma.providerSyncRun.findFirst({
       where: {
         syncType: "telemetry",
@@ -424,8 +440,17 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       },
       orderBy: { startedAt: "desc" },
     }),
+    prisma.scanHistory.findFirst({
+      where: {
+        scanType: "hexnode",
+        status: "running",
+        startedAt: { gte: tenMinutesAgo },
+      },
+      orderBy: { startedAt: "desc" },
+    }),
     isGoogleWorkspaceConfigured(),
     isMicrosoft365Configured(),
+    isHexnodeConfigured(),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.REVIEW_NOTICE_DAYS),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.EXCEPTION_NOTICE_DAYS),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.ESCALATION_OVERDUE_DAYS),
@@ -441,6 +466,11 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
   );
   const microsoftScanIntervalHours = parseIntervalHours(
     microsoftScanIntervalRaw,
+    24
+  );
+  const hexnodeScanEnabled = parseBooleanSetting(hexnodeScanEnabledRaw, false);
+  const hexnodeScanIntervalHours = parseIntervalHours(
+    hexnodeScanIntervalRaw,
     24
   );
 
@@ -460,6 +490,15 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     isDue(
       latestMicrosoftScan?.completedAt ?? null,
       microsoftScanIntervalHours,
+      now
+    );
+  const hexnodeScanDue =
+    hexnodeScanEnabled &&
+    hexnodeConfigured &&
+    !runningHexnodeScan &&
+    isDue(
+      latestHexnodeScan?.completedAt ?? null,
+      hexnodeScanIntervalHours,
       now
     );
 
@@ -504,6 +543,19 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
                 ? `Not due yet. Interval is ${microsoftScanIntervalHours} hour(s).`
         : undefined,
     },
+    hexnodeScan: {
+      enabled: hexnodeScanEnabled,
+      due: hexnodeScanDue,
+      skippedReason: !hexnodeScanEnabled
+        ? "Hexnode auto-scan is disabled."
+        : !hexnodeConfigured
+          ? "Hexnode is not configured."
+          : runningHexnodeScan
+            ? "A Hexnode scan is already running."
+            : !hexnodeScanDue
+              ? `Not due yet. Interval is ${hexnodeScanIntervalHours} hour(s).`
+              : undefined,
+    },
     governanceAutomation: {
       reviewRenewals: 0,
       exceptionRenewals: 0,
@@ -527,6 +579,10 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       "system",
       "microsoft_365"
     );
+  }
+
+  if (hexnodeScanDue) {
+    result.hexnodeScan.result = await executeScan("system", "hexnode");
   }
 
   const reviewNoticeDays = parseIntervalHours(reviewNoticeDaysRaw, 14);

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withAuth, withRole } from "@/lib/auth-guard";
 import { isGoogleWorkspaceConfigured } from "@/lib/google-workspace";
 import { isMicrosoft365Configured } from "@/lib/microsoft-365-shadow-ai";
+import { isHexnodeConfigured } from "@/lib/hexnode";
 import {
   executeScan,
   type ShadowAIScanProvider,
@@ -14,25 +15,37 @@ export const maxDuration = 60;
 
 export async function GET() {
   return withAuth(async () => {
-    const [lastScan, googleLastScan, microsoftLastScan, googleConfigured, microsoftConfigured] =
-      await Promise.all([
-        prisma.scanHistory.findFirst({
-          orderBy: { createdAt: "desc" },
-        }),
-        prisma.scanHistory.findFirst({
-          where: { scanType: "google_workspace" },
-          orderBy: { createdAt: "desc" },
-        }),
-        prisma.scanHistory.findFirst({
-          where: { scanType: "microsoft_365" },
-          orderBy: { createdAt: "desc" },
-        }),
-        isGoogleWorkspaceConfigured(),
-        isMicrosoft365Configured(),
-      ]);
+    const [
+      lastScan,
+      googleLastScan,
+      microsoftLastScan,
+      hexnodeLastScan,
+      googleConfigured,
+      microsoftConfigured,
+      hexnodeConfigured,
+    ] = await Promise.all([
+      prisma.scanHistory.findFirst({
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.scanHistory.findFirst({
+        where: { scanType: "google_workspace" },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.scanHistory.findFirst({
+        where: { scanType: "microsoft_365" },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.scanHistory.findFirst({
+        where: { scanType: "hexnode" },
+        orderBy: { createdAt: "desc" },
+      }),
+      isGoogleWorkspaceConfigured(),
+      isMicrosoft365Configured(),
+      isHexnodeConfigured(),
+    ]);
 
     return NextResponse.json({
-      configured: googleConfigured || microsoftConfigured,
+      configured: googleConfigured || microsoftConfigured || hexnodeConfigured,
       lastScan: lastScan ?? null,
       sources: {
         googleWorkspace: {
@@ -42,6 +55,10 @@ export async function GET() {
         microsoft365: {
           configured: microsoftConfigured,
           lastScan: microsoftLastScan ?? null,
+        },
+        hexnode: {
+          configured: hexnodeConfigured,
+          lastScan: hexnodeLastScan ?? null,
         },
       },
     });
@@ -53,7 +70,11 @@ export async function POST(req: Request) {
     let provider: ShadowAIScanProvider = "google_workspace";
     try {
       const body = (await req.json()) as { provider?: ShadowAIScanProvider };
-      if (body.provider === "google_workspace" || body.provider === "microsoft_365") {
+      if (
+        body.provider === "google_workspace" ||
+        body.provider === "microsoft_365" ||
+        body.provider === "hexnode"
+      ) {
         provider = body.provider;
       }
     } catch {
@@ -77,6 +98,17 @@ export async function POST(req: Request) {
           error: "Microsoft 365 Shadow AI not configured",
           details:
             "Configure your Microsoft 365 tenant app in Settings > Shadow AI.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (provider === "hexnode" && !(await isHexnodeConfigured())) {
+      return NextResponse.json(
+        {
+          error: "Hexnode not configured",
+          details:
+            "Configure your Hexnode API key and subdomain in Settings > Shadow AI.",
         },
         { status: 400 }
       );

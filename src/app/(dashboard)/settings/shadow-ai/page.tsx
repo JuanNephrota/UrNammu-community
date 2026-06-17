@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { Building2, Clock, Search } from "lucide-react";
+import { Building2, Clock, Search, Smartphone } from "lucide-react";
 import { requireRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleWorkspaceSettings } from "../google-workspace-settings";
+import { HexnodeSettings } from "../hexnode-settings";
 import { NetskopeSettings } from "../netskope-settings";
 import { getSettingsPageData } from "../data";
 
@@ -18,7 +19,7 @@ export default async function ShadowAISettingsPage() {
       orderBy: { completedAt: "desc" },
     }),
   ]);
-  const [lastGoogleScan, lastMicrosoftScan] = await Promise.all([
+  const [lastGoogleScan, lastMicrosoftScan, lastHexnodeScan] = await Promise.all([
     prisma.scanHistory.findFirst({
       where: {
         scanType: "google_workspace",
@@ -30,6 +31,14 @@ export default async function ShadowAISettingsPage() {
     prisma.scanHistory.findFirst({
       where: {
         scanType: "microsoft_365",
+        status: "completed",
+        completedAt: { not: null },
+      },
+      orderBy: { completedAt: "desc" },
+    }),
+    prisma.scanHistory.findFirst({
+      where: {
+        scanType: "hexnode",
         status: "completed",
         completedAt: { not: null },
       },
@@ -48,8 +57,8 @@ export default async function ShadowAISettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
-            Manage Google Workspace and Microsoft 365 discovery settings for shadow AI detection,
-            including admin credentials, tenant apps, and automated scan cadence.
+            Manage Google Workspace, Microsoft 365, and Hexnode UEM discovery settings for shadow AI
+            detection, including admin credentials, tenant apps, device inventory, and automated scan cadence.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Button variant="outline" asChild>
@@ -103,7 +112,7 @@ export default async function ShadowAISettingsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -145,6 +154,27 @@ export default async function ShadowAISettingsPage() {
             )}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Smartphone className="h-4 w-4 text-[var(--accent)]" />
+              Hexnode UEM
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lastHexnodeScan ? (
+              <p className="text-sm text-[var(--text-secondary)]">
+                Last completed {lastHexnodeScan.completedAt?.toLocaleString("en-US")} with{" "}
+                {lastHexnodeScan.toolsFound} tools found and {lastHexnodeScan.newToolsAdded} new.
+              </p>
+            ) : (
+              <p className="text-sm text-[var(--text-muted)]">
+                No successful Hexnode scan recorded yet.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <NetskopeSettings
@@ -163,6 +193,13 @@ export default async function ShadowAISettingsPage() {
         hasMicrosoftClientSecret={!!settingsMap.microsoft_shadow_ai_client_secret}
         microsoftScanEnabled={settingsMap.microsoft_shadow_ai_scan_enabled === "true"}
         microsoftScanIntervalHours={parseInt(settingsMap.microsoft_shadow_ai_scan_interval_hours ?? "24", 10)}
+      />
+
+      <HexnodeSettings
+        hasApiKey={!!settingsMap.hexnode_api_key}
+        subdomain={settingsMap.hexnode_subdomain ?? ""}
+        scanEnabled={settingsMap.hexnode_scan_enabled === "true"}
+        scanIntervalHours={parseInt(settingsMap.hexnode_scan_interval_hours ?? "24", 10)}
       />
     </div>
   );

@@ -14,6 +14,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["chat.openai.com", "platform.openai.com", "openai.com"],
     clientNamePatterns: ["openai", "chatgpt", "chat gpt", "openai api"],
     publisherPatterns: ["openai"],
+    appIdPatterns: ["com.openai"],
   },
   {
     toolName: "Claude",
@@ -21,6 +22,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["claude.ai", "console.anthropic.com", "anthropic.com"],
     clientNamePatterns: ["anthropic", "claude.ai", "claude"],
     publisherPatterns: ["anthropic"],
+    appIdPatterns: ["com.anthropic"],
   },
   {
     toolName: "Gemini",
@@ -28,6 +30,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["gemini.google.com", "aistudio.google.com"],
     clientNamePatterns: ["gemini", "google ai studio", "bard", "google gemini"],
     publisherPatterns: ["google"],
+    appIdPatterns: ["com.google.gemini", "apps.bard"],
   },
   {
     toolName: "GitHub Copilot",
@@ -47,12 +50,14 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
       "copilot.microsoft.com",
     ],
     publisherPatterns: ["microsoft"],
+    appIdPatterns: ["com.microsoft.copilot", "com.microsoft.m365copilot"],
   },
   {
     toolName: "Midjourney",
     vendor: "Midjourney Inc",
     domains: ["midjourney.com", "www.midjourney.com"],
     clientNamePatterns: ["midjourney"],
+    appIdPatterns: ["com.midjourney"],
   },
   {
     toolName: "Perplexity",
@@ -60,6 +65,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["perplexity.ai", "www.perplexity.ai"],
     clientNamePatterns: ["perplexity", "perplexity ai"],
     publisherPatterns: ["perplexity"],
+    appIdPatterns: ["ai.perplexity", "perplexity.app"],
   },
   {
     toolName: "Cursor",
@@ -81,6 +87,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["notion.so", "www.notion.so"],
     clientNamePatterns: ["notion", "notion ai"],
     publisherPatterns: ["notion"],
+    appIdPatterns: ["notion.id"],
   },
   {
     toolName: "Grammarly AI",
@@ -88,6 +95,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["grammarly.com", "app.grammarly.com"],
     clientNamePatterns: ["grammarly", "grammarly ai", "grammarlygo"],
     publisherPatterns: ["grammarly"],
+    appIdPatterns: ["com.grammarly"],
   },
   {
     toolName: "Copy.ai",
@@ -102,6 +110,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["runwayml.com", "app.runwayml.com"],
     clientNamePatterns: ["runway", "runwayml"],
     publisherPatterns: ["runway"],
+    appIdPatterns: ["com.runwayml"],
   },
   {
     toolName: "ElevenLabs",
@@ -109,6 +118,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["elevenlabs.io", "www.elevenlabs.io"],
     clientNamePatterns: ["elevenlabs", "eleven labs"],
     publisherPatterns: ["elevenlabs", "eleven labs"],
+    appIdPatterns: ["io.elevenlabs", "com.elevenlabs"],
   },
   {
     toolName: "Hugging Face",
@@ -165,6 +175,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["mistral.ai", "console.mistral.ai"],
     clientNamePatterns: ["mistral", "mistral ai", "le chat"],
     publisherPatterns: ["mistral"],
+    appIdPatterns: ["ai.mistral", "chat.mistral"],
   },
   {
     toolName: "Otter AI",
@@ -172,6 +183,7 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
     domains: ["otter.ai"],
     clientNamePatterns: ["otter", "otter.ai", "otter ai"],
     publisherPatterns: ["otter"],
+    appIdPatterns: ["com.aisense.otter"],
   },
 ];
 
