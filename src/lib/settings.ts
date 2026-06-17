@@ -26,6 +26,10 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.MICROSOFT_SHADOW_AI_SCAN_ENABLED,
     microsoft_shadow_ai_scan_interval_hours:
       process.env.MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS,
+    hexnode_api_key: process.env.HEXNODE_API_KEY,
+    hexnode_subdomain: process.env.HEXNODE_SUBDOMAIN,
+    hexnode_scan_enabled: process.env.HEXNODE_SCAN_ENABLED,
+    hexnode_scan_interval_hours: process.env.HEXNODE_SCAN_INTERVAL_HOURS,
     gemini_billing_service_account_key:
       process.env.GEMINI_BILLING_SERVICE_ACCOUNT_KEY,
     gemini_billing_project_id: process.env.GEMINI_BILLING_PROJECT_ID,
@@ -125,6 +129,17 @@ export const MICROSOFT_SHADOW_AI_SETTINGS_KEYS = {
   CLIENT_SECRET: "microsoft_shadow_ai_client_secret",
   SCAN_ENABLED: "microsoft_shadow_ai_scan_enabled",
   SCAN_INTERVAL_HOURS: "microsoft_shadow_ai_scan_interval_hours",
+} as const;
+
+// Keys used by the Hexnode UEM/MDM shadow AI integration. Hexnode exposes a
+// per-tenant REST API at https://<subdomain>.hexnodemdm.com/api/v1/ authed by
+// an API key. We enumerate managed devices and their installed apps to detect
+// AI tools deployed on endpoints.
+export const HEXNODE_SETTINGS_KEYS = {
+  API_KEY: "hexnode_api_key",
+  SUBDOMAIN: "hexnode_subdomain",
+  SCAN_ENABLED: "hexnode_scan_enabled",
+  SCAN_INTERVAL_HOURS: "hexnode_scan_interval_hours",
 } as const;
 
 export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
