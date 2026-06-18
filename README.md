@@ -2,12 +2,15 @@
 
 UrNammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
-- AI system and agent inventory
-- Shadow AI discovery from Google Workspace, Microsoft 365, and DNS/proxy CSV imports
+- AI system, agent, and skill inventory (AI Skills synced from CertifID Forge)
+- Shadow AI discovery from Google Workspace, Microsoft 365, Hexnode UEM devices, and DNS/proxy/Netskope log imports
 - Risk assessments with templates, branching questions, issue tracking, and agent-aware overlays
 - Governance workflows with staged approvals, exceptions, evidence, incidents, renewal automation, and escalations
+- Policy-as-code: machine-readable policy rules enforced at the proxy (off / dry-run / enforce) with a Policy Denials log
 - Vendor governance with contract, residency, subprocessors, and approved use-case tracking
-- Oversight telemetry from provider admin APIs, Google Gemini / Vertex AI billing export, and proxy-based prompt-risk detection
+- Oversight telemetry from provider admin APIs, AI gateways (Helicone / OpenRouter / Portkey / LiteLLM), Google Gemini / Vertex AI billing export, and proxy-based prompt-risk detection
+- Per-surface developer-AI dashboards for Claude Platform/API, Claude Code, Cowork, and Cursor (OpenTelemetry pipeline)
+- A custom reporting suite (templates, builder, PDF/CSV/JSON export, scheduled email delivery) and a live Proxy Health board
 
 The app is built with Next.js 16, React 19, Prisma, PostgreSQL, and NextAuth.
 
@@ -21,10 +24,14 @@ For a codebase walkthrough and extension guide, see [docs/implementation-guide.m
 
 - `Registry`: central inventory of AI systems
 - `Agents`: tracked AI agents and assistants
-- `Shadow AI`: discovery and triage of unregistered tools
+- `AI Skills`: Forge-synced skill catalog, auto-promoting agent-like content into Agents/Systems
+- `Shadow AI`: discovery and triage of unregistered tools (Google Workspace, Microsoft 365, Hexnode, DNS/Netskope)
 - `Risk Center`: system and agent-aware risk assessments
-- `Compliance`: policy assignment and audit evidence
-- `Oversight`: provider usage, costs, anomalies, investigations, and organization telemetry
+- `Compliance`: policy assignment, audit evidence, runtime policy enforcement, and a Policy Denials log
+- `Oversight`: provider usage, costs, anomalies, investigations, vendor governance, and per-surface dashboards (Claude Platform, Claude Code, Cowork, Cursor)
+- `Reports`: build/export/schedule governance reports
+- `Integrations`: connect provider admin APIs, AI gateways, MDM, and observability sources
+- `Proxy Health`: live-ops board for the AI proxy
 
 ## Local Setup
 
@@ -89,7 +96,40 @@ GEMINI_BILLING_LOCATION=US
 
 # Required if you want background maintenance via cron
 CRON_SECRET=replace-with-a-long-random-secret
+
+# Optional Claude Code / Cursor OpenTelemetry ingestion (per-surface oversight dashboards)
+CLAUDE_CODE_TELEMETRY_SECRET=
+CLAUDE_CODE_TELEMETRY_RETENTION_DAYS=30
+CURSOR_TELEMETRY_SECRET=
+
+# Optional AI gateway oversight fallbacks (also configurable in Settings > Integrations)
+HELICONE_API_KEY=
+HELICONE_API_BASE_URL=
+OPENROUTER_PROVISIONING_KEY=
+PORTKEY_API_KEY=
+PORTKEY_API_BASE_URL=
+PORTKEY_WORKSPACE_SLUG=
+LITELLM_API_KEY=
+LITELLM_API_BASE_URL=
+
+# Optional Hexnode UEM shadow-AI discovery fallbacks
+HEXNODE_API_KEY=
+HEXNODE_SUBDOMAIN=
+HEXNODE_SCAN_ENABLED=false
+HEXNODE_SCAN_INTERVAL_HOURS=24
+
+# Optional Datadog alert/event forwarding
+DATADOG_ENABLED=false
+DATADOG_API_KEY=
+DATADOG_APP_KEY=
+DATADOG_SITE=
+
+# Optional scheduled-report email delivery (Resend)
+RESEND_API_KEY=
+REPORT_EMAIL_FROM=
 ```
+
+Most integration credentials (Cursor Admin API, Forge Skills, Azure Monitor, Netskope) are configured at runtime in **Settings > Integrations** / **Settings > Shadow AI** rather than via env vars.
 
 3. Run Prisma migrations and seed data:
 
@@ -253,6 +293,43 @@ Recent improvements:
 - usage heuristics based on delegated principals and assignment counts
 - discovery notes that explain match confidence and observed signals
 
+### AI Gateways (Helicone, OpenRouter, Portkey, LiteLLM)
+
+Third-party LLM gateways can be connected so their activity/cost is normalized into the same `UsageBucket` / `CostBucket` pipeline as direct-provider telemetry. Configure keys (and base URL for self-hosted LiteLLM) in `Settings > Integrations`, each with its own enable toggle and connection test.
+
+### Hexnode UEM (shadow AI device discovery)
+
+Scans the app inventory of Hexnode-managed devices and cross-references installed apps against the known-AI-tools registry. Configure the Hexnode API key + subdomain in `Settings > Shadow AI`. Hexnode MDM deploy scripts are also included to roll out the Claude Code / Cursor OTel hooks and managed settings to devices.
+
+### Netskope (shadow AI log shipping)
+
+Accepts native Netskope event JSON (page / application / alert events) at `POST /api/discovered-tools/ingest/netskope`, authenticated with the proxy secret as a Bearer token. Domain, user, department, and hit count are extracted automatically — no CSV upload needed.
+
+### Claude Code / Cursor OpenTelemetry
+
+Claude Code and Cursor send OTLP/HTTP signals (metrics, logs, spans) from MDM-deployed hooks to dedicated ingest routes:
+
+- `/api/telemetry/claude-code` (metrics) and `/api/telemetry/claude-code-events` (logs), Bearer-authed with `CLAUDE_CODE_TELEMETRY_SECRET`
+- `/api/telemetry/cursor` (metrics) and `/api/telemetry/cursor-traces` (spans), Bearer-authed with `CURSOR_TELEMETRY_SECRET`
+
+Prompt and code text are stripped at ingest; routes run the dangerous-prompt rule engine on prompt text in memory and persist only metadata, decisions, and verdicts into `ClaudeCodeMetric` / `ClaudeCodeEvent` and `CursorMetric` / `CursorSpan`. Per-user attribution comes from OTel `user.id` / `user.email` resource attributes set by the hooks. These power the **Claude Code**, **Cowork** (local-agent surface), and **Cursor** oversight dashboards. Retention is enforced by prune crons (`CLAUDE_CODE_TELEMETRY_RETENTION_DAYS`, default 30).
+
+### Cursor Admin API
+
+Adds Cursor spend (`provider="cursor"`) and per-user "lines produced" metrics to the Cursor dashboard. Requires a team-admin Cursor API key (configured in `Settings > Integrations`).
+
+### CertifID Forge (AI Skills)
+
+Syncs the Forge skill catalog into the AI Skills registry. `content_type="skill"` rows land in AI Skills; `agent` / `app` / `agent_system` content auto-promotes into the Agents / Systems registries. Configure the Forge base URL + API key in `Settings > Integrations`.
+
+### Azure Monitor (proxy health)
+
+Pulls Function App metrics (invocations, response time, HTTP status distribution) into `ProxyHealthSnapshot` records for the Proxy Health board. Configure subscription / resource group / function app / region plus a service principal in `Settings > Integrations`.
+
+### Datadog
+
+Forwards governance alerts and sync events to a Datadog org as events. Configure an API key in `Settings > Integrations` and toggle on.
+
 ## Background Scheduling
 
 The project now includes a shared maintenance endpoint for background jobs:
@@ -265,15 +342,23 @@ It handles:
 - provider admin telemetry sync
 - OpenAI assistant follow-up discovery
 - Google Gemini / Vertex AI billing-export follow-up syncs
+- AI gateway syncs (Helicone, OpenRouter, Portkey, LiteLLM)
 - Google Workspace shadow-AI follow-up scans
 - Microsoft 365 shadow-AI follow-up scans
+- Hexnode UEM device scans
+- Forge Skills sync
+- Azure Monitor proxy-health snapshots
 - governance renewal and exception notice alerts
 - overdue, blocked, and ownership escalation alerts
+
+Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRET`, wired in `vercel.json`): `/api/cron/forge-skills-sync`, `/api/cron/run-report-schedules` (scheduled report email delivery), and `/api/cron/prune-claude-code-metrics` + `/api/cron/prune-cursor-metrics` (OTel telemetry retention).
 
 Cadence is controlled in Settings:
 
 - `Settings > Provider Admin APIs`: provider sync enable/interval
-- `Settings > Shadow AI`: Google Workspace and Microsoft 365 auto-scan enable/interval
+- `Settings > Shadow AI`: Google Workspace, Microsoft 365, and Hexnode auto-scan enable/interval
+- `Settings > Integrations`: AI gateway, Forge, and Azure Monitor sync enable/interval
+- `Settings > Reporting`: telemetry retention windows and report email delivery
 
 For Vercel deployments, [vercel.json](/Users/pmarsh/scripts/AI-gov/vercel.json) is configured to call the maintenance endpoint hourly. The route itself checks each job’s saved interval before running, so one hourly cron can safely drive multiple background jobs.
 
@@ -290,12 +375,12 @@ npm run db:reset
 
 ## Important Paths
 
-- `src/app/(dashboard)`: main product UI
-- `src/app/api`: route handlers
+- `src/app/(dashboard)`: main product UI (registry, skills, oversight per-surface dashboards, reports, integrations, proxy-health)
+- `src/app/api`: route handlers (incl. `telemetry/*` OTel ingest, `reports/*`, `proxy-health/*`, `discovered-tools/ingest/netskope`)
 - `src/lib`: integrations, auth, telemetry, and utilities
 - `prisma/schema.prisma`: data model
 - `prisma/migrations`: database migrations
-- `ai-proxy/`: companion proxy project
+- `ai-proxy/`: companion proxy project (incl. `policy-enforcement.ts` runtime policy-as-code)
 
 ## Current Implementation Notes
 
@@ -329,6 +414,13 @@ npm run db:reset
 - Usage totals no longer double-count proxy traffic. Proxy writes happen at hourly granularity while the admin sync writes the same traffic at day granularity; the oversight queries now filter out the proxy-sourced rows so admin sync is the single source of truth for aggregate totals. Proxy data remains queryable for real-time views.
 - Cache tokens (cache_read + cache_creation) are separated from default token and cost totals across the oversight dashboard and usage page. A client-side toggle on the usage page shows or hides cache tokens on demand.
 - All `toLocaleString()` calls and number formatters are now pinned to `en-US` so numbers render consistently regardless of the Vercel runtime locale.
+- **Policy-as-code runtime enforcement**: the proxy evaluates machine-readable policy rules with an org-wide gate (`off` / `dry-run` / `enforce`), per-policy advisory-vs-blocking semantics, and a ~30s policy cache. Denials (and dangerous-prompt content blocks) are recorded and surfaced in a filterable, CSV-exportable Policy Denials viewer.
+- **AI Skills registry** synced from CertifID Forge, with manual + scheduled sync, on-demand content fetch, per-field local overrides, and auto-promotion of agent-like content into the Agents/Systems registries.
+- **Per-surface developer-AI oversight** via an OpenTelemetry pipeline: dedicated Claude Platform/API, Claude Code (+ searchable audit log), Cowork (local-agent surface), and Cursor dashboards, with per-user attribution and retention-prune crons. Prompt/code text is stripped at ingest; only metadata, decisions, and prompt-risk verdicts are stored.
+- **Custom reporting suite**: eight data sources and starter templates, detail/grouped output, PDF/CSV/JSON export, and scheduled email delivery via Resend.
+- **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync.
+- **Shadow AI** gained a single "Scan All Sources" action, Hexnode UEM device discovery, Netskope log-shipper ingestion, and an Unblock action for blocked tools.
+- **Proxy Health** live-ops board combines Azure Monitor heartbeat metrics with real-time DB counters (usage, flagged, policy denials).
 
 ## TODO / Roadmap
 
@@ -342,9 +434,11 @@ npm run db:reset
 - [x] Cost breakdown by input vs output tokens, cost-per-request, and monthly spend forecasting
 - [x] Provider posture comparisons across cost, incidents, exceptions, and high-risk usage
 - [ ] Claude Code tool-level accept/reject breakdown (per-tool grouped bar chart)
-- [ ] CSV/PDF export of usage logs and scheduled spend summary reports
-- [ ] Audit-ready reporting in board, auditor, and regulator-focused export formats
+- [x] CSV/PDF export of usage logs and scheduled spend summary reports (Reports suite)
+- [x] Audit-ready reporting in board, auditor, and regulator-focused export formats (Reports suite, PDF/CSV/JSON + schedules)
 - [ ] Evidence quality scoring for stale, weak, or missing governance artifacts
+- [x] Per-surface developer-AI dashboards (Claude Platform, Claude Code, Cowork, Cursor) over OpenTelemetry
+- [x] AI gateway oversight (Helicone, OpenRouter, Portkey, LiteLLM)
 
 ### Risk
 
@@ -362,15 +456,27 @@ npm run db:reset
 - [x] Low-confidence review queues and promotion workflows
 - [x] Dismiss option for high-confidence discoveries
 - [x] AI-assisted auto-fill when converting a discovered tool to a governed system
+- [x] Unified "Scan All Sources" action
+- [x] Hexnode UEM device app discovery
+- [x] Netskope log-shipper ingestion
+- [x] Unblock action for blocked discovered tools
+
+### Compliance & Policy
+
+- [x] Edit existing policies after creation
+- [x] Policy-as-code runtime enforcement (off / dry-run / enforce) with advisory vs blocking
+- [x] Policy Denials viewer with filters and CSV export
 
 ### Registry
 
 - [x] "Autofill with AI" button on the manual registration form
 - [x] Filter bar with department, risk, status, sensitivity, and vendor dropdowns
+- [x] AI Skills registry synced from CertifID Forge with auto-promotion
 
-### Compliance
+### Reporting
 
-- [x] Edit existing policies after creation
+- [x] Custom report builder with templates, grouped/detail output, and PDF/CSV/JSON export
+- [x] Scheduled report email delivery (daily / weekly / monthly)
 
 ### Strategic
 
