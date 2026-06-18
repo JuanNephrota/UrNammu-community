@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings";
 import { logger } from "@/lib/observability";
-import { analyzePromptRisk, createPromptRiskAlert } from "@/lib/prompt-risk";
+import { analyzePromptRisk, analyzeText, createPromptRiskAlert } from "@/lib/prompt-risk";
+import { recordSensitiveFinding } from "@/lib/sensitive-alerts";
 import { writeProxyUsageBucket } from "@/lib/proxy-bucket-writer";
 import { secretsMatch } from "@/lib/secret-compare";
 
@@ -83,6 +84,10 @@ type OpenAIUsageBody = {
     completion_tokens?: number;
     total_tokens?: number;
   };
+};
+
+type OpenAIResponseTextBody = {
+  choices?: Array<{ message?: { content?: string } }>;
 };
 
 export function getContentType(headers: Headers): string {
@@ -324,11 +329,26 @@ export async function POST(req: NextRequest) {
   const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
   const cost = calculateCost(model, promptTokens, completionTokens);
 
-  let flagged = promptRisk.flagged;
-  let flagCategory: "upstream_error" | "prompt_risk" | null = promptRisk.flagged
-    ? "prompt_risk"
+  // Inline DLP on the model's response — detect sensitive info coming back.
+  const responseDlp = openaiResponse.ok
+    ? await analyzeText(
+        (responseBody as OpenAIResponseTextBody).choices?.[0]?.message?.content ?? ""
+      )
     : null;
+
+  let flagged = promptRisk.flagged;
+  let flagCategory:
+    | "upstream_error"
+    | "prompt_risk"
+    | "sensitive_response"
+    | null = promptRisk.flagged ? "prompt_risk" : null;
   let flagReason: string | null = promptRisk.flagReason;
+
+  if (responseDlp?.flagged && flagCategory === null) {
+    flagged = true;
+    flagCategory = "sensitive_response";
+    flagReason = responseDlp.flagReason;
+  }
 
   if (!openaiResponse.ok) {
     flagged = true;
@@ -382,6 +402,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  if (responseDlp?.flagged) {
+    await recordSensitiveFinding({
+      source: "response_dlp",
+      provider: "chatgpt",
+      model,
+      analysis: responseDlp,
+      aiSystemId: linkedSystem?.id ?? null,
+    });
+  }
+
   // Successful upstream: return the response as-is.
   // On upstream errors, strip internal detail before returning to the caller —
   // OpenAI error bodies may include org IDs, rate-limit internals, or hints
@@ -414,7 +444,12 @@ async function logUsage(params: {
   totalTokens: number;
   cost: number;
   flagged: boolean;
-  flagCategory?: "upstream_error" | "proxy_error" | "prompt_risk" | null;
+  flagCategory?:
+    | "upstream_error"
+    | "proxy_error"
+    | "prompt_risk"
+    | "sensitive_response"
+    | null;
   flagReason?: string | null;
   metadata?: Record<string, unknown>;
 }) {

@@ -3,6 +3,7 @@ import { Readable, PassThrough } from "stream";
 import { calculateCost } from "../lib/pricing";
 import { logPolicyDenial, logUsage } from "../lib/db";
 import { extractOpenAIStreamUsage } from "../lib/stream-parser";
+import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
 import { secretsMatch } from "../lib/secret-compare";
 import {
   loadEnforcementMode,
@@ -175,6 +176,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       department,
       userEmail,
       latencyMs,
+      aiSystemId,
     }).catch((err: unknown) => {
       console.error("extractOpenAIStreamUsage failed:", err);
     });
@@ -197,6 +199,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       completion_tokens?: number;
       total_tokens?: number;
     };
+    choices?: Array<{ message?: { content?: string } }>;
     error?: {
       message?: string;
     };
@@ -209,8 +212,24 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const cost = calculateCost("chatgpt", model, promptTokens, completionTokens);
 
   let flagged = false;
-  let flagCategory: "upstream_error" | null = null;
+  let flagCategory: "upstream_error" | "sensitive_response" | null = null;
   let flagReason: string | null = null;
+
+  // Inline DLP on the model's response (only sanitized excerpts are persisted).
+  if (openaiRes.ok) {
+    const dlp = await scanResponseForSensitiveInfo({
+      provider: "chatgpt",
+      model,
+      aiSystemId,
+      responseText: responseBody.choices?.[0]?.message?.content ?? "",
+    });
+    if (dlp.flagged) {
+      flagged = true;
+      flagCategory = "sensitive_response";
+      flagReason = dlp.summary;
+    }
+  }
+
   if (!openaiRes.ok) {
     flagged = true;
     flagCategory = "upstream_error";

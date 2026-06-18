@@ -229,6 +229,15 @@ export const THIRD_PARTY_PROXY_SETTINGS_KEYS = {
   LITELLM_API_BASE_URL: "litellm_api_base_url",
 } as const;
 
+// Sensitive-information scanning. Controls the active leakage-probe scanner and
+// inline response DLP. The Portkey virtual key is required to route a probe
+// through the Portkey gateway (otherwise Portkey is reported "not probeable").
+export const SENSITIVE_SCAN_SETTINGS_KEYS = {
+  ENABLED: "sensitive_scan_enabled",
+  LITELLM_PROBE_MODEL: "sensitive_scan_litellm_model",
+  PORTKEY_VIRTUAL_KEY: "sensitive_scan_portkey_virtual_key",
+} as const;
+
 // Datadog outbound event forwarding. When enabled, governance alerts and
 // other notable events get shipped as Datadog events for correlation with
 // the customer's existing observability stack.
