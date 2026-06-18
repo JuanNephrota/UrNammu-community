@@ -1,6 +1,7 @@
 import { Readable } from "stream";
 import { calculateCost } from "./pricing";
 import { logUsage } from "./db";
+import { scanResponseForSensitiveInfo } from "./sensitive-detect";
 
 interface StreamContext {
   provider: "claude" | "chatgpt";
@@ -8,6 +9,7 @@ interface StreamContext {
   department: string | null;
   userEmail: string | null;
   latencyMs: number;
+  aiSystemId: string | null;
 }
 
 /**
@@ -22,6 +24,7 @@ export async function extractAnthropicStreamUsage(
     let buffer = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    const responseTextParts: string[] = [];
 
     for await (const chunk of stream) {
       buffer += typeof chunk === "string" ? chunk : chunk.toString();
@@ -43,11 +46,29 @@ export async function extractAnthropicStreamUsage(
           if (event.type === "message_delta" && event.usage) {
             outputTokens = event.usage.output_tokens ?? 0;
           }
+          if (
+            event.type === "content_block_delta" &&
+            event.delta?.type === "text_delta" &&
+            typeof event.delta.text === "string"
+          ) {
+            responseTextParts.push(event.delta.text);
+          }
         } catch {
           // skip non-JSON lines
         }
       }
     }
+
+    // Inline DLP on the streamed response text.
+    const dlp =
+      responseTextParts.length > 0
+        ? await scanResponseForSensitiveInfo({
+            provider: "claude",
+            model: ctx.model,
+            aiSystemId: ctx.aiSystemId,
+            responseText: responseTextParts.join(""),
+          })
+        : null;
 
     const totalTokens = inputTokens + outputTokens;
     if (totalTokens > 0) {
@@ -61,9 +82,10 @@ export async function extractAnthropicStreamUsage(
         completionTokens: outputTokens,
         totalTokens,
         cost,
-        flagged: false,
-        flagReason: null,
-        metadata: { latencyMs: ctx.latencyMs, streaming: true },
+        flagged: !!dlp?.flagged,
+        flagCategory: dlp?.flagged ? "sensitive_response" : null,
+        flagReason: dlp?.flagged ? dlp.summary : null,
+        metadata: { latencyMs: ctx.latencyMs, streaming: true, aiSystemId: ctx.aiSystemId },
       });
     }
   } catch (err) {
@@ -84,6 +106,7 @@ export async function extractOpenAIStreamUsage(
     let buffer = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    const responseTextParts: string[] = [];
 
     for await (const chunk of stream) {
       buffer += typeof chunk === "string" ? chunk : chunk.toString();
@@ -102,11 +125,24 @@ export async function extractOpenAIStreamUsage(
             inputTokens = event.usage.prompt_tokens ?? 0;
             outputTokens = event.usage.completion_tokens ?? 0;
           }
+          const delta = event.choices?.[0]?.delta?.content;
+          if (typeof delta === "string") responseTextParts.push(delta);
         } catch {
           // skip
         }
       }
     }
+
+    // Inline DLP on the streamed response text.
+    const dlp =
+      responseTextParts.length > 0
+        ? await scanResponseForSensitiveInfo({
+            provider: "chatgpt",
+            model: ctx.model,
+            aiSystemId: ctx.aiSystemId,
+            responseText: responseTextParts.join(""),
+          })
+        : null;
 
     const totalTokens = inputTokens + outputTokens;
     if (totalTokens > 0) {
@@ -120,9 +156,10 @@ export async function extractOpenAIStreamUsage(
         completionTokens: outputTokens,
         totalTokens,
         cost,
-        flagged: false,
-        flagReason: null,
-        metadata: { latencyMs: ctx.latencyMs, streaming: true },
+        flagged: !!dlp?.flagged,
+        flagCategory: dlp?.flagged ? "sensitive_response" : null,
+        flagReason: dlp?.flagged ? dlp.summary : null,
+        metadata: { latencyMs: ctx.latencyMs, streaming: true, aiSystemId: ctx.aiSystemId },
       });
     }
   } catch (err) {

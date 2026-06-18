@@ -90,6 +90,74 @@ model AppSetting {
   createdAt DateTime @default(now())
 }
 
+// -- Sensitive-information detection (proxy writes findings/alerts, reads
+// rules/exceptions; main app owns migrations). Minimal mirrors of the main
+// app's models — only the columns the proxy touches. All omitted columns are
+// nullable or DB-defaulted, so inserts here satisfy the real table.
+
+enum AlertSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+model Alert {
+  id                 String        @id @default(cuid())
+  title              String
+  description        String?
+  severity           AlertSeverity
+  status             AlertStatus   @default(OPEN)
+  source             String
+  aiSystemId         String?
+  promptRiskMetadata Json?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+}
+
+model SensitiveFinding {
+  id             String   @id @default(cuid())
+  source         String
+  provider       String
+  model          String?
+  probeLabel     String?
+  severity       String
+  ruleKeys       String[]
+  categories     String[]
+  matchedSignals String[]
+  excerpt        String?
+  aiSystemId     String?
+  apiUsageLogId  String?
+  alertId        String?
+  scanId         String?
+  createdAt      DateTime @default(now())
+}
+
+model PromptRiskRule {
+  id       String   @id @default(cuid())
+  key      String   @unique
+  label    String
+  severity String
+  patterns String[]
+  enabled  Boolean  @default(true)
+}
+
+model PromptRiskException {
+  id        String    @id @default(cuid())
+  category  String
+  pattern   String?
+  active    Boolean   @default(true)
+  expiresAt DateTime?
+}
+
 // -- Normalized telemetry (proxy writes; main app owns migrations) ------------
 // These models mirror the main app's schema so the proxy can write into the
 // same UsageBucket / CostBucket / ProviderSyncRun tables. The main Nammu app

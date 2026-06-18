@@ -23,6 +23,7 @@ import {
   Network,
   BarChart3,
   Cpu,
+  ScanSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -47,6 +48,7 @@ const navItems = [
     label: "Governance",
     items: [
       { name: "Shadow AI", href: "/shadow-ai", icon: Search },
+      { name: "Sensitive Scan", href: "/sensitive-scan", icon: ScanSearch },
       { name: "Risk Center", href: "/risk-center", icon: ShieldAlert },
       { name: "AI Oversight", href: "/oversight", icon: Eye },
       { name: "Investigations", href: "/oversight/investigations", icon: Bell },

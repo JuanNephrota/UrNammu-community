@@ -3,6 +3,7 @@ import { Readable, PassThrough } from "stream";
 import { calculateCost } from "../lib/pricing";
 import { logPolicyDenial, logUsage } from "../lib/db";
 import { extractAnthropicStreamUsage } from "../lib/stream-parser";
+import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
 import { applyMcpPassthrough } from "../lib/mcp-passthrough";
 import { secretsMatch } from "../lib/secret-compare";
 import {
@@ -219,6 +220,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       department,
       userEmail,
       latencyMs,
+      aiSystemId,
     }).catch((err: unknown) => {
       console.error("extractAnthropicStreamUsage failed:", err);
     });
@@ -242,6 +244,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       input_tokens?: number;
       output_tokens?: number;
     };
+    content?: Array<{ type?: string; text?: string }>;
     error?: {
       message?: string;
     };
@@ -254,8 +257,28 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const cost = calculateCost("claude", model, promptTokens, completionTokens);
 
   let flagged = false;
-  let flagCategory: "upstream_error" | null = null;
+  let flagCategory: "upstream_error" | "sensitive_response" | null = null;
   let flagReason: string | null = null;
+
+  // Inline DLP on the model's response (only sanitized excerpts are persisted).
+  if (anthropicRes.ok) {
+    const responseText = (responseBody.content ?? [])
+      .filter((b) => b.type === "text" && typeof b.text === "string")
+      .map((b) => b.text as string)
+      .join("\n");
+    const dlp = await scanResponseForSensitiveInfo({
+      provider: "claude",
+      model,
+      aiSystemId,
+      responseText,
+    });
+    if (dlp.flagged) {
+      flagged = true;
+      flagCategory = "sensitive_response";
+      flagReason = dlp.summary;
+    }
+  }
+
   if (!anthropicRes.ok) {
     flagged = true;
     flagCategory = "upstream_error";

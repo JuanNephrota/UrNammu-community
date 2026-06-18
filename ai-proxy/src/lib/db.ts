@@ -44,7 +44,12 @@ export async function logUsage(params: {
   totalTokens: number;
   cost: number;
   flagged: boolean;
-  flagCategory?: "upstream_error" | "proxy_error" | "prompt_risk" | null;
+  flagCategory?:
+    | "upstream_error"
+    | "proxy_error"
+    | "prompt_risk"
+    | "sensitive_response"
+    | null;
   flagReason?: string | null;
   metadata?: Record<string, unknown>;
 }) {

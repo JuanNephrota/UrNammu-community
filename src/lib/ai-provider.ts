@@ -2,19 +2,26 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { getSetting } from "./settings";
 
+// Sentinel model id meaning "always use the newest model the provider reports".
+// Resolved at runtime via the Models API (see resolveLatestModel). This is the
+// default when no model is pinned.
+export const LATEST_MODEL_ID = "latest";
+
 export const AI_PROVIDERS = {
   anthropic: {
     name: "Anthropic (Claude)",
     models: [
-      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-      { id: "claude-opus-4-20250514", name: "Claude Opus 4" },
-      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
+      { id: LATEST_MODEL_ID, name: "Latest (auto-updating)" },
+      { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
     ],
     keyPlaceholder: "sk-ant-...",
   },
   openai: {
     name: "OpenAI (ChatGPT)",
     models: [
+      { id: LATEST_MODEL_ID, name: "Latest (auto-updating)" },
       { id: "gpt-4o", name: "GPT-4o" },
       { id: "gpt-4o-mini", name: "GPT-4o Mini" },
       { id: "o1", name: "o1" },
@@ -32,26 +39,68 @@ export const AI_SETTINGS_KEYS = {
   MODEL: "ai_model",
 } as const;
 
+// Pinned fallback used only when the Models API can't be reached. Keep current.
+const LATEST_MODEL_FALLBACK: Record<AIProviderKey, string> = {
+  anthropic: "claude-opus-4-8",
+  openai: "gpt-4o",
+};
+
+type LatestCacheEntry = { model: string; expiresAt: number };
+const latestModelCache: Partial<Record<AIProviderKey, LatestCacheEntry>> = {};
+const LATEST_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Resolve the newest model a provider reports, so the app tracks new releases
+ * without a code change. The Anthropic Models API lists models newest-first, so
+ * `data[0]` is the latest. Cached for an hour; falls back to a pinned constant
+ * if the API is unreachable. OpenAI's list isn't ordered by recency/capability,
+ * so we use the fallback there rather than guess.
+ */
+async function resolveLatestModel(
+  provider: AIProviderKey,
+  apiKey: string
+): Promise<string> {
+  const cached = latestModelCache[provider];
+  if (cached && cached.expiresAt > Date.now()) return cached.model;
+
+  let model = LATEST_MODEL_FALLBACK[provider];
+  if (provider === "anthropic" && apiKey) {
+    try {
+      const list = await new Anthropic({ apiKey }).models.list();
+      const newest = list.data?.[0]?.id;
+      if (newest) model = newest;
+    } catch {
+      // unreachable / no access — keep the pinned fallback
+    }
+  }
+  latestModelCache[provider] = { model, expiresAt: Date.now() + LATEST_TTL_MS };
+  return model;
+}
+
 /**
  * Get the configured AI provider, model, and API key.
- * Falls back to env vars if not configured in the database.
+ * Falls back to env vars if not configured in the database. When no model is
+ * pinned (or the "latest" sentinel is selected), resolves the newest available
+ * model via the Models API.
  */
-async function getAIConfig(): Promise<{
+export async function getAIConfig(): Promise<{
   provider: AIProviderKey;
   model: string;
   apiKey: string;
 }> {
   const provider =
     ((await getSetting(AI_SETTINGS_KEYS.PROVIDER)) as AIProviderKey) ?? "anthropic";
-  const model =
-    (await getSetting(AI_SETTINGS_KEYS.MODEL)) ??
-    (provider === "openai" ? "gpt-4o" : "claude-sonnet-4-20250514");
   const apiKey =
     (await getSetting(AI_SETTINGS_KEYS.API_KEY)) ??
     (provider === "openai"
       ? process.env.OPENAI_API_KEY
       : process.env.ANTHROPIC_API_KEY) ??
     "";
+  const configuredModel = await getSetting(AI_SETTINGS_KEYS.MODEL);
+  const model =
+    !configuredModel || configuredModel === LATEST_MODEL_ID
+      ? await resolveLatestModel(provider, apiKey)
+      : configuredModel;
 
   return { provider, model, apiKey };
 }

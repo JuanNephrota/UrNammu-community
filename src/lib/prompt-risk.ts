@@ -191,7 +191,21 @@ function sanitizeExcerpt(value: string | null, maxLength = 220): string | null {
 export async function analyzePromptRisk(
   requestBody: Record<string, unknown> | null | undefined
 ): Promise<PromptRiskAnalysis> {
-  const promptText = extractPromptText(requestBody);
+  return analyzeText(extractPromptText(requestBody));
+}
+
+/**
+ * Run the active prompt-risk rule set against an arbitrary piece of text and
+ * return the same structured analysis as {@link analyzePromptRisk}. This is the
+ * shared detector used for sensitive-information scanning — both the active
+ * leakage probe (model responses to bait prompts) and inline response DLP at
+ * the proxy — so probe findings, response findings, and prompt findings all use
+ * one rule engine and one sanitizer.
+ */
+export async function analyzeText(
+  text: string | null | undefined
+): Promise<PromptRiskAnalysis> {
+  const promptText = (text ?? "").slice(0, 8000);
   if (!promptText) {
     return {
       flagged: false,

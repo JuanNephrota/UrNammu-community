@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { prisma } from "./prisma";
 import { getSetting } from "./settings";
-import { analyzePromptRisk, createPromptRiskAlert } from "./prompt-risk";
+import { analyzePromptRisk, analyzeText, createPromptRiskAlert } from "./prompt-risk";
+import { recordSensitiveFinding } from "./sensitive-alerts";
 import { applyMcpPassthrough } from "./mcp-passthrough";
 import { writeProxyUsageBucket } from "./proxy-bucket-writer";
 import { secretsMatch } from "./secret-compare";
@@ -29,6 +30,24 @@ function calculateCost(
     (inputTokens / 1_000_000) * pricing.input +
     (outputTokens / 1_000_000) * pricing.output
   );
+}
+
+/** Concatenate the assistant's text from a non-streaming Messages response. */
+function extractAnthropicResponseText(responseBody: unknown): string {
+  const content = (responseBody as { content?: unknown })?.content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as { type?: string }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
+    ) {
+      parts.push((block as { text: string }).text);
+    }
+  }
+  return parts.join("\n");
 }
 
 /**
@@ -245,11 +264,25 @@ export async function handleAnthropicProxy(
   const totalTokens = promptTokens + completionTokens;
   const cost = calculateCost(model, promptTokens, completionTokens);
 
-  let flagged = promptRisk.flagged;
-  let flagCategory: "upstream_error" | "prompt_risk" | null = promptRisk.flagged
-    ? "prompt_risk"
+  // Inline DLP on the model's response — detect sensitive info coming back
+  // (only sanitized excerpts are persisted by recordSensitiveFinding).
+  const responseDlp = anthropicResponse.ok
+    ? await analyzeText(extractAnthropicResponseText(responseBody))
     : null;
+
+  let flagged = promptRisk.flagged;
+  let flagCategory:
+    | "upstream_error"
+    | "prompt_risk"
+    | "sensitive_response"
+    | null = promptRisk.flagged ? "prompt_risk" : null;
   let flagReason: string | null = promptRisk.flagReason;
+
+  if (responseDlp?.flagged && flagCategory === null) {
+    flagged = true;
+    flagCategory = "sensitive_response";
+    flagReason = responseDlp.flagReason;
+  }
 
   if (!anthropicResponse.ok) {
     flagged = true;
@@ -305,6 +338,16 @@ export async function handleAnthropicProxy(
     });
   }
 
+  if (responseDlp?.flagged) {
+    await recordSensitiveFinding({
+      source: "response_dlp",
+      provider: "claude",
+      model,
+      analysis: responseDlp,
+      aiSystemId: linkedSystem?.id ?? null,
+    });
+  }
+
   return NextResponse.json(responseBody, {
     status: anthropicResponse.status,
   });
@@ -333,6 +376,7 @@ async function extractStreamUsage(
     let buffer = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    const responseTextParts: string[] = [];
 
     while (true) {
       const { done, value } = await reader.read();
@@ -361,6 +405,16 @@ async function extractStreamUsage(
           if (event.type === "message_delta" && event.usage) {
             outputTokens = event.usage.output_tokens ?? 0;
           }
+
+          // content_block_delta carries the assistant's streamed text — collect
+          // it for inline response DLP once the stream drains.
+          if (
+            event.type === "content_block_delta" &&
+            event.delta?.type === "text_delta" &&
+            typeof event.delta.text === "string"
+          ) {
+            responseTextParts.push(event.delta.text);
+          }
         } catch {
           // skip non-JSON lines
         }
@@ -369,6 +423,21 @@ async function extractStreamUsage(
 
     const totalTokens = inputTokens + outputTokens;
     const cost = calculateCost(ctx.model, inputTokens, outputTokens);
+
+    // Inline DLP on the streamed response text.
+    const responseDlp =
+      responseTextParts.length > 0
+        ? await analyzeText(responseTextParts.join(""))
+        : null;
+    if (responseDlp?.flagged) {
+      await recordSensitiveFinding({
+        source: "response_dlp",
+        provider: "claude",
+        model: ctx.model,
+        analysis: responseDlp,
+        aiSystemId: ctx.aiSystemId,
+      });
+    }
 
     if (totalTokens > 0) {
       logUsage({
@@ -380,9 +449,13 @@ async function extractStreamUsage(
         completionTokens: outputTokens,
         totalTokens,
         cost,
-        flagged: ctx.promptRisk.flagged,
-        flagCategory: ctx.promptRisk.flagged ? "prompt_risk" : null,
-        flagReason: ctx.promptRisk.flagReason,
+        flagged: ctx.promptRisk.flagged || !!responseDlp?.flagged,
+        flagCategory: ctx.promptRisk.flagged
+          ? "prompt_risk"
+          : responseDlp?.flagged
+            ? "sensitive_response"
+            : null,
+        flagReason: ctx.promptRisk.flagReason ?? responseDlp?.flagReason,
         metadata: {
           latencyMs: ctx.latencyMs,
           streaming: true,
@@ -420,7 +493,12 @@ async function logUsage(params: {
   totalTokens: number;
   cost: number;
   flagged: boolean;
-  flagCategory?: "upstream_error" | "proxy_error" | "prompt_risk" | null;
+  flagCategory?:
+    | "upstream_error"
+    | "proxy_error"
+    | "prompt_risk"
+    | "sensitive_response"
+    | null;
   flagReason?: string | null;
   metadata?: Record<string, unknown>;
 }) {
