@@ -14,18 +14,27 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [Executive Dashboard](#3a-executive-dashboard)
 4. [AI System Registry](#4-ai-system-registry)
 5. [AI Agents](#5-ai-agents)
+   - [AI Skills Registry](#5a-ai-skills-registry)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
+   - [Policy-as-Code Runtime Enforcement](#policy-as-code-runtime-enforcement)
+   - [Policy Denials Viewer](#policy-denials-viewer)
 8. [Governance Workflows](#8-governance-workflows)
 9. [Shadow AI Discovery](#9-shadow-ai-discovery)
 10. [Oversight (Telemetry & Cost)](#10-oversight-telemetry--cost)
-11. [Alerts](#11-alerts)
-12. [Settings Reference](#12-settings-reference)
-13. [Integrations](#13-integrations)
-14. [Background Automation](#14-background-automation)
-15. [Common Workflows (Cookbook)](#15-common-workflows-cookbook)
-16. [Troubleshooting / FAQ](#16-troubleshooting--faq)
-17. [Glossary](#17-glossary)
+    - [Claude Platform / API](#claude-platform--api)
+    - [Claude Code Oversight](#claude-code-oversight)
+    - [Cowork Oversight](#cowork-oversight)
+    - [Cursor Oversight](#cursor-oversight)
+    - [Proxy Health](#proxy-health)
+11. [Reports](#11-reports)
+12. [Alerts](#12-alerts)
+13. [Settings Reference](#13-settings-reference)
+14. [Integrations](#14-integrations)
+15. [Background Automation](#15-background-automation)
+16. [Common Workflows (Cookbook)](#16-common-workflows-cookbook)
+17. [Troubleshooting / FAQ](#17-troubleshooting--faq)
+18. [Glossary](#18-glossary)
 
 ---
 
@@ -37,11 +46,14 @@ UrNammu is an enterprise AI governance platform that gives compliance, security,
 
 - **AI System** — a managed AI service or application (e.g. "Customer Support Copilot"). The primary governance unit.
 - **AI Agent** — an autonomous agent tied to a system, with its own autonomy level and human-oversight rules.
+- **AI Skill** — a reusable AI skill/app published in CertifID Forge and synced into UrNammu's Skills registry.
 - **Risk Assessment** — a multi-dimensional scoring of a system across bias, security, privacy, fairness, performance, and transparency, with branching questions and issue-level follow-up.
-- **Policy** — a governance rule (mapped to EU AI Act, NIST AI RMF, ISO 42001, SOC 2, or custom) that can be assigned to systems.
-- **Shadow AI** — unregistered AI tools discovered in the org via OAuth activity, Microsoft 365 apps, or network logs.
-- **Oversight** — provider-level telemetry: token usage, cost, anomalies, model drift, dangerous prompt alerts, investigations, and vendor lifecycle.
+- **Policy** — a governance rule (mapped to EU AI Act, NIST AI RMF, ISO 42001, SOC 2, or custom) that can be assigned to systems. Policies can also carry machine-readable rules that are enforced at the proxy at runtime (advisory or blocking).
+- **Shadow AI** — unregistered AI tools discovered in the org via Google Workspace OAuth activity, Microsoft 365 apps, Hexnode-managed devices, or DNS/proxy/Netskope network logs.
+- **Oversight** — provider-level telemetry: token usage, cost, anomalies, model drift, dangerous prompt alerts, investigations, and vendor lifecycle — plus per-surface dashboards for Claude Platform/API, Claude Code, Cowork, and Cursor.
 - **Governance Workflow** — the staged approval flow (Owner → Security → Legal → Compliance) plus exceptions, evidence, incidents, and investigations.
+- **Report** — a saved, schedulable export built from any governance data source (systems, risk, compliance, usage, alerts, shadow AI, audit) in PDF/CSV/JSON.
+- **Integration** — a connected third party that feeds UrNammu telemetry or identity (provider admin APIs, AI gateways, MDM, observability, SSO).
 
 The Glossary at the end of the guide collects these and more.
 
@@ -73,7 +85,11 @@ The full canonical content lives in `docs/help/*.md` and this guide.
 
 After signing in you land on the **Dashboard**. The layout has three areas:
 
-- **Sidebar (left)** — the nine modules: Dashboard, Registry, Agents, Shadow AI, Risk Center, Compliance, Oversight, Alerts, Settings.
+- **Sidebar (left)** — modules grouped into four sections:
+  - **Overview** — Dashboard, Executive, Reports
+  - **Registry** — AI Systems, AI Agents, AI Skills
+  - **Governance** — Shadow AI, Risk Center, AI Oversight, Investigations, Vendor Governance, Claude Platform, Claude Code, Cowork, Cursor, Compliance
+  - **System** — Alerts, Proxy Health, Integrations, Settings
 - **Top bar** — the currently signed-in user and a shortcut menu.
 - **Main content** — module pages. Every detail page uses a tabbed layout (Info → Agents → Risk → Compliance → Approval & Governance → Telemetry → Incidents on the Registry detail, for example).
 
@@ -269,6 +285,37 @@ Generated agent risk reviews are saved, so they remain visible after refresh and
 
 ---
 
+## 5a. AI Skills Registry
+
+**Sidebar → Registry → AI Skills** is a read-through inventory of AI skills/apps published in **CertifID Forge** and synced into UrNammu. It gives governance visibility into the internally-built AI capabilities employees can use.
+
+### What it tracks
+
+- Skill name, category, author, department, and status (e.g. draft / published / retired).
+- Tags, description, and Forge metadata (creation / update timestamps).
+- The AI Agents and AI Systems that reference each skill.
+
+### Filtering
+
+The Skills page has a filter bar (category, status, department, author) plus name search, mirroring the Registry filter behavior. Dropdowns only surface values present in the current dataset.
+
+### How sync works
+
+- **Manual sync** — click **Sync from Forge** on the Skills page (admin only). Each run reports items fetched, newly created, updated, and any auto-promoted agents/systems.
+- **Scheduled sync** — runs via the maintenance cron when enabled in **Settings → Integrations → Forge Skills** (off by default; requires a Forge base URL + API key).
+- **On-demand content** — full skill descriptions/docs are fetched when you open a skill's detail page, and can be pushed into the linked governed system's description.
+
+### Auto-promotion into Agents / Systems
+
+Forge content carries a `content_type`. On sync:
+
+- `content_type = "skill"` rows appear in the **AI Skills** registry.
+- `content_type` of `agent`, `app`, or `agent_system` are **auto-promoted** into the **AI Agents** / **AI Systems** registries instead, so agent-like Forge content lands in the governance workflow rather than the skills list.
+
+Per-field local overrides you make in UrNammu are preserved across re-syncs.
+
+---
+
 ## 6. Risk Center
 
 **Sidebar → Risk Center** gives a portfolio-level view of risk.
@@ -408,6 +455,27 @@ Empty-evidence warnings on `COMPLIANT` assignments do not hard-block approval, b
 
 **Compliance → Audit Trail** shows every governance action: creations, updates, approvals, deletions. Filter by actor, action, entity type, or date range. Export as JSON or CSV for external auditors.
 
+### Policy-as-Code Runtime Enforcement
+
+Policies aren't only documentation — a policy's machine-readable rules (blocked models, prompt patterns, token / rate / cost limits) can be **enforced at the proxy** before a request reaches the AI provider. This is governed by a single org-wide mode, set in **Settings → General** (or **Settings → Policy Enforcement**):
+
+| Mode | Behavior |
+|------|----------|
+| **Off** (default) | Policies are ignored at runtime. Every request passes. Safe default for rollout. |
+| **Dry run** | Policies are evaluated and violations are **logged as denials**, but the request still forwards to the provider. Use this to measure impact before turning enforcement on. |
+| **Enforce** | A violation of a **blocking** policy returns HTTP `403` and the request never reaches the provider. |
+
+Each policy is independently marked **Blocking** (returns 403 on violation in Enforce mode) or **Advisory** (always logs a denial but lets the request through). The proxy re-reads policy state roughly every 30 seconds, so changes propagate without a redeploy.
+
+### Policy Denials Viewer
+
+**Compliance → Denials** is the log of every request that was blocked or flagged by runtime enforcement (and content blocks from dangerous-prompt detection).
+
+- **Filters** — source (policy vs. dangerous-prompt content block), AI System, policy, and date range (last 7 days by default).
+- **Each row** shows timestamp, source badge, system, provider/model, matched policy IDs, denial reason, and user email.
+- **Detail page** — click a denial to see which rule fired, all matching policies, and request context.
+- **Export** — download the filtered list as CSV for audit.
+
 ---
 
 ## 8. Governance Workflows
@@ -466,14 +534,16 @@ Incidents track notable events (misuse, data exposure, outage). Create from the 
 
 1. **Google Workspace** — scans OAuth activity for AI apps that users have connected.
 2. **Microsoft 365** — scans delegated app permissions against known AI tools.
-3. **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
+3. **Hexnode UEM/MDM** — scans the app inventory of enrolled/managed devices and cross-references installed apps against known AI tools.
+4. **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
+5. **Netskope** — real-time log-shipper ingestion of Netskope event JSON (no manual upload needed).
 
 Discovered entries are deduplicated by `toolName + domain`. Each finding becomes a `DiscoveredAITool` record.
 
 ### Running a Scan
 
-- **Manual**: click **Scan Google Workspace** or **Scan Microsoft 365** at the top of the page. The scan history updates with a new `ScanHistory` entry (status `running` → `success` / `failed`).
-- **Automatic**: configured in Settings → Shadow AI. A cron job at `/api/scheduler/maintenance` triggers scans on the configured interval (default 24 hours).
+- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/3)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `success` / `failed`). Sources that aren't configured are skipped.
+- **Automatic**: configured in Settings → Shadow AI per source. A cron job at `/api/scheduler/maintenance` triggers scans on each source's configured interval (default 24 hours).
 
 ### Importing DNS / Proxy Logs
 
@@ -491,6 +561,8 @@ Two routes to `POST /api/discovered-tools/ingest`:
   ```
 
 Each ingestion run is recorded as an `IngestionRun` with processed / matched / new / updated counts.
+
+**Netskope log shipper.** Instead of manual CSV uploads, a Netskope tenant can stream events straight in by POSTing native Netskope event JSON (page / application / alert events) to `/api/discovered-tools/ingest/netskope`. The endpoint is secured with the shared proxy secret as a Bearer token and auto-extracts domain, user, department, and hit count from the Netskope event fields. Configure the webhook in **Settings → Shadow AI → Netskope**.
 
 ### Automatic Suppression of Governed Tools
 
@@ -528,7 +600,7 @@ The Shadow AI page splits discoveries into three sections:
 2. **Low-Confidence Candidates** — medium and low-confidence matches from heuristic detection. Each candidate shows its confidence badge, numeric score, and match reasons. Actions:
    - **Promote** — confirms the tool as a real AI discovery and moves it to the main "Needs Review" queue with high confidence.
    - **Dismiss** — removes the tool from the queue with a required reason. Creates a `DismissedCandidate` record that prevents the tool from resurfacing on future scans. Dismissed candidates are shown as a count at the bottom of the page.
-3. **Resolved** — tools that have been registered, approved, or blocked.
+3. **Resolved** — tools that have been registered, approved, or blocked. A tool marked **Blocked** shows an **Unblock** action here, which moves it back to `UNDER_REVIEW` for re-evaluation — useful for reversing an accidental block or a policy change without deleting the record.
 
 On a tool's row in "Needs Review":
 
@@ -563,7 +635,7 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 
 ## 10. Oversight (Telemetry & Cost)
 
-**Sidebar → Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, investigation, and Claude Code telemetry.
+**Sidebar → Governance → AI Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, and investigation telemetry. The Governance group also carries dedicated **per-surface** dashboards — **Claude Platform / API**, **Claude Code**, **Cowork**, and **Cursor** — described below.
 
 ### How Provider Sync Works
 
@@ -727,17 +799,62 @@ Create an investigation from an alert (preferred) or manually:
 - Status: `OPEN` → `IN_PROGRESS` → `RESOLVED`.
 - Add **notes** over time, and a **resolution summary** when closing.
 
+### Claude Platform / API
+
+**Governance → Claude Platform** is the organization-level view of direct Anthropic API usage, sourced from the **Anthropic Admin API sync** (normalized into `UsageBucket` / `CostBucket`, with discovered API keys and org members). It shows:
+
+- Stat cards: total cost, total tokens (with cache broken out), cache-hit rate, requests, active API keys, and org members.
+- Daily usage & cost trend (30 days).
+- Cost by model and cost by line item (uncached input, cache read, cache creation, output).
+- Tokens by model table.
+- **Usage by API key** — per-key token counts, requests, and active/inactive status.
+- **Organization members** list with roles.
+- A sync-health banner (last successful sync, fresh/stale, errors).
+
 ### Claude Code Oversight
 
-**Oversight → Claude Code** shows Claude Code-specific telemetry pulled via the Anthropic admin sync:
+**Governance → Claude Code** shows telemetry from **Claude Code itself**, collected over OpenTelemetry (OTLP/HTTP) from MDM-deployed Claude Code hooks rather than the admin API. (See [Background Automation](#15-background-automation) and the install guide for the OTel pipeline.) It shows:
 
-- **Sessions**, **Lines Added / Removed**, **Commits**, **Pull Requests**, and **Estimated Cost** stat cards for the last 7 days.
-- **Token Volume** card showing input / output tokens with cache tokens called out separately.
-- **Tool Accept Rate**, **Active Users**.
-- **Users table** with per-user session counts, line diffs, commits, PRs, tool accept rate, token volume (with cache suffix), and estimated cost.
-- **Sync status banner** at the top showing the last successful sync, how many days of data were fetched, and any API errors from individual day ranges.
+- **Live telemetry (last 60 minutes)** — data points, active sessions, active users, cost, and input/output/cache tokens.
+- **Usage & event activity** — tool accept/reject rate, completions, and a decision breakdown.
+- **Cost attribution** — per-user and per-model cost summaries estimated from token metrics.
+- **OTel event log** — recent user prompts, tool invocations, completions, and API errors.
+- **User filter** — scope the whole page to a single developer (`?user=email`); the dropdown is populated from the last 7 days.
 
-Token counts are sourced from the `model_breakdown` metadata returned by the Anthropic analytics API so the Tokens column always reflects real usage. Token values are intentionally kept out of the aggregate oversight totals to avoid double-counting with the regular Anthropic usage sync (the same tokens are already captured there).
+Prompt and code text are stripped at ingest — only metadata, decisions, and dangerous-prompt verdicts are stored. Click through to the full audit log below.
+
+#### Claude Code Audit Log
+
+**Governance → Claude Code → (Recent events / "View all")** opens a searchable, filterable, paginated table of individual OTel events (default 30-day retention):
+
+- Columns: timestamp, event name, risk severity & category, surface/entrypoint, user email, detail excerpt, and session ID.
+- Search by user, session, tool, model, error type, decision, or event name.
+- Filter by event type, risk level (flagged/critical/warning), and surface.
+
+### Cowork Oversight
+
+**Governance → Cowork** is the same analytics view as Claude Code, scoped to the **Claude Cowork / Desktop (local-agent) surface** only. Use it to see Cowork session activity, decisions, per-user cost, and recent events separately from terminal Claude Code usage.
+
+### Cursor Oversight
+
+**Governance → Cursor** shows Cursor telemetry from the Cursor OTel hook (spans + metrics), plus spend and "lines produced" data from the **Cursor Admin API** when configured. It shows:
+
+- Stat cards: live spans (60m), active sessions/users (7d), tool calls, risk flags, and spend (7d).
+- Top tools, activity by hook event, and most-active users (clickable to filter).
+- Span durations (average / slowest) and recent prompt-risk verdicts.
+- **Lines produced (7d)** — per-user accepted/added/deleted lines and active days (requires the Cursor Admin API team key).
+- Recent spans list.
+
+### Proxy Health
+
+**System → Proxy Health** is a live-ops board for the Azure Functions AI proxy. It auto-refreshes every ~15 seconds and keeps a 1-hour history.
+
+- **Heartbeat tiles** (from Azure Monitor): invocation count, HTTP 2xx/4xx/5xx distribution, average response time, last sync error, and time-since-last-activity (turns "stale" after an hour of silence).
+- **Live 15-minute counters** (read straight from the database, independent of Azure Monitor): API usage count, flagged count, and policy-denial count.
+- **Sparklines** of invocations, 5xx errors, and response time over the last hour.
+- **Recent API logs** — the 10 most recent proxy requests with provider, model, department, tokens, cost, flag status, and user.
+
+Azure Monitor snapshots are pulled on demand (admin button) or on the maintenance cron; configure the subscription/resource group/function-app/region and service-principal credentials in **Settings → Integrations → Azure Monitor**.
 
 ### Provider Posture Comparison
 
@@ -751,7 +868,38 @@ The risk tier is calculated from a weighted score: incidents × 10 + alerts × 3
 
 ---
 
-## 11. Alerts
+## 11. Reports
+
+**Sidebar → Overview → Reports** is a self-service reporting suite for building, exporting, and scheduling governance reports. Creation requires `ADMIN` or `COMPLIANCE_OFFICER`.
+
+### Building a report
+
+A report is built against one of eight **data sources** — AI Systems, AI Agents, Risk Assessments, Compliance, API Usage, Alerts, Shadow AI, or Audit Logs — with:
+
+- **Output mode** — *Detail rows* (every record) or a *grouped summary* (counts/sums/averages by a chosen field, with chart support).
+- **Filters** — date range (presets or custom), plus enum / boolean / text / numeric conditions.
+- **Columns** — pick the fields to include; numeric columns can be summed or averaged in grouped mode.
+- **Visibility** — *Private* (owner only) or *Shared* with the workspace.
+
+Use **Preview** to see results live before saving.
+
+### Templates
+
+Eight starter templates pre-fill a sensible source, columns, and grouping:
+
+- **Risk Posture**, **Compliance Status**, **Usage & Cost**, **Shadow AI Inventory**, **AI System Inventory**, **Executive Summary**, **Alerts Activity**, and **Audit Trail**.
+
+### Exporting
+
+Run a report and export it as **PDF**, **CSV**, or **JSON**. Each run is recorded with a status, row count, and a download link.
+
+### Scheduling & email delivery
+
+A saved report can be scheduled to run **daily / weekly / monthly** at a chosen UTC hour (and day-of-week or day-of-month), with results emailed to a comma-separated recipient list. Email delivery requires a Resend API key + sender address in **Settings → Reporting (Report Email Delivery)**. Each schedule can be toggled on/off, and its run history shows success/failure, row count, and the delivery record.
+
+---
+
+## 12. Alerts
 
 **Sidebar → Alerts** is the central alert inbox.
 
@@ -792,17 +940,18 @@ Top-of-page links on `/alerts`:
 
 ---
 
-## 12. Settings Reference
+## 13. Settings Reference
 
 Settings live under **Sidebar → Settings**. Most require `ADMIN`.
 
-### 12.1 General
+### 13.1 General
 
 - **AI Provider** — `anthropic` or `openai`. Drives `/api/ai/classify`, `/api/ai/assess-compliance`, `/api/ai/assess-agent-risk`, `/api/ai/summarize`.
 - **Model** — e.g. `claude-3.5-sonnet` or `gpt-4`.
 - **API key** — encrypted in the database; falls back to env vars (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) if unset.
+- **Policy enforcement mode** — `Off` / `Dry run` / `Enforce` for runtime policy-as-code at the proxy (see [Policy-as-Code Runtime Enforcement](#policy-as-code-runtime-enforcement)). Default `Off`.
 
-### 12.2 Provider Admin APIs
+### 13.2 Provider Admin APIs
 
 Configure organization-level telemetry pulls.
 
@@ -811,7 +960,7 @@ Configure organization-level telemetry pulls.
 - **Anomaly detection**: recent window days, baseline window days, min-token threshold, min-cost threshold, per-dimension multipliers.
 - **Governance automation**: review-notice days, exception-notice days, escalation-overdue days.
 
-### 12.3 Proxy Setup
+### 13.3 Proxy Setup
 
 Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (Azure Functions + Vercel fallback). The setup page generates ready-to-paste configuration for both organization-wide managed settings and per-user `~/.claude/settings.json`.
 
@@ -832,22 +981,38 @@ export PROXY_USER_EMAIL="$(git config user.email)"
 
 Add this to `~/.zshrc` or `~/.bashrc`. The managed settings and per-user settings snippets on the Proxy Setup page reference `${PROXY_USER_EMAIL}` automatically. Without this variable, usage will still be logged but will appear as "Unattributed" on the Oversight dashboards.
 
-### 12.4 Users & Identity
+### 13.4 Users & Identity
 
 - **User list** — email, name, role, created date. Admins change roles here.
 - **Google OAuth** — client ID, client secret, test button.
 - **Microsoft / Entra ID** — tenant ID, client ID, client secret.
 - **Local credentials** — enable/disable (uses `ENABLE_DEV_LOGIN`).
 
-### 12.5 Shadow AI
+### 13.5 Shadow AI
 
 - **Google Workspace**: service account JSON (encrypted), admin email, enable auto-scan, scan interval, lookback days, test connection, last scan status.
 - **Microsoft 365**: tenant ID, client ID, client secret, enable auto-scan, scan interval, test connection, last scan status.
+- **Hexnode UEM/MDM**: Hexnode API key + subdomain, enable auto-scan, scan interval, test connection, last scan status.
+- **Netskope**: the log-shipper webhook URL (secured by the proxy secret) for streaming Netskope events.
 - **DNS / proxy import**: a CSV uploader and the JSON endpoint documentation.
+
+### 13.6 Integrations
+
+The dedicated **Integrations** settings area (also surfaced as the top-level **Integrations** page) configures third-party telemetry and observability sources. Each tile has its own credentials, enable toggle, and **Test Connection**:
+
+- **AI gateways** — Helicone, OpenRouter, Portkey, and a self-hosted LiteLLM proxy (base URL + key), normalized into Oversight.
+- **Azure Monitor** — subscription / resource group / function app / region + service principal, for Proxy Health signals.
+- **Datadog** — forward governance alerts and sync events to a Datadog org as events.
+- **Forge Skills** — base URL + API key + sync toggle for the AI Skills registry.
+
+### 13.7 Reporting
+
+- **Report Email Delivery** — Resend API key + sender address used by scheduled report email delivery (see [Reports](#11-reports)).
+- **Telemetry retention** — retention windows (days) for Claude Code and Cursor OTel data, pruned by the maintenance cron (`0` disables pruning).
 
 ---
 
-## 13. Integrations
+## 14. Integrations
 
 ### Google OAuth (sign-in)
 
@@ -889,9 +1054,34 @@ Add this to `~/.zshrc` or `~/.bashrc`. The managed settings and per-user setting
 - **CSV**: upload via **Settings → Shadow AI → DNS / proxy import**, or `POST` the file to `/api/discovered-tools/ingest`.
 - **JSON**: `POST /api/discovered-tools/ingest` with the body shape shown in [section 9](#9-shadow-ai-discovery).
 
+### Hexnode UEM/MDM (shadow AI discovery)
+
+1. In Hexnode, create an API key and note your Hexnode subdomain.
+2. Enter both in **Settings → Shadow AI → Hexnode**, enable auto-scan, and set an interval.
+3. Click **Test Connection**, then **Scan All Sources** on the Shadow AI page to pull the managed-device app inventory.
+
+Hexnode MDM scripts can also be used to roll out the Claude Code / Cursor OTel hooks and managed settings to devices (see the install guide).
+
+### Netskope (shadow AI discovery)
+
+- Point a Netskope log-shipper / webhook at `/api/discovered-tools/ingest/netskope`, authenticated with the proxy secret as a Bearer token. UrNammu parses native Netskope page/application/alert event JSON and creates discoveries automatically.
+
+### AI Gateways (Helicone, OpenRouter, Portkey, LiteLLM)
+
+- In **Settings → Integrations**, add the relevant API key (and base URL for LiteLLM), enable, and **Test Connection**. Activity/cost is normalized into Oversight alongside direct-provider telemetry.
+
+### Datadog & Azure Monitor (observability)
+
+- **Datadog** — add an API key in **Settings → Integrations → Datadog** and toggle on to forward alerts and sync events as Datadog events.
+- **Azure Monitor** — add the Function App identifiers and a service principal in **Settings → Integrations → Azure Monitor** to power the [Proxy Health](#proxy-health) board.
+
+### Forge Skills
+
+- In **Settings → Integrations → Forge Skills**, add the Forge base URL + API key and enable sync to populate the [AI Skills Registry](#5a-ai-skills-registry).
+
 ---
 
-## 14. Background Automation
+## 15. Background Automation
 
 UrNammu has a single cron endpoint that runs every hour on Vercel (or external cron) and fans out to individual jobs.
 
@@ -902,9 +1092,16 @@ UrNammu has a single cron endpoint that runs every hour on Vercel (or external c
   - Anthropic telemetry sync
   - OpenAI telemetry sync
   - OpenAI assistant discovery
+  - Google Gemini / Vertex AI billing-export sync
+  - AI gateway syncs (Helicone, OpenRouter, Portkey, LiteLLM)
   - Google Workspace shadow-AI scan
   - Microsoft 365 shadow-AI scan
+  - Hexnode UEM device scan
+  - Forge Skills sync
+  - Azure Monitor proxy-health snapshot
   - Governance automation (below)
+
+Several jobs have their own dedicated cron routes as well (e.g. `/api/cron/forge-skills-sync`, `/api/cron/run-report-schedules`, `/api/cron/prune-claude-code-metrics`, `/api/cron/prune-cursor-metrics`), all guarded by `CRON_SECRET` and wired in `vercel.json`. Scheduled report email delivery runs from `run-report-schedules`; the prune jobs enforce OTel telemetry retention.
 
 Admins can trigger the endpoint manually for testing (e.g., `curl` with the `CRON_SECRET`).
 
@@ -919,7 +1116,7 @@ Runs on every maintenance call. Produces alerts for:
 
 ---
 
-## 15. Common Workflows (Cookbook)
+## 16. Common Workflows (Cookbook)
 
 ### A. Register and approve a new SaaS AI tool
 
@@ -985,7 +1182,7 @@ Runs on every maintenance call. Produces alerts for:
 
 ---
 
-## 16. Troubleshooting / FAQ
+## 17. Troubleshooting / FAQ
 
 **Why don't I see any usage data in Oversight?**
 - Is an admin key set in **Settings → Provider Admin APIs**?
@@ -1016,12 +1213,13 @@ Runs on every maintenance call. Produces alerts for:
 
 ---
 
-## 17. Glossary
+## 18. Glossary
 
 | Term | Definition |
 |------|-----------|
 | **AISystem** | A managed AI service or application requiring governance. |
 | **AIAgent** | Autonomous or semi-autonomous agent tied to a system, with its own autonomy level and human-oversight rules. |
+| **AI Skill** | A reusable AI skill/app published in CertifID Forge and synced into the AI Skills registry. |
 | **Risk Assessment** | Multi-dimensional scoring record (6 dimensions + overall) for a system at a point in time. |
 | **Risk Issue** | A specific finding raised by a risk assessment (`OPEN` / `IN_PROGRESS` / `RESOLVED` / `ACCEPTED`). |
 | **Policy** | Governance rule mapped to a compliance framework, with structured rules and long-form text. |
@@ -1045,6 +1243,11 @@ Runs on every maintenance call. Produces alerts for:
 | **PromptRiskRule** | A tunable detection rule (key, label, severity, up to 10 regex patterns) used by the proxy to flag dangerous prompts. Editable at `/alerts/prompt-rules`. |
 | **PromptRiskException** | Per-rule-key suppression record created via False Positive marking. Suppresses alert creation when all matched categories of a candidate alert are covered. |
 | **Audit Log** | Append-only record of every governance action. |
+| **Policy Enforcement Mode** | Org-wide runtime mode (`Off` / `Dry run` / `Enforce`) that controls whether policy-as-code rules are enforced at the proxy. |
+| **Policy Denial** | A request the proxy blocked or flagged at runtime against a policy or content rule; listed at Compliance → Denials. |
+| **Report** | A saved, exportable, schedulable query over a governance data source (PDF/CSV/JSON). |
+| **OTel Telemetry** | OpenTelemetry signals (metrics/logs/spans) sent by Claude Code and Cursor hooks into the per-surface oversight dashboards. |
+| **Proxy Health** | Live-ops board combining Azure Monitor heartbeat metrics with real-time database counters for the AI proxy. |
 | **AppSetting** | Encrypted key-value store holding runtime configuration (provider keys, scan schedules, anomaly thresholds, etc). |
 
 ---
