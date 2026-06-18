@@ -97,17 +97,48 @@ const SOURCE_HEADER_PRESETS: Record<string, Partial<CsvHeaderPreset>> = {
   },
 };
 
-function normalizeDomain(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
+/**
+ * Reduce the many shapes a DNS/web-proxy export emits for a destination down
+ * to a bare, lowercase hostname so `matchDomain` (which does exact/suffix
+ * comparison) can hit. Proxy logs in particular rarely give a clean domain —
+ * they log full request URLs, `host:port`, wildcard rules, trailing dots, and
+ * trailing annotations, any of which would otherwise defeat the match.
+ *
+ * Handles: full URLs with scheme/path/query, scheme-less `host/path`,
+ * `host:port`, userinfo, `*.` wildcards, leading/trailing dots, `www.`, and
+ * surrounding whitespace. Returns null for empty/unusable input.
+ */
+export function normalizeDomain(raw: string): string | null {
+  if (!raw) return null;
 
+  let value = raw.trim().toLowerCase();
+  if (!value) return null;
+
+  // Some exports wrap the value in quotes or append annotations like
+  // "chat.openai.com (allowed)" — keep only the first whitespace-delimited
+  // token and strip surrounding quotes.
+  value = value.replace(/^["']|["']$/g, "").split(/\s+/)[0] ?? "";
+  // Wildcard policy rules ("*.openai.com") and leading dots (".openai.com").
+  value = value.replace(/^\*+\./, "").replace(/^\.+/, "");
+  if (!value) return null;
+
+  let host: string;
   try {
-    if (trimmed.includes("://")) return new URL(trimmed).hostname;
+    // Prepending a scheme lets the URL parser handle host:port, paths, query
+    // strings, and userinfo uniformly for scheme-less proxy-log values too.
+    host = new URL(value.includes("://") ? value : `http://${value}`).hostname;
   } catch {
-    return trimmed;
+    // Malformed enough that the URL parser rejected it — strip manually so we
+    // still recover a usable hostname rather than dropping the entry.
+    host = value
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//, "") // scheme://
+      .split(/[/?#]/)[0] // path / query / fragment
+      .split("@").pop()! // userinfo@
+      .split(":")[0]; // :port
   }
 
-  return trimmed.toLowerCase().replace(/\.$/, "");
+  host = host.replace(/^www\./, "").replace(/\.$/, "");
+  return host || null;
 }
 
 function normalizeHeader(raw: string) {
@@ -206,15 +237,21 @@ async function runIngestion(source: string, entries: LogEntry[]) {
   let processed = 0;
 
   for (const entry of entries) {
-    if (!entry.domain) continue;
+    // Normalize here (not just in the CSV parser) so JSON ingest and the
+    // real-time webhooks — which hand us raw `entry.domain` values straight
+    // from a proxy/SIEM payload — get the same hostname cleanup before
+    // matching. Otherwise a value like "https://chat.openai.com/c/abc" or
+    // "claude.ai:443" silently fails to match a known tool.
+    const normalizedDomain = normalizeDomain(entry.domain);
+    if (!normalizedDomain) continue;
     processed++;
 
     // Registry match first (high confidence); otherwise fall back to the
     // same low-confidence heuristic the Google Workspace scanner uses, so
     // unknown AI tools seen in DNS/proxy logs surface for review instead of
     // being silently dropped.
-    const registryMatch = matchDomain(entry.domain);
-    const heuristicMatch = registryMatch ? null : matchDomainHeuristic(entry.domain);
+    const registryMatch = matchDomain(normalizedDomain);
+    const heuristicMatch = registryMatch ? null : matchDomainHeuristic(normalizedDomain);
     if (!registryMatch && !heuristicMatch) continue;
 
     const toolName = registryMatch ? registryMatch.toolName : heuristicMatch!.tool.toolName;
