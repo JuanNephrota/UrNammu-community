@@ -30,6 +30,11 @@ export async function getSetting(key: string): Promise<string | null> {
     hexnode_subdomain: process.env.HEXNODE_SUBDOMAIN,
     hexnode_scan_enabled: process.env.HEXNODE_SCAN_ENABLED,
     hexnode_scan_interval_hours: process.env.HEXNODE_SCAN_INTERVAL_HOURS,
+    crowdstrike_client_id: process.env.CROWDSTRIKE_CLIENT_ID,
+    crowdstrike_client_secret: process.env.CROWDSTRIKE_CLIENT_SECRET,
+    crowdstrike_base_url: process.env.CROWDSTRIKE_BASE_URL,
+    crowdstrike_scan_enabled: process.env.CROWDSTRIKE_SCAN_ENABLED,
+    crowdstrike_scan_interval_hours: process.env.CROWDSTRIKE_SCAN_INTERVAL_HOURS,
     gemini_billing_service_account_key:
       process.env.GEMINI_BILLING_SERVICE_ACCOUNT_KEY,
     gemini_billing_project_id: process.env.GEMINI_BILLING_PROJECT_ID,
@@ -140,6 +145,18 @@ export const HEXNODE_SETTINGS_KEYS = {
   SUBDOMAIN: "hexnode_subdomain",
   SCAN_ENABLED: "hexnode_scan_enabled",
   SCAN_INTERVAL_HOURS: "hexnode_scan_interval_hours",
+} as const;
+
+// Keys used by the CrowdStrike Falcon shadow AI integration. Falcon exposes a
+// per-cloud REST API authed via OAuth2 client-credentials (an API client's ID
+// and secret). We enumerate Falcon Discover application inventory to detect AI
+// tools installed across managed endpoints.
+export const CROWDSTRIKE_SETTINGS_KEYS = {
+  CLIENT_ID: "crowdstrike_client_id",
+  CLIENT_SECRET: "crowdstrike_client_secret",
+  BASE_URL: "crowdstrike_base_url",
+  SCAN_ENABLED: "crowdstrike_scan_enabled",
+  SCAN_INTERVAL_HOURS: "crowdstrike_scan_interval_hours",
 } as const;
 
 export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {

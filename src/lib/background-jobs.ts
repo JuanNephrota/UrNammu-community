@@ -19,12 +19,14 @@ import {
   getSetting,
   GOOGLE_SETTINGS_KEYS,
   HEXNODE_SETTINGS_KEYS,
+  CROWDSTRIKE_SETTINGS_KEYS,
   MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
   PROVIDER_SYNC_SETTINGS_KEYS,
 } from "./settings";
 import { isGoogleWorkspaceConfigured } from "./google-workspace";
 import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
 import { isHexnodeConfigured } from "./hexnode";
+import { isCrowdStrikeConfigured } from "./crowdstrike";
 import { evaluateGovernanceAutomation } from "./governance-automation";
 
 type BackgroundActor = string;
@@ -78,6 +80,12 @@ export type ScheduledMaintenanceResult = {
     result?: Awaited<ReturnType<typeof executeScan>>;
   };
   hexnodeScan: {
+    enabled: boolean;
+    due: boolean;
+    skippedReason?: string;
+    result?: Awaited<ReturnType<typeof executeScan>>;
+  };
+  crowdstrikeScan: {
     enabled: boolean;
     due: boolean;
     skippedReason?: string;
@@ -382,17 +390,22 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     microsoftScanIntervalRaw,
     hexnodeScanEnabledRaw,
     hexnodeScanIntervalRaw,
+    crowdstrikeScanEnabledRaw,
+    crowdstrikeScanIntervalRaw,
     latestTelemetryRun,
     latestGoogleScan,
     latestMicrosoftScan,
     latestHexnodeScan,
+    latestCrowdStrikeScan,
     runningTelemetryRun,
     runningGoogleScan,
     runningMicrosoftScan,
     runningHexnodeScan,
+    runningCrowdStrikeScan,
     googleConfigured,
     microsoftConfigured,
     hexnodeConfigured,
+    crowdstrikeConfigured,
     reviewNoticeDaysRaw,
     exceptionNoticeDaysRaw,
     escalationOverdueDaysRaw,
@@ -405,6 +418,8 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
     getSetting(HEXNODE_SETTINGS_KEYS.SCAN_ENABLED),
     getSetting(HEXNODE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
+    getSetting(CROWDSTRIKE_SETTINGS_KEYS.SCAN_ENABLED),
+    getSetting(CROWDSTRIKE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
     prisma.providerSyncRun.findFirst({
       where: {
         syncType: "telemetry",
@@ -416,6 +431,7 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     getLatestCompletedScan("google_workspace"),
     getLatestCompletedScan("microsoft_365"),
     getLatestCompletedScan("hexnode"),
+    getLatestCompletedScan("crowdstrike"),
     prisma.providerSyncRun.findFirst({
       where: {
         syncType: "telemetry",
@@ -448,9 +464,18 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       },
       orderBy: { startedAt: "desc" },
     }),
+    prisma.scanHistory.findFirst({
+      where: {
+        scanType: "crowdstrike",
+        status: "running",
+        startedAt: { gte: tenMinutesAgo },
+      },
+      orderBy: { startedAt: "desc" },
+    }),
     isGoogleWorkspaceConfigured(),
     isMicrosoft365Configured(),
     isHexnodeConfigured(),
+    isCrowdStrikeConfigured(),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.REVIEW_NOTICE_DAYS),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.EXCEPTION_NOTICE_DAYS),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.ESCALATION_OVERDUE_DAYS),
@@ -471,6 +496,14 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
   const hexnodeScanEnabled = parseBooleanSetting(hexnodeScanEnabledRaw, false);
   const hexnodeScanIntervalHours = parseIntervalHours(
     hexnodeScanIntervalRaw,
+    24
+  );
+  const crowdstrikeScanEnabled = parseBooleanSetting(
+    crowdstrikeScanEnabledRaw,
+    false
+  );
+  const crowdstrikeScanIntervalHours = parseIntervalHours(
+    crowdstrikeScanIntervalRaw,
     24
   );
 
@@ -499,6 +532,15 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     isDue(
       latestHexnodeScan?.completedAt ?? null,
       hexnodeScanIntervalHours,
+      now
+    );
+  const crowdstrikeScanDue =
+    crowdstrikeScanEnabled &&
+    crowdstrikeConfigured &&
+    !runningCrowdStrikeScan &&
+    isDue(
+      latestCrowdStrikeScan?.completedAt ?? null,
+      crowdstrikeScanIntervalHours,
       now
     );
 
@@ -556,6 +598,19 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
               ? `Not due yet. Interval is ${hexnodeScanIntervalHours} hour(s).`
               : undefined,
     },
+    crowdstrikeScan: {
+      enabled: crowdstrikeScanEnabled,
+      due: crowdstrikeScanDue,
+      skippedReason: !crowdstrikeScanEnabled
+        ? "CrowdStrike auto-scan is disabled."
+        : !crowdstrikeConfigured
+          ? "CrowdStrike is not configured."
+          : runningCrowdStrikeScan
+            ? "A CrowdStrike scan is already running."
+            : !crowdstrikeScanDue
+              ? `Not due yet. Interval is ${crowdstrikeScanIntervalHours} hour(s).`
+              : undefined,
+    },
     governanceAutomation: {
       reviewRenewals: 0,
       exceptionRenewals: 0,
@@ -583,6 +638,10 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
 
   if (hexnodeScanDue) {
     result.hexnodeScan.result = await executeScan("system", "hexnode");
+  }
+
+  if (crowdstrikeScanDue) {
+    result.crowdstrikeScan.result = await executeScan("system", "crowdstrike");
   }
 
   const reviewNoticeDays = parseIntervalHours(reviewNoticeDaysRaw, 14);
