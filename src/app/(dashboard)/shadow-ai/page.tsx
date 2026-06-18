@@ -53,6 +53,10 @@ type ScanStatus = {
       configured: boolean;
       lastScan: ScanHistorySummary | null;
     };
+    crowdstrike: {
+      configured: boolean;
+      lastScan: ScanHistorySummary | null;
+    };
   };
 };
 
@@ -133,17 +137,22 @@ export default function ShadowAIPage() {
   // parallel.
   async function handleScanAll() {
     const sources = scanStatus?.sources;
-    const providers: { id: "google_workspace" | "microsoft_365" | "hexnode"; label: string }[] = [];
+    const providers: {
+      id: "google_workspace" | "microsoft_365" | "hexnode" | "crowdstrike";
+      label: string;
+    }[] = [];
     if (sources?.googleWorkspace.configured)
       providers.push({ id: "google_workspace", label: "Google Workspace" });
     if (sources?.microsoft365.configured)
       providers.push({ id: "microsoft_365", label: "Microsoft 365" });
     if (sources?.hexnode.configured)
       providers.push({ id: "hexnode", label: "Hexnode" });
+    if (sources?.crowdstrike.configured)
+      providers.push({ id: "crowdstrike", label: "CrowdStrike" });
 
     if (providers.length === 0) {
       setScanResult(
-        "No sources configured. Connect Google Workspace, Microsoft 365, or Hexnode in Settings > Shadow AI."
+        "No sources configured. Connect Google Workspace, Microsoft 365, Hexnode, or CrowdStrike in Settings > Shadow AI."
       );
       return;
     }
@@ -200,12 +209,14 @@ export default function ShadowAIPage() {
         scanStatus.sources.googleWorkspace.configured,
         scanStatus.sources.microsoft365.configured,
         scanStatus.sources.hexnode.configured,
+        scanStatus.sources.crowdstrike.configured,
       ].filter(Boolean).length
     : 0;
 
   function sourceBadgeLabel(source: string) {
     if (source === "google_workspace") return "GOOGLE";
     if (source === "microsoft_365") return "MICROSOFT";
+    if (source === "crowdstrike") return "CROWDSTRIKE";
     return source.replace(/_/g, " ").toUpperCase();
   }
 
@@ -504,6 +515,7 @@ export default function ShadowAIPage() {
                     <option value="google_workspace">Google Workspace</option>
                     <option value="microsoft_365">Microsoft 365</option>
                     <option value="hexnode">Hexnode</option>
+                    <option value="crowdstrike">CrowdStrike</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -562,6 +574,17 @@ export default function ShadowAIPage() {
               <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
                 <Wifi className="h-3.5 w-3.5" />
                 <span>Hexnode not configured</span>
+              </div>
+            )}
+            {scanStatus?.sources?.crowdstrike.configured ? (
+              <div className="flex items-center gap-2 text-xs text-[var(--success)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>CrowdStrike connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
+                <Wifi className="h-3.5 w-3.5" />
+                <span>CrowdStrike not configured</span>
               </div>
             )}
             {scanStatus?.lastScan?.completedAt && (

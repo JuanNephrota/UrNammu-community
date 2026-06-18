@@ -4,6 +4,7 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { isGoogleWorkspaceConfigured } from "@/lib/google-workspace";
 import { isMicrosoft365Configured } from "@/lib/microsoft-365-shadow-ai";
 import { isHexnodeConfigured } from "@/lib/hexnode";
+import { isCrowdStrikeConfigured } from "@/lib/crowdstrike";
 import {
   executeScan,
   type ShadowAIScanProvider,
@@ -20,9 +21,11 @@ export async function GET() {
       googleLastScan,
       microsoftLastScan,
       hexnodeLastScan,
+      crowdstrikeLastScan,
       googleConfigured,
       microsoftConfigured,
       hexnodeConfigured,
+      crowdstrikeConfigured,
     ] = await Promise.all([
       prisma.scanHistory.findFirst({
         orderBy: { createdAt: "desc" },
@@ -39,13 +42,22 @@ export async function GET() {
         where: { scanType: "hexnode" },
         orderBy: { createdAt: "desc" },
       }),
+      prisma.scanHistory.findFirst({
+        where: { scanType: "crowdstrike" },
+        orderBy: { createdAt: "desc" },
+      }),
       isGoogleWorkspaceConfigured(),
       isMicrosoft365Configured(),
       isHexnodeConfigured(),
+      isCrowdStrikeConfigured(),
     ]);
 
     return NextResponse.json({
-      configured: googleConfigured || microsoftConfigured || hexnodeConfigured,
+      configured:
+        googleConfigured ||
+        microsoftConfigured ||
+        hexnodeConfigured ||
+        crowdstrikeConfigured,
       lastScan: lastScan ?? null,
       sources: {
         googleWorkspace: {
@@ -60,6 +72,10 @@ export async function GET() {
           configured: hexnodeConfigured,
           lastScan: hexnodeLastScan ?? null,
         },
+        crowdstrike: {
+          configured: crowdstrikeConfigured,
+          lastScan: crowdstrikeLastScan ?? null,
+        },
       },
     });
   });
@@ -73,7 +89,8 @@ export async function POST(req: Request) {
       if (
         body.provider === "google_workspace" ||
         body.provider === "microsoft_365" ||
-        body.provider === "hexnode"
+        body.provider === "hexnode" ||
+        body.provider === "crowdstrike"
       ) {
         provider = body.provider;
       }
@@ -109,6 +126,17 @@ export async function POST(req: Request) {
           error: "Hexnode not configured",
           details:
             "Configure your Hexnode API key and subdomain in Settings > Shadow AI.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (provider === "crowdstrike" && !(await isCrowdStrikeConfigured())) {
+      return NextResponse.json(
+        {
+          error: "CrowdStrike not configured",
+          details:
+            "Configure your CrowdStrike API client and cloud in Settings > Shadow AI.",
         },
         { status: 400 }
       );

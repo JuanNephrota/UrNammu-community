@@ -6,12 +6,17 @@ import {
   runMicrosoft365Scan,
 } from "./microsoft-365-shadow-ai";
 import { isHexnodeConfigured, runHexnodeScan } from "./hexnode";
+import {
+  isCrowdStrikeConfigured,
+  runCrowdStrikeScan,
+} from "./crowdstrike";
 import { findMatchingGovernedSystem } from "./governed-system-match";
 
 export type ShadowAIScanProvider =
   | "google_workspace"
   | "microsoft_365"
-  | "hexnode";
+  | "hexnode"
+  | "crowdstrike";
 
 interface ScanResult {
   scanId: string;
@@ -49,6 +54,10 @@ export async function executeScan(
     throw new Error("Hexnode not configured.");
   }
 
+  if (provider === "crowdstrike" && !(await isCrowdStrikeConfigured())) {
+    throw new Error("CrowdStrike not configured.");
+  }
+
   // Use existing scan record or create a new one
   const scanId =
     existingScanId ??
@@ -68,7 +77,9 @@ export async function executeScan(
         ? await runFullScan()
         : provider === "hexnode"
           ? await runHexnodeScan()
-          : await runMicrosoft365Scan();
+          : provider === "crowdstrike"
+            ? await runCrowdStrikeScan()
+            : await runMicrosoft365Scan();
 
     let newToolsAdded = 0;
     let updatedTools = 0;
@@ -123,7 +134,9 @@ export async function executeScan(
             ? `Auto-discovered via Google Workspace scan. ${discovery.userCount} user(s) authorized this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`
             : provider === "hexnode"
               ? `Auto-discovered via Hexnode device scan. Found on ${discovery.userCount} managed device(s).${discovery.notes ? ` ${discovery.notes}` : ""}`
-              : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`;
+              : provider === "crowdstrike"
+                ? `Auto-discovered via CrowdStrike endpoint scan. Detected on ${discovery.userCount} managed endpoint(s).${discovery.notes ? ` ${discovery.notes}` : ""}`
+                : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`;
 
         let tool;
         try {
@@ -183,7 +196,9 @@ export async function executeScan(
                   ? `${discovery.toolName} (${discovery.vendor}) discovered via Google Workspace OAuth scan. ${discovery.userCount} user(s) have authorized this tool.`
                   : provider === "hexnode"
                     ? `${discovery.toolName} (${discovery.vendor}) discovered via Hexnode device scan. Installed on ${discovery.userCount} managed device(s).`
-                    : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
+                    : provider === "crowdstrike"
+                      ? `${discovery.toolName} (${discovery.vendor}) discovered via CrowdStrike Falcon endpoint scan. Installed on ${discovery.userCount} managed endpoint(s).`
+                      : `${discovery.toolName} (${discovery.vendor}) discovered via Microsoft 365 delegated-app scan. ${discovery.userCount} user(s) appear connected to this tool.`,
               severity: discovery.userCount >= 10 ? "HIGH" : "MEDIUM",
               source: "shadow_ai",
               relatedToolId: tool.id,

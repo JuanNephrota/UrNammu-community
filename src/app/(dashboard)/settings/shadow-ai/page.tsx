@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { Building2, Clock, Search, Smartphone } from "lucide-react";
+import { Building2, Clock, Search, ShieldAlert, Smartphone } from "lucide-react";
 import { requireRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleWorkspaceSettings } from "../google-workspace-settings";
 import { HexnodeSettings } from "../hexnode-settings";
+import { CrowdStrikeSettings } from "../crowdstrike-settings";
 import { NetskopeSettings } from "../netskope-settings";
 import { getSettingsPageData } from "../data";
 
@@ -19,32 +20,41 @@ export default async function ShadowAISettingsPage() {
       orderBy: { completedAt: "desc" },
     }),
   ]);
-  const [lastGoogleScan, lastMicrosoftScan, lastHexnodeScan] = await Promise.all([
-    prisma.scanHistory.findFirst({
-      where: {
-        scanType: "google_workspace",
-        status: "completed",
-        completedAt: { not: null },
-      },
-      orderBy: { completedAt: "desc" },
-    }),
-    prisma.scanHistory.findFirst({
-      where: {
-        scanType: "microsoft_365",
-        status: "completed",
-        completedAt: { not: null },
-      },
-      orderBy: { completedAt: "desc" },
-    }),
-    prisma.scanHistory.findFirst({
-      where: {
-        scanType: "hexnode",
-        status: "completed",
-        completedAt: { not: null },
-      },
-      orderBy: { completedAt: "desc" },
-    }),
-  ]);
+  const [lastGoogleScan, lastMicrosoftScan, lastHexnodeScan, lastCrowdStrikeScan] =
+    await Promise.all([
+      prisma.scanHistory.findFirst({
+        where: {
+          scanType: "google_workspace",
+          status: "completed",
+          completedAt: { not: null },
+        },
+        orderBy: { completedAt: "desc" },
+      }),
+      prisma.scanHistory.findFirst({
+        where: {
+          scanType: "microsoft_365",
+          status: "completed",
+          completedAt: { not: null },
+        },
+        orderBy: { completedAt: "desc" },
+      }),
+      prisma.scanHistory.findFirst({
+        where: {
+          scanType: "hexnode",
+          status: "completed",
+          completedAt: { not: null },
+        },
+        orderBy: { completedAt: "desc" },
+      }),
+      prisma.scanHistory.findFirst({
+        where: {
+          scanType: "crowdstrike",
+          status: "completed",
+          completedAt: { not: null },
+        },
+        orderBy: { completedAt: "desc" },
+      }),
+    ]);
 
   return (
     <div className="space-y-6">
@@ -57,8 +67,9 @@ export default async function ShadowAISettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
-            Manage Google Workspace, Microsoft 365, and Hexnode UEM discovery settings for shadow AI
-            detection, including admin credentials, tenant apps, device inventory, and automated scan cadence.
+            Manage Google Workspace, Microsoft 365, Hexnode UEM, and CrowdStrike Falcon discovery settings
+            for shadow AI detection, including admin credentials, tenant apps, device and endpoint inventory,
+            and automated scan cadence.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Button variant="outline" asChild>
@@ -112,7 +123,7 @@ export default async function ShadowAISettingsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-4">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -175,6 +186,27 @@ export default async function ShadowAISettingsPage() {
             )}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlert className="h-4 w-4 text-[var(--accent)]" />
+              CrowdStrike Falcon
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lastCrowdStrikeScan ? (
+              <p className="text-sm text-[var(--text-secondary)]">
+                Last completed {lastCrowdStrikeScan.completedAt?.toLocaleString("en-US")} with{" "}
+                {lastCrowdStrikeScan.toolsFound} tools found and {lastCrowdStrikeScan.newToolsAdded} new.
+              </p>
+            ) : (
+              <p className="text-sm text-[var(--text-muted)]">
+                No successful CrowdStrike scan recorded yet.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <NetskopeSettings
@@ -200,6 +232,14 @@ export default async function ShadowAISettingsPage() {
         subdomain={settingsMap.hexnode_subdomain ?? ""}
         scanEnabled={settingsMap.hexnode_scan_enabled === "true"}
         scanIntervalHours={parseInt(settingsMap.hexnode_scan_interval_hours ?? "24", 10)}
+      />
+
+      <CrowdStrikeSettings
+        clientId={settingsMap.crowdstrike_client_id ?? ""}
+        hasClientSecret={!!settingsMap.crowdstrike_client_secret}
+        baseUrl={settingsMap.crowdstrike_base_url ?? ""}
+        scanEnabled={settingsMap.crowdstrike_scan_enabled === "true"}
+        scanIntervalHours={parseInt(settingsMap.crowdstrike_scan_interval_hours ?? "24", 10)}
       />
     </div>
   );
