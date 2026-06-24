@@ -355,6 +355,47 @@ model ScanHistory {
   createdAt     DateTime  @default(now())
 }
 
+// ─── Provider Security & Privacy Posture Scan ───────────
+// Audits how each configured AI provider is wired for secure use and privacy:
+// local config hygiene (proxy secret, TLS endpoints, credentials), vendor
+// governance facts (security review, data residency, subprocessors, contract),
+// known-provider privacy defaults (training-on-data, ZDR), plus best-effort
+// live verification against provider admin APIs. Higher score = better posture.
+model ProviderSecurityScan {
+  id               String                   @id @default(cuid())
+  status           String                   @default("running") // running | completed | failed
+  providersScanned Int                      @default(0)
+  findingsFound    Int                      @default(0) // failed checks across all providers
+  criticalCount    Int                      @default(0) // failed CRITICAL/HIGH checks
+  errorMessage     String?                  @db.Text
+  triggeredBy      String
+  startedAt        DateTime                 @default(now())
+  completedAt      DateTime?
+  createdAt        DateTime                 @default(now())
+  results          ProviderSecurityResult[]
+}
+
+model ProviderSecurityResult {
+  id                 String   @id @default(cuid())
+  provider           String // anthropic | openai | gemini | openrouter | helicone | portkey | litellm | cursor
+  overallScore       Float    @default(0) // 0-100, higher = better posture
+  grade              String   @default("F") // A | B | C | D | F
+  dataHandlingScore  Float    @default(0)
+  retentionScore     Float    @default(0)
+  trainingUseScore   Float    @default(0)
+  encryptionScore    Float    @default(0)
+  accessControlScore Float    @default(0)
+  residencyScore     Float    @default(0)
+  liveChecksRan      Boolean  @default(false) // a live API read contributed to this result
+  checks             Json // full per-check outcomes (status, severity, verification, remediation)
+  scan               ProviderSecurityScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scanId             String
+  createdAt          DateTime @default(now())
+
+  @@index([scanId])
+  @@index([provider])
+}
+
 // ─── Sensitive-Information Scanning ─────────────────────
 // Active leakage probing of the live, reachable AI endpoints (LiteLLM, the
 // active provider, Portkey-if-routable) plus inline DLP on model responses.

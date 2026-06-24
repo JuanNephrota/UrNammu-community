@@ -9,6 +9,7 @@ import {
   Bot,
   Search,
   ShieldAlert,
+  ShieldCheck,
   Eye,
   FileCheck,
   Bell,
@@ -49,6 +50,7 @@ const navItems = [
     items: [
       { name: "Shadow AI", href: "/shadow-ai", icon: Search },
       { name: "Sensitive Scan", href: "/sensitive-scan", icon: ScanSearch },
+      { name: "Provider Security", href: "/oversight/provider-security", icon: ShieldCheck },
       { name: "Risk Center", href: "/risk-center", icon: ShieldAlert },
       { name: "AI Oversight", href: "/oversight", icon: Eye },
       { name: "Investigations", href: "/oversight/investigations", icon: Bell },
