@@ -43,6 +43,9 @@ export async function getSetting(key: string): Promise<string | null> {
     gemini_billing_location: process.env.GEMINI_BILLING_LOCATION,
     provider_sync_enabled: process.env.PROVIDER_SYNC_ENABLED,
     provider_sync_interval_hours: process.env.PROVIDER_SYNC_INTERVAL_HOURS,
+    provider_security_scan_enabled: process.env.PROVIDER_SECURITY_SCAN_ENABLED,
+    provider_security_scan_interval_hours:
+      process.env.PROVIDER_SECURITY_SCAN_INTERVAL_HOURS,
     anomaly_recent_window_days: process.env.ANOMALY_RECENT_WINDOW_DAYS,
     anomaly_baseline_window_days: process.env.ANOMALY_BASELINE_WINDOW_DAYS,
     anomaly_min_recent_tokens: process.env.ANOMALY_MIN_RECENT_TOKENS,
@@ -170,6 +173,14 @@ export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
 export const PROVIDER_SYNC_SETTINGS_KEYS = {
   ENABLED: "provider_sync_enabled",
   INTERVAL_HOURS: "provider_sync_interval_hours",
+} as const;
+
+// Provider security & privacy posture scan. Audits each configured provider's
+// secure-use/privacy configuration. ENABLED gates the scheduled (cron) run;
+// manual runs from the UI ignore it.
+export const PROVIDER_SECURITY_SCAN_SETTINGS_KEYS = {
+  ENABLED: "provider_security_scan_enabled",
+  INTERVAL_HOURS: "provider_security_scan_interval_hours",
 } as const;
 
 // Maps each provider's admin-sync'd UsageBucket rows to a registered AISystem
