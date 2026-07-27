@@ -75,7 +75,7 @@
     "next-auth": "^4.24.14",
     "openai": "^6.34.0",
     "prisma": "^6.19.3",
-    "react": "19.2.7",
+    "react": "19.2.8",
     "react-dom": "19.2.7",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.5.0",
