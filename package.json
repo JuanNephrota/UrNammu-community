@@ -1,6 +1,6 @@
 {
   "name": "urnammu",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI Governance & Compliance Platform — centralized oversight of AI systems, agents, and API usage",
   "author": "JuanNephrota",
   "license": "MIT",
@@ -19,6 +19,8 @@
     "test": "tsx --test src/**/*.test.ts",
     "check:secrets": "bash scripts/check-secrets.sh",
     "check:schema-drift": "node scripts/check-schema-drift.mjs",
+    "check:help-drift": "node scripts/gen-help-content.mjs --check",
+    "help:sync": "node scripts/gen-help-content.mjs",
     "db:migrate": "npx prisma migrate dev",
     "db:deploy": "npx prisma migrate deploy",
     "db:seed": "npx tsx prisma/seed.ts",

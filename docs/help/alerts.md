@@ -26,6 +26,7 @@ Centralized alert inbox for governance signals.
 - `cost_anomaly` — spend crossed a budget or anomaly threshold.
 - `ownership_escalation` — system has no owner assigned.
 - `dangerous_prompt` — proxy-scanned traffic matched a risky prompt pattern.
+- `key_usage_rule` — an API key's usage tripped a key usage rule.
 
 ## Dangerous prompt alerts
 
@@ -41,9 +42,9 @@ When traffic flows through the proxy, prompts are analyzed for jailbreak attempt
 
 If a dangerous prompt alert is benign (e.g. legitimate security testing), click **False Positive**:
 
-1. Enter a reason explaining why it is a false positive.
-2. Optionally check **Create exception** to suppress similar future alerts for the matched categories.
-3. The alert is dismissed and tagged with a "False Positive" badge.
+- Enter a reason explaining why it is a false positive.
+- Optionally check **Create exception** to suppress similar future alerts for the matched categories.
+- The alert is dismissed and tagged with a "False Positive" badge.
 
 Manage exceptions at **Alerts → Manage prompt risk exceptions**. Exceptions can be deactivated or reactivated. The system only suppresses alert creation — usage is still logged for audit.
 
@@ -61,6 +62,28 @@ Five built-in rules are seeded on install. Built-ins can be edited, disabled, or
 Patterns are validated on save: they must compile as JavaScript regex, fit within 500 chars, and not contain obvious ReDoS shapes (e.g. `(.*)+`). A short probe string is run against each pattern; patterns that take more than 50 ms are rejected.
 
 Use the **Test a prompt** panel on the rules page to dry-run a prompt against the current enabled ruleset without creating an alert. Rule changes take effect within 30 seconds (runtime cache) or immediately on mutation.
+
+## Key usage rules
+
+Where dangerous-prompt rules inspect **what** is being asked, key usage rules watch **how a credential behaves**. Manage them at **Alerts → Key usage rules**. Each rule evaluates provider telemetry per API key and raises a `key_usage_rule` alert.
+
+Seven condition types are available:
+
+- `VOLUME_THRESHOLD` — absolute tokens, cost, or requests over a window past a ceiling.
+- `SPIKE_MULTIPLIER` — a recent window compared against the immediately preceding baseline window.
+- `NEW_KEY` — a key seen for the first time, with non-trivial volume.
+- `DORMANT_REACTIVATION` — a key idle for N days that started transacting again.
+- `OFF_HOURS` — activity outside declared business hours and days. Requires hourly buckets.
+- `MODEL_ALLOWLIST` — a key used a model outside its allowlist.
+- `FAN_OUT` — a key suddenly spanning more distinct projects or actors than expected.
+
+Eight rules ship enabled by default, covering spend spikes, token spikes, a daily spend ceiling, first-time key activity, dormant reactivation, off-hours use, non-approved models, and project fan-out.
+
+Rule keys are **immutable** once created, because alert dedupe references them. Built-in rules can be edited, disabled, or reset to their original definition; custom rules can be created and deleted freely.
+
+Use **Preview** before enabling a rule — it dry-runs the config against recorded telemetry and reports the findings it **would** have raised plus how many keys were evaluated. It writes nothing: no alerts, no profile updates. This is the fastest way to catch a threshold that would bury you in alerts. **Reset** restores a built-in to its shipped defaults.
+
+Off-hours rules carry an explicit timezone offset and business-day list. Set these deliberately: the default will not match a distributed team, and a mis-set timezone makes every normal working day look like off-hours activity.
 
 ## Severity
 

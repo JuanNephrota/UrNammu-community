@@ -26,7 +26,7 @@ Each score requires a justification so later reviewers can re-evaluate it.
 
 ## Running an assessment
 
-Pick a template (Copilot / Vendor SaaS / Autonomous Agent / Customer-Facing AI) → score the dimensions or click **AI Suggest** → answer branching questions → review control gaps → save. The system's overall risk level updates automatically.
+Pick a template (Copilot / Vendor AI SaaS / Autonomous Agent / Customer-Facing AI) → score the dimensions or click **AI Suggest** → answer branching questions → review control gaps → save. The system's overall risk level updates automatically.
 
 ## Reassessment cadence
 

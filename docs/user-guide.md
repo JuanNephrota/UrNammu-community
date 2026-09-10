@@ -20,14 +20,19 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [Policy Denials Viewer](#policy-denials-viewer)
 8. [Governance Workflows](#8-governance-workflows)
 9. [Shadow AI Discovery](#9-shadow-ai-discovery)
+    - [Enforcing a Block](#enforcing-a-block)
 10. [Oversight (Telemetry & Cost)](#10-oversight-telemetry--cost)
     - [Claude Platform / API](#claude-platform--api)
     - [Claude Code Oversight](#claude-code-oversight)
+    - [Session Traces](#session-traces)
     - [Cowork Oversight](#cowork-oversight)
     - [Cursor Oversight](#cursor-oversight)
     - [Proxy Health](#proxy-health)
+    - [Provider Security & Privacy Scan](#provider-security--privacy-scan)
+    - [Sensitive Scan](#10a-sensitive-scan)
 11. [Reports](#11-reports)
 12. [Alerts](#12-alerts)
+    - [Key Usage Rules](#key-usage-rules)
 13. [Settings Reference](#13-settings-reference)
 14. [Integrations](#14-integrations)
 15. [Background Automation](#15-background-automation)
@@ -502,14 +507,17 @@ Incidents track notable events (misuse, data exposure, outage). Create from the 
 1. **Google Workspace** — scans OAuth activity for AI apps that users have connected.
 2. **Microsoft 365** — scans delegated app permissions against known AI tools.
 3. **Hexnode UEM/MDM** — scans the app inventory of enrolled/managed devices and cross-references installed apps against known AI tools.
-4. **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
-5. **Netskope** — real-time log-shipper ingestion of Netskope event JSON (no manual upload needed).
+4. **CrowdStrike Falcon** — endpoint discovery for AI tools observed running on Falcon-protected hosts.
+5. **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
+6. **Netskope** — real-time log-shipper ingestion of Netskope event JSON (no manual upload needed).
+
+The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and can only be caught by device inventory or network logs — the sources are complementary, not redundant.
 
 Discovered entries are deduplicated by `toolName + domain`. Each finding becomes a `DiscoveredAITool` record.
 
 ### Running a Scan
 
-- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/3)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `success` / `failed`). Sources that aren't configured are skipped.
+- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/4)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `success` / `failed`). Sources that aren't configured are skipped.
 - **Automatic**: configured in Settings → Shadow AI per source. A cron job at `/api/scheduler/maintenance` triggers scans on each source's configured interval (default 24 hours).
 
 ### Importing DNS / Proxy Logs
@@ -574,10 +582,39 @@ On a tool's row in "Needs Review":
 - **Convert to Governed System** — navigates to the full system creation form with every field pre-populated (see *AI-assisted auto-fill* below).
 - **Register & Assess** — auto-creates an AISystem with AI-inferred fields (use case, model type, data inputs / outputs, risk level, sensitivity) and routes directly to the risk assessment form.
 - **Approve** — permit its use without adding to the Registry.
-- **Block** — indicate it is not allowed; this is an organizational signal, not a technical block.
+- **Block** — mark the tool as not allowed. This records the decision *and*, where an enforcement layer is configured, actually enforces it — see [Enforcing a Block](#enforcing-a-block) below.
 - **Dismiss** — suppress the discovery with a required reason (e.g. "false positive", "approved shadow usage", "not an AI tool"). Same mechanism as low-confidence dismissal — a `DismissedCandidate` record is created and future scans will not resurface it.
 
 New high-confidence discoveries auto-create alerts for admins to triage. Dismissed candidates are permanently suppressed — the scan executor checks the `DismissedCandidate` table before creating new records.
+
+### Enforcing a Block
+
+UrNammu is not in your network path, so a `BLOCKED` status only stops something if one of two enforcement layers is wired up. Both are optional and they cover different gaps.
+
+**Network layer — blocklist feed.** Blocked tools' domains are published on an authenticated feed that an external control polls and enforces:
+
+```
+GET /api/discovered-tools/blocklist?format=hosts
+Authorization: Bearer <feed token>
+```
+
+Formats: `text` (bare domains, default), `hosts` (`0.0.0.0 domain`), `json` (with metadata), and `pac` (proxy auto-config). Point a DNS sinkhole, proxy ACL, firewall URL list, or CASB at it. Responses are briefly cacheable but must revalidate, so an unblock propagates in about a minute.
+
+Generate the token in **Settings → Shadow AI**. The feed **fails closed**: with no token set it returns `503` rather than serving an unauthenticated list of what your organization blocks.
+
+**Identity layer — disable the app at the IdP.** Where a tool is federated to Google Workspace or Microsoft 365 and the scan captured an app handle, blocking disables the app so sign-ins stop. Outcomes you may see:
+
+| Result | Meaning |
+|--------|---------|
+| `blocked` / `unblocked` | Access disabled or restored at the IdP. |
+| `skipped` | No app handle was captured, so there is nothing to target. |
+| `not_configured` | That provider integration is not set up. |
+| `unsupported` | The provider cannot be enforced programmatically yet. |
+| `failed` | The IdP call errored — most often a missing admin permission. |
+
+Microsoft app-disable requires admin consent for the app-management Graph permission. Without it you get `failed`, not silence.
+
+**Settings → Shadow AI** shows a readiness summary for both layers. If neither is configured, a block remains a documented, auditable decision — and nothing more. Knowing which of those two situations you are in matters.
 
 ### AI-assisted auto-fill on conversion
 
@@ -798,6 +835,19 @@ Prompt and code text are stripped at ingest — only metadata, decisions, and da
 - Search by user, session, tool, model, error type, decision, or event name.
 - Filter by event type, risk level (flagged/critical/warning), and surface.
 
+#### Session Traces
+
+**Governance → Claude Code → Session Traces** reconstructs an individual session as turns, model calls, and tool use in execution order, rendered as a waterfall. It answers "what actually happened in this session", which the flat event log cannot.
+
+- Each span carries a status of `ok`, `error`, `denied`, or `flagged`, so a denied tool call or a policy block is visible in place.
+- Turns are summarized, and long idle gaps are compressed in the rendering so a session someone left open over lunch stays readable.
+- Traces cover a rolling 30-day window and are paginated.
+
+Two caveats worth knowing before you use durations as evidence:
+
+- Spans are **derived from event timing**, not emitted as spans by the client. Treat them as close approximations, not instrumented measurements.
+- As everywhere in this pipeline, traces are metadata only — no prompt text and no code content.
+
 ### Cowork Oversight
 
 **Governance → Cowork** is the same analytics view as Claude Code, scoped to the **Claude Cowork / Desktop (local-agent) surface** only. Use it to see Cowork session activity, decisions, per-user cost, and recent events separately from terminal Claude Code usage.
@@ -832,6 +882,65 @@ Azure Monitor snapshots are pulled on demand (admin button) or on the maintenanc
 - **Sortable columns** — click any column header to sort ascending or descending. Useful for quickly finding the most expensive provider or the one with the most incidents.
 
 The risk tier is calculated from a weighted score: incidents × 10 + alerts × 3 + high-risk systems × 5 + exceptions × 2. Thresholds: ≥ 30 = CRITICAL, ≥ 15 = HIGH, ≥ 5 = MEDIUM, < 5 = LOW.
+
+### Provider Security & Privacy Scan
+
+**Oversight → Provider Security** audits how each configured provider is *set up*, rather than how much it is used. Where Provider Posture asks "what is this provider costing and breaking", this asks "is this provider configured in a way we could defend in a review".
+
+Each provider is evaluated against a rule set, with each result reported as `pass`, `warn`, `fail`, or `UNKNOWN`:
+
+| Rule | Checks |
+|------|--------|
+| `credentials_encrypted` | Stored credentials are encrypted at rest. |
+| `live_credential` | The configured credential actually authenticates. |
+| `tls_endpoint` | The endpoint uses TLS. |
+| `proxy_secret` | A proxy access secret is configured. |
+| `no_training_on_data` | Submitted data is not used for model training. |
+| `data_retention` | Prompt/response retention is controlled, or zero/short retention is available. |
+| `data_residency` | Data residency is configured. |
+| `security_review` | A security review is recorded for the vendor. |
+| `contract_status` | Contract posture is current. |
+| `subprocessors` | Subprocessors are documented. |
+
+`UNKNOWN` is meaningful and is not the same as a pass: it means the scan could not determine the answer, usually because the vendor profile is incomplete. Several rules read from **Vendor Governance**, so filling in vendor contract, residency, and subprocessor data improves these results directly.
+
+The scan runs daily on its own cron and can be triggered on demand.
+
+---
+
+## 10a. Sensitive Scan
+
+**Sidebar → Sensitive Scan** covers two related defenses against sensitive data leaving — or coming back out of — your AI tools.
+
+### Active probing
+
+UrNammu sends crafted prompts to the AI gateways you have configured (**OpenRouter**, **Helicone**, **Portkey**, **LiteLLM**) and checks whether they leak something they should have refused. Four probes:
+
+| Probe | Category | Severity if leaked |
+|-------|----------|--------------------|
+| System prompt extraction | `prompt_disclosure` | Critical |
+| Credential / secret recall | `secret_disclosure` | Critical |
+| PII recall | `pii_disclosure` | Critical |
+| Training-data exfiltration | `data_exfiltration` | Warning |
+
+Each target is recorded with a status — `probed`, `skipped` (not configured), or `error` — and a finding count. Note the difference between `probed` with zero findings and `skipped`: the first is a clean result, the second was never tested.
+
+Probes run daily on a cron as well as on demand, so a gateway that quietly changes its retention or system-prompt handling gets caught without anyone remembering to check.
+
+### Inline response DLP
+
+Independently of probing, proxy traffic is inspected in both directions against four built-in detectors:
+
+- **Secret or credential extraction attempt** — the prompt is fishing for credentials.
+- **Sensitive data exfiltration attempt** — the prompt is trying to move sensitive data out.
+- **Sensitive data pasted into prompt** — a user pasted sensitive material *in*. Usually the most common finding, and usually careless rather than malicious.
+- **API key or token present** — a live-looking key or token appears in the text.
+
+Matches become findings linked to an alert. Excerpts are redacted before storage: UrNammu keeps the matched shape and a sanitized snippet, never the full prompt or response.
+
+### Reading a finding
+
+Treat a finding as a lead, not a verdict. A gateway may legitimately echo a system prompt you wrote yourself, and a detector may match a documentation example that merely looks like a key. Confirm before escalating, and close out genuine non-issues so the noise does not train your team to skim past the real ones.
 
 ---
 
@@ -888,6 +997,7 @@ Every alert has a `source` string indicating what generated it:
 | `cost_anomaly` | Spend crossed a budget or anomaly threshold. |
 | `ownership_escalation` | System has no owner assigned. |
 | `dangerous_prompt` | Proxy-scanned traffic matched a risky prompt pattern. |
+| `key_usage_rule` | An API key's usage tripped a key usage rule. |
 
 ### Working an Alert
 
@@ -904,6 +1014,40 @@ Top-of-page links on `/alerts`:
 
 - **Tune detection rules** (`/alerts/prompt-rules`) — manage the rule engine that produces `dangerous_prompt` alerts. See [Tuning Detection Rules](#tuning-detection-rules).
 - **Manage prompt risk exceptions** (`/alerts/exceptions`) — review and deactivate per-rule suppression exceptions created via False Positive marking.
+- **Key usage rules** (`/alerts/key-usage-rules`) — manage the rule engine that produces `key_usage_rule` alerts. See [Key Usage Rules](#key-usage-rules).
+
+### Key Usage Rules
+
+Prompt-risk rules watch **what is being asked**. Key usage rules watch **how a credential behaves** — useful for catching a leaked or misappropriated API key, which looks perfectly normal at the prompt level.
+
+Rules evaluate provider telemetry per API key, once an hour as part of the maintenance pass.
+
+#### Condition types
+
+| Condition | Fires when |
+|-----------|-----------|
+| `VOLUME_THRESHOLD` | Absolute tokens, cost, or requests over a window pass a ceiling. |
+| `SPIKE_MULTIPLIER` | A recent window exceeds the preceding baseline window by a multiplier. |
+| `NEW_KEY` | A key is seen for the first time with non-trivial volume. |
+| `DORMANT_REACTIVATION` | A key idle for N days starts transacting again. |
+| `OFF_HOURS` | Activity falls outside declared business hours and days. |
+| `MODEL_ALLOWLIST` | A key uses a model outside its allowlist. |
+| `FAN_OUT` | A key suddenly spans more distinct projects or actors than expected. |
+
+#### Built-in rules
+
+Eight rules ship enabled: API key spend spike, token volume spike, daily spend ceiling, new key activity, dormant key reactivated, off-hours activity, non-approved model use, and project fan-out.
+
+Built-ins can be edited, disabled, or **Reset** to their shipped definition, but not deleted. Custom rules can be created and deleted freely.
+
+#### Before you enable a rule
+
+Use **Preview**. It dry-runs the configuration against recorded telemetry and reports the findings it *would* have raised and how many keys it evaluated, writing nothing — no alerts, no profile updates. This is the difference between a useful rule and an inbox no one reads.
+
+Two things to set deliberately:
+
+- **Rule keys are immutable** once created, because alert deduplication references them.
+- **Off-hours rules** carry an explicit timezone offset and business-day list. The default will not match a distributed team, and a mis-set timezone makes every ordinary working day look like off-hours activity.
 
 ---
 
@@ -960,8 +1104,11 @@ Add this to `~/.zshrc` or `~/.bashrc`. The managed settings and per-user setting
 - **Google Workspace**: service account JSON (encrypted), admin email, enable auto-scan, scan interval, lookback days, test connection, last scan status.
 - **Microsoft 365**: tenant ID, client ID, client secret, enable auto-scan, scan interval, test connection, last scan status.
 - **Hexnode UEM/MDM**: Hexnode API key + subdomain, enable auto-scan, scan interval, test connection, last scan status.
+- **CrowdStrike Falcon**: API client ID + secret + region base URL, enable auto-scan, scan interval, test connection, last scan status.
 - **Netskope**: the log-shipper webhook URL (secured by the proxy secret) for streaming Netskope events.
 - **DNS / proxy import**: a CSV uploader and the JSON endpoint documentation.
+- **Blocklist feed**: the Bearer token for the network denylist feed, with a generator for a random 64-character value. The feed fails closed — with no token set it returns `503` rather than serving unauthenticated.
+- **Enforcement readiness**: a summary of whether a `BLOCKED` decision can actually be enforced, across three checks — *Identity — Google Workspace*, *Identity — Microsoft 365 (Entra)*, and *Network — Blocklist feed*. See [Enforcing a Block](#enforcing-a-block).
 
 ### 13.6 Integrations
 
@@ -1043,7 +1190,7 @@ Hexnode MDM scripts can also be used to roll out the Claude Code / Cursor OTel h
 
 ## 15. Background Automation
 
-UrNammu has a single cron endpoint that runs every hour on Vercel (or external cron) and fans out to individual jobs.
+UrNammu has one hourly cron endpoint that fans out to most background jobs, plus a handful of dedicated crons for work that needs its own cadence. All are guarded by `CRON_SECRET` and wired in `vercel.json`.
 
 ### `GET /api/scheduler/maintenance`
 
@@ -1057,10 +1204,22 @@ UrNammu has a single cron endpoint that runs every hour on Vercel (or external c
   - Google Workspace shadow-AI scan
   - Microsoft 365 shadow-AI scan
   - Hexnode UEM device scan
+  - CrowdStrike Falcon endpoint scan
   - Azure Monitor proxy-health snapshot
+  - Key usage rule evaluation (see [Key Usage Rules](#key-usage-rules))
   - Governance automation (below)
 
-Several jobs have their own dedicated cron routes as well (e.g. `/api/cron/run-report-schedules`, `/api/cron/prune-claude-code-metrics`, `/api/cron/prune-cursor-metrics`), all guarded by `CRON_SECRET` and wired in `vercel.json`. Scheduled report email delivery runs from `run-report-schedules`; the prune jobs enforce OTel telemetry retention.
+Two implementation details you may notice in practice: scans stuck in `running` for more than ten minutes are marked failed at the start of each pass, and key usage evaluation runs last inside its own error boundary, so a badly configured rule cannot take down the rest of the maintenance run.
+
+### Dedicated crons
+
+| Endpoint | Schedule | Purpose |
+|----------|----------|---------|
+| `/api/cron/run-report-schedules` | every 15 min | Sends due scheduled reports. |
+| `/api/cron/sensitive-scan` | daily | Probes gateways for data leakage (see [Sensitive Scan](#10a-sensitive-scan)). |
+| `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy config. |
+| `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
+| `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
 
 Admins can trigger the endpoint manually for testing (e.g., `curl` with the `CRON_SECRET`).
 

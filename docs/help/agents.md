@@ -21,4 +21,9 @@ JSON list of conditions that force a human step — e.g. "dollar amount > $1000"
 
 ## AI-assisted risk review
 
-On the agent detail page, **Run Risk Review** calls the configured AI provider with the agent's capabilities, autonomy, triggers, and connected systems, and returns a recommended risk tier, written summary, concerns, and recommendations. The AI suggestion is a starting point — the human reviewer makes the final call.
+The **AI Agent Risk Review** card on the agent detail page shows two things side by side:
+
+- A **heuristic** recommended risk level, computed locally from the agent's autonomy, capabilities, and connected systems. It is always present, with no AI call. A **Dedicated review suggested** badge appears when the heuristic thinks the agent warrants a full assessment.
+- An **AI review**, produced on demand with **Generate AI Review** (**Refresh AI Review** once one exists). This calls the configured AI provider with the agent's capabilities, autonomy, triggers, and connected systems, and returns a recommended risk tier, written summary, concerns, and recommendations.
+
+Both are starting points. The human reviewer makes the final call, and a formal risk assessment in the **Risk Center** is what actually sets the agent's recorded risk level.

@@ -11,9 +11,13 @@ The dashboard is your daily home screen for governance. Use it to triage open wo
 - **Remediation status** — clickable summary cards for open alerts, investigations, compliance issues, risk issues, renewal alerts, and ownership escalations. Each routes to the relevant page.
 - **Automated governance recommendations** — AI-generated next-best-action suggestions per system, linked to the registry.
 
+## Dashboard vs. Executive Dashboard
+
+This page is a **working queue** — it exists to be cleared. The **Executive Dashboard** presents the same underlying data as a board-ready posture narrative with a weighted governance score and period-over-period deltas. Use this page to do the work; use that one to report on it.
+
 ## Where to start
 
-- **Admins**: check **Settings → Provider Admin APIs** and **Settings → Shadow AI** first so telemetry and discovery are flowing.
+- **Admins**: check **Settings → Provider Admin APIs** and **Settings → Shadow AI** first so telemetry and discovery are flowing. **Integrations** shows at a glance what is still unconnected.
 - **Compliance officers**: work the governance queue top-down and triage open alerts.
 - **Viewers**: browse the Registry and Risk Center to read the current state.
 
@@ -22,3 +26,4 @@ The dashboard is your daily home screen for governance. Use it to triage open wo
 - Click any stat card or remediation card to drill into that module.
 - The **Needs Review** count only includes high-confidence `DISCOVERED` shadow-AI tools — low-confidence candidates have their own review queue.
 - The **Executive posture chart** reflects overall compliance + risk + approval health; drift shows up here first.
+- An empty **Telemetry** or cost figure usually means attribution headers are not reaching the proxy, not that nothing is being spent. **Proxy Health** will tell you whether the proxy is writing at all.

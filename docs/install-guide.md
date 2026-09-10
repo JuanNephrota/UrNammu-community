@@ -180,7 +180,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `CRON_SECRET` | Bearer token for `/api/scheduler/maintenance`. | — |
+| `CRON_SECRET` | Bearer token for the maintenance endpoint and every `/api/cron/*` job. | — |
 | `PROXY_SECRET` | Shared secret for the AI proxy (`ai-proxy/`). | — |
 
 ### 3.3 Auth providers (optional — can also live in Settings UI)
@@ -229,7 +229,90 @@ All variables read from `.env` in local dev and from the platform environment (V
 | `MICROSOFT_SHADOW_AI_SCAN_ENABLED` | `true` / `false`. |
 | `MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS` | Default 24. |
 
-### 3.8 Demo mode
+### 3.8 Hexnode UEM shadow-AI fallback
+
+| Variable | Purpose |
+|----------|---------|
+| `HEXNODE_SUBDOMAIN` | Your Hexnode tenant subdomain. |
+| `HEXNODE_API_KEY` | Hexnode API key. Prefer Settings UI. |
+| `HEXNODE_SCAN_ENABLED` | `true` / `false`. |
+| `HEXNODE_SCAN_INTERVAL_HOURS` | Default 24. |
+
+### 3.9 CrowdStrike Falcon shadow-AI fallback
+
+| Variable | Purpose |
+|----------|---------|
+| `CROWDSTRIKE_BASE_URL` | Falcon API base URL for your cloud region. |
+| `CROWDSTRIKE_CLIENT_ID` | Falcon API client ID. |
+| `CROWDSTRIKE_CLIENT_SECRET` | Falcon API client secret. Prefer Settings UI. |
+| `CROWDSTRIKE_SCAN_ENABLED` | `true` / `false`. |
+| `CROWDSTRIKE_SCAN_INTERVAL_HOURS` | Default 24. |
+
+### 3.10 Shadow-AI blocklist feed
+
+| Variable | Purpose |
+|----------|---------|
+| `SHADOW_AI_BLOCKLIST_TOKEN` | Bearer token for `GET /api/discovered-tools/blocklist`, the denylist of `BLOCKED` tool domains that an external DNS / proxy / firewall / CASB polls to enforce blocks. |
+
+> The feed **fails closed**. With no token configured the endpoint returns `503` rather than serving an unauthenticated list of the AI tools your organization blocks.
+
+### 3.11 AI gateway telemetry fallbacks
+
+Use these when traffic already flows through a gateway and you want its records without re-routing through the UrNammu proxy.
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENROUTER_PROVISIONING_KEY` | OpenRouter provisioning key for activity reads. |
+| `HELICONE_API_KEY`, `HELICONE_API_BASE_URL` | Helicone request telemetry. |
+| `PORTKEY_API_KEY`, `PORTKEY_API_BASE_URL` | Portkey analytics. |
+| `PORTKEY_WORKSPACE_SLUG` | Only needed for a non-default Portkey workspace. |
+| `LITELLM_API_KEY`, `LITELLM_API_BASE_URL` | LiteLLM proxy telemetry. |
+
+### 3.12 Developer-AI telemetry ingest
+
+Shared secrets for the OpenTelemetry ingest routes that feed the Claude Code, Cowork, and Cursor dashboards.
+
+| Variable | Purpose |
+|----------|---------|
+| `CLAUDE_CODE_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/claude-code`. |
+| `CURSOR_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/cursor`. |
+| `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` | Retention window enforced by the prune cron. |
+
+### 3.13 Scheduled report delivery
+
+| Variable | Purpose |
+|----------|---------|
+| `RESEND_API_KEY` | Resend API key for emailing scheduled reports. |
+| `REPORT_EMAIL_FROM` | From address on scheduled report emails. |
+
+> Without these, report schedules save but never send.
+
+### 3.14 Observability
+
+| Variable | Purpose |
+|----------|---------|
+| `DATADOG_API_KEY`, `DATADOG_APP_KEY` | Datadog credentials. |
+| `DATADOG_SITE` | Datadog site, e.g. `datadoghq.com`. |
+| `DATADOG_ENABLED` | `true` / `false`. |
+
+> **Azure Monitor** (which powers the Proxy Health board's platform metrics) has **no env fallback** — configure its subscription ID, resource group, and function app name in the Settings UI.
+
+### 3.15 Sync, anomaly, and governance tuning
+
+All optional; the Settings UI is the normal place to change these.
+
+| Variable | Purpose |
+|----------|---------|
+| `PROVIDER_SYNC_ENABLED`, `PROVIDER_SYNC_INTERVAL_HOURS` | Provider telemetry sync toggle and cadence. |
+| `PROVIDER_SECURITY_SCAN_ENABLED`, `PROVIDER_SECURITY_SCAN_INTERVAL_HOURS` | Provider secure-use / privacy scan toggle and cadence. |
+| `ANOMALY_RECENT_WINDOW_DAYS`, `ANOMALY_BASELINE_WINDOW_DAYS` | Comparison windows for cost / usage anomaly detection. |
+| `ANOMALY_MIN_RECENT_TOKENS`, `ANOMALY_MIN_RECENT_COST` | Floors that suppress anomaly alerts on trivial volume. |
+| `ANOMALY_PROVIDER_MULTIPLIER`, `ANOMALY_PROJECT_MULTIPLIER`, `ANOMALY_MODEL_MULTIPLIER` | Per-dimension sensitivity multipliers. |
+| `GOVERNANCE_REVIEW_NOTICE_DAYS` | Days ahead of a due review to raise a reassessment alert. |
+| `GOVERNANCE_EXCEPTION_NOTICE_DAYS` | Days ahead of exception expiry to raise a renewal alert. |
+| `GOVERNANCE_ESCALATION_OVERDUE_DAYS` | Days overdue before a review escalates. |
+
+### 3.16 Demo mode
 
 | Variable | Purpose |
 |----------|---------|
@@ -564,11 +647,89 @@ Separate from the admin telemetry keys above, UrNammu uses a provider to power A
 - Model: e.g., `claude-3.5-sonnet`, `gpt-4`
 - API key (falls back to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env var)
 
+### 8.10 Hexnode UEM (shadow-AI discovery)
+
+Catches desktop and mobile apps that never touch an OAuth flow, by reading the app inventory from managed devices.
+
+1. In Hexnode, generate an API key (**Admin → API Access**).
+2. Note your tenant subdomain — the `<subdomain>` in `https://<subdomain>.hexnodemdm.com`.
+3. Enter both in **Settings → Shadow AI**, enable the scan, and set an interval.
+
+### 8.11 CrowdStrike Falcon (shadow-AI discovery)
+
+Discovers AI tools observed running on Falcon-protected endpoints.
+
+1. In the Falcon console, create an API client with read scope for application/asset data.
+2. Note the API base URL for your Falcon cloud region — it differs per region, and the wrong one authenticates but returns nothing.
+3. Enter the client ID, secret, and base URL in **Settings → Shadow AI**, then enable the scan.
+
+### 8.12 Netskope (proxy log ingestion)
+
+A dedicated import path for Netskope's cloud log shipper, separate from generic CSV import.
+
+- Configure in **Settings → Shadow AI → Netskope**.
+- Or post directly to `POST /api/discovered-tools/ingest/netskope`.
+
+Hostnames are normalized before matching, so casing and trailing-dot variants will not create duplicate tools.
+
+### 8.13 AI gateways (telemetry without re-routing)
+
+If your traffic already flows through a gateway, UrNammu can read its records instead of sitting in the request path. Supported: **OpenRouter**, **Helicone**, **Portkey**, **LiteLLM**.
+
+Add credentials per gateway in **Settings → Provider Admin APIs** (or via the env vars in §3.11), then confirm the tile reads as connected on the **Integrations** page.
+
+### 8.14 Shadow-AI block enforcement
+
+Blocking a tool in UrNammu records a decision; it does not stop traffic on its own. Wire up at least one enforcement layer:
+
+**Network** — generate a feed token in **Settings → Shadow AI**, then point a DNS sinkhole, proxy ACL, firewall URL list, or CASB at:
+
+```bash
+curl -H "Authorization: Bearer $SHADOW_AI_BLOCKLIST_TOKEN" \
+  "https://<your-domain>/api/discovered-tools/blocklist?format=hosts"
+```
+
+Formats: `text` (default), `hosts`, `json`, `pac`. Responses are cacheable for 60s and must revalidate, so an unblock propagates within about a minute.
+
+**Identity** — connect Google Workspace and/or Microsoft 365 so a block can disable the app at the IdP. Microsoft additionally requires admin consent for the app-management Graph permission; without it, enforcement reports `failed` rather than silently doing nothing.
+
+**Settings → Shadow AI** shows a readiness summary for both layers. With neither configured, a block is an auditable decision and nothing more.
+
+### 8.15 Developer-AI telemetry (Claude Code, Cowork, Cursor)
+
+These dashboards are fed by an OpenTelemetry pipeline posting to UrNammu, not by provider admin APIs.
+
+1. Set `CLAUDE_CODE_TELEMETRY_SECRET` and/or `CURSOR_TELEMETRY_SECRET`.
+2. Configure your OTel collector to forward to `POST /api/telemetry/claude-code` or `POST /api/telemetry/cursor` with that secret as a Bearer token.
+3. Set `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` and make sure the prune crons from §9.2 are scheduled.
+
+All of this is metadata only — no prompt text and no code content is transmitted or stored. Note that the Cursor hook carries no token or cost data, so its dashboard shows activity metrics only.
+
+### 8.16 Scheduled report email (Resend)
+
+Required for report schedules to actually deliver.
+
+1. Create a Resend API key and verify your sending domain.
+2. Set `RESEND_API_KEY` and `REPORT_EMAIL_FROM`, or configure them in **Settings → Reporting**.
+3. Ensure `/api/cron/run-report-schedules` is scheduled (§9.2).
+
+Without this, schedules save successfully and silently never send.
+
+### 8.17 Azure Monitor (Proxy Health metrics)
+
+Optional. Adds function-app platform metrics — invocations, error rate, response time — to the Proxy Health board, which otherwise only knows what the proxy managed to write to the database.
+
+Configure the subscription ID, resource group, and function app name in **Settings**. This integration has **no env-var fallback**; the Settings UI is the only place to set it.
+
+### 8.18 Datadog
+
+Optional observability export. Set `DATADOG_API_KEY`, `DATADOG_APP_KEY`, `DATADOG_SITE`, and `DATADOG_ENABLED`, or configure them in Settings.
+
 ---
 
 ## 9. Background Cron Setup
 
-UrNammu has one maintenance endpoint that fans out to every background job. It must fire on a schedule for telemetry, shadow AI scans, Gemini billing follow-up syncs, renewal alerts, and escalations to work.
+UrNammu has one hourly maintenance endpoint that fans out to most background work, plus a few dedicated crons for jobs that need their own cadence. All of them authenticate with `CRON_SECRET`.
 
 ### 9.1 Endpoint
 
@@ -577,37 +738,62 @@ GET /api/scheduler/maintenance
 Authorization: Bearer $CRON_SECRET
 ```
 
-### 9.2 Vercel Cron (recommended if deploying to Vercel)
+The hourly pass covers provider telemetry syncs, all four shadow-AI scan sources (Google Workspace, Microsoft 365, Hexnode, CrowdStrike), governance automation alerts (review renewals, exception renewals, ownership escalations), and key usage rule evaluation.
 
-Already configured in `vercel.json`:
+### 9.2 Dedicated crons
+
+These run on their own schedules rather than through the maintenance pass:
+
+| Endpoint | Schedule | Purpose |
+|----------|----------|---------|
+| `/api/cron/run-report-schedules` | every 15 min | Sends due scheduled reports. |
+| `/api/cron/sensitive-scan` | daily | Probes configured gateways for data leakage. |
+| `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy configuration. |
+| `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
+| `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
+
+The two prune jobs matter more than they look: the developer-AI telemetry tables are high-volume, and without retention they grow without bound.
+
+### 9.3 Vercel Cron (recommended if deploying to Vercel)
+
+All of the above are already configured in `vercel.json`:
 
 ```json
 {
   "crons": [
-    { "path": "/api/scheduler/maintenance", "schedule": "0 * * * *" }
+    { "path": "/api/scheduler/maintenance", "schedule": "0 * * * *" },
+    { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
+    { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
+    { "path": "/api/cron/run-report-schedules", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/sensitive-scan", "schedule": "0 6 * * *" },
+    { "path": "/api/cron/provider-security-scan", "schedule": "0 7 * * *" }
   ]
 }
 ```
 
-This fires hourly. Individual jobs check their own interval settings in `AppSetting` and skip if not yet due, so one hourly cron safely drives every background job.
+Individual jobs inside the maintenance pass check their own interval settings in `AppSetting` and skip if not yet due, so the hourly tick is cheap when little is pending.
 
-### 9.3 External cron (non-Vercel hosts)
+> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency (and total crons). The 15-minute report schedule in particular will not run as configured — either upgrade, or drive the endpoints from an external scheduler as below.
 
-Use any scheduler (GitHub Actions, cron-job.org, Render Cron, an Azure Function timer, etc.) to hit the endpoint hourly:
+### 9.4 External cron (non-Vercel hosts)
+
+Use any scheduler (GitHub Actions, cron-job.org, Render Cron, an Azure Function timer, etc.) to hit the endpoints. At minimum, the hourly maintenance pass:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
   https://<your-domain>/api/scheduler/maintenance
 ```
 
-### 9.4 Manual trigger (useful for testing)
+Then add whichever dedicated crons you need, on the schedules in §9.2. Skipping the prune jobs is the one omission that degrades over time rather than immediately.
+
+### 9.5 Manual trigger (useful for testing)
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
   http://localhost:3001/api/scheduler/maintenance
 ```
 
-### 9.5 Verifying cron health
+### 9.6 Verifying cron health
 
 - **Settings → Provider Admin APIs** shows last sync timestamps.
 - **Shadow AI** page shows the most recent `ScanHistory` row.
