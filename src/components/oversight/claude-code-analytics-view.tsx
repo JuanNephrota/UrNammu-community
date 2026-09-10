@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -95,9 +94,6 @@ export async function ClaudeCodeAnalyticsView({
       ? ((totals.toolAccepted / (totals.toolAccepted + totals.toolRejected)) * 100).toFixed(1)
       : "—";
 
-  const auditHref = surface
-    ? `/oversight/claude-code/events?surface=${encodeURIComponent(surface)}`
-    : "/oversight/claude-code/events";
 
   const decisionTotal = activity.decisionAccept + activity.decisionReject;
   const acceptRate =
@@ -496,20 +492,15 @@ export async function ClaudeCodeAnalyticsView({
             {recentEvents.length > 0 && (
               <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm">
-                      Recent Events
-                      <span className="ml-2 font-normal text-[var(--text-faint)]">
-                        latest {recentEvents.length}
-                        {activity.totalEvents > recentEvents.length
-                          ? ` of ${activity.totalEvents.toLocaleString("en-US")}`
-                          : ""}
-                      </span>
-                    </CardTitle>
-                    <Link href={auditHref} className="text-xs font-medium text-[var(--accent)] hover:underline">
-                      Full audit log →
-                    </Link>
-                  </div>
+                  <CardTitle className="text-sm">
+                    Recent Events
+                    <span className="ml-2 font-normal text-[var(--text-faint)]">
+                      latest {recentEvents.length}
+                      {activity.totalEvents > recentEvents.length
+                        ? ` of ${activity.totalEvents.toLocaleString("en-US")}`
+                        : ""}
+                    </span>
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="max-h-[28rem] overflow-auto">

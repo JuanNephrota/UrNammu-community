@@ -14,7 +14,6 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [Executive Dashboard](#3a-executive-dashboard)
 4. [AI System Registry](#4-ai-system-registry)
 5. [AI Agents](#5-ai-agents)
-   - [AI Skills Registry](#5a-ai-skills-registry)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
    - [Policy-as-Code Runtime Enforcement](#policy-as-code-runtime-enforcement)
@@ -46,7 +45,6 @@ UrNammu is an enterprise AI governance platform that gives compliance, security,
 
 - **AI System** — a managed AI service or application (e.g. "Customer Support Copilot"). The primary governance unit.
 - **AI Agent** — an autonomous agent tied to a system, with its own autonomy level and human-oversight rules.
-- **AI Skill** — a reusable AI skill/app published in CertifID Forge and synced into UrNammu's Skills registry.
 - **Risk Assessment** — a multi-dimensional scoring of a system across bias, security, privacy, fairness, performance, and transparency, with branching questions and issue-level follow-up.
 - **Policy** — a governance rule (mapped to EU AI Act, NIST AI RMF, ISO 42001, SOC 2, or custom) that can be assigned to systems. Policies can also carry machine-readable rules that are enforced at the proxy at runtime (advisory or blocking).
 - **Shadow AI** — unregistered AI tools discovered in the org via Google Workspace OAuth activity, Microsoft 365 apps, Hexnode-managed devices, or DNS/proxy/Netskope network logs.
@@ -87,7 +85,7 @@ After signing in you land on the **Dashboard**. The layout has three areas:
 
 - **Sidebar (left)** — modules grouped into four sections:
   - **Overview** — Dashboard, Executive, Reports
-  - **Registry** — AI Systems, AI Agents, AI Skills
+  - **Registry** — AI Systems, AI Agents
   - **Governance** — Shadow AI, Risk Center, AI Oversight, Investigations, Vendor Governance, Claude Platform, Claude Code, Cowork, Cursor, Compliance
   - **System** — Alerts, Proxy Health, Integrations, Settings
 - **Top bar** — the currently signed-in user and a shortcut menu.
@@ -282,37 +280,6 @@ On the agent detail page, **Run Risk Review** calls `/api/ai/assess-agent-risk` 
 Provider (Anthropic or OpenAI) is whichever is configured in Settings → General.
 
 Generated agent risk reviews are saved, so they remain visible after refresh and can be revisited during later governance work.
-
----
-
-## 5a. AI Skills Registry
-
-**Sidebar → Registry → AI Skills** is a read-through inventory of AI skills/apps published in **CertifID Forge** and synced into UrNammu. It gives governance visibility into the internally-built AI capabilities employees can use.
-
-### What it tracks
-
-- Skill name, category, author, department, and status (e.g. draft / published / retired).
-- Tags, description, and Forge metadata (creation / update timestamps).
-- The AI Agents and AI Systems that reference each skill.
-
-### Filtering
-
-The Skills page has a filter bar (category, status, department, author) plus name search, mirroring the Registry filter behavior. Dropdowns only surface values present in the current dataset.
-
-### How sync works
-
-- **Manual sync** — click **Sync from Forge** on the Skills page (admin only). Each run reports items fetched, newly created, updated, and any auto-promoted agents/systems.
-- **Scheduled sync** — runs via the maintenance cron when enabled in **Settings → Integrations → Forge Skills** (off by default; requires a Forge base URL + API key).
-- **On-demand content** — full skill descriptions/docs are fetched when you open a skill's detail page, and can be pushed into the linked governed system's description.
-
-### Auto-promotion into Agents / Systems
-
-Forge content carries a `content_type`. On sync:
-
-- `content_type = "skill"` rows appear in the **AI Skills** registry.
-- `content_type` of `agent`, `app`, or `agent_system` are **auto-promoted** into the **AI Agents** / **AI Systems** registries instead, so agent-like Forge content lands in the governance workflow rather than the skills list.
-
-Per-field local overrides you make in UrNammu are preserved across re-syncs.
 
 ---
 
@@ -1003,7 +970,6 @@ The dedicated **Integrations** settings area (also surfaced as the top-level **I
 - **AI gateways** — Helicone, OpenRouter, Portkey, and a self-hosted LiteLLM proxy (base URL + key), normalized into Oversight.
 - **Azure Monitor** — subscription / resource group / function app / region + service principal, for Proxy Health signals.
 - **Datadog** — forward governance alerts and sync events to a Datadog org as events.
-- **Forge Skills** — base URL + API key + sync toggle for the AI Skills registry.
 
 ### 13.7 Reporting
 
@@ -1075,12 +1041,6 @@ Hexnode MDM scripts can also be used to roll out the Claude Code / Cursor OTel h
 - **Datadog** — add an API key in **Settings → Integrations → Datadog** and toggle on to forward alerts and sync events as Datadog events.
 - **Azure Monitor** — add the Function App identifiers and a service principal in **Settings → Integrations → Azure Monitor** to power the [Proxy Health](#proxy-health) board.
 
-### Forge Skills
-
-- In **Settings → Integrations → Forge Skills**, add the Forge base URL + API key and enable sync to populate the [AI Skills Registry](#5a-ai-skills-registry).
-
----
-
 ## 15. Background Automation
 
 UrNammu has a single cron endpoint that runs every hour on Vercel (or external cron) and fans out to individual jobs.
@@ -1097,11 +1057,10 @@ UrNammu has a single cron endpoint that runs every hour on Vercel (or external c
   - Google Workspace shadow-AI scan
   - Microsoft 365 shadow-AI scan
   - Hexnode UEM device scan
-  - Forge Skills sync
   - Azure Monitor proxy-health snapshot
   - Governance automation (below)
 
-Several jobs have their own dedicated cron routes as well (e.g. `/api/cron/forge-skills-sync`, `/api/cron/run-report-schedules`, `/api/cron/prune-claude-code-metrics`, `/api/cron/prune-cursor-metrics`), all guarded by `CRON_SECRET` and wired in `vercel.json`. Scheduled report email delivery runs from `run-report-schedules`; the prune jobs enforce OTel telemetry retention.
+Several jobs have their own dedicated cron routes as well (e.g. `/api/cron/run-report-schedules`, `/api/cron/prune-claude-code-metrics`, `/api/cron/prune-cursor-metrics`), all guarded by `CRON_SECRET` and wired in `vercel.json`. Scheduled report email delivery runs from `run-report-schedules`; the prune jobs enforce OTel telemetry retention.
 
 Admins can trigger the endpoint manually for testing (e.g., `curl` with the `CRON_SECRET`).
 
@@ -1219,7 +1178,6 @@ Runs on every maintenance call. Produces alerts for:
 |------|-----------|
 | **AISystem** | A managed AI service or application requiring governance. |
 | **AIAgent** | Autonomous or semi-autonomous agent tied to a system, with its own autonomy level and human-oversight rules. |
-| **AI Skill** | A reusable AI skill/app published in CertifID Forge and synced into the AI Skills registry. |
 | **Risk Assessment** | Multi-dimensional scoring record (6 dimensions + overall) for a system at a point in time. |
 | **Risk Issue** | A specific finding raised by a risk assessment (`OPEN` / `IN_PROGRESS` / `RESOLVED` / `ACCEPTED`). |
 | **Policy** | Governance rule mapped to a compliance framework, with structured rules and long-form text. |

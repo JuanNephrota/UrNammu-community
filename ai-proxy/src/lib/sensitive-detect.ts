@@ -54,6 +54,20 @@ const BUILTIN_RULES: BuiltInRule[] = [
       "\\bAKIA[0-9A-Z]{16}\\b",
     ],
   },
+  {
+    key: "secret_token_in_text",
+    label: "API key or token present",
+    severity: "critical",
+    patterns: [
+      "\\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}\\b",
+      "\\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\\b",
+      "\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\\b",
+      "\\bgithub_pat_[A-Za-z0-9_]{60,}\\b",
+      "\\bAIza[0-9A-Za-z_-]{35}\\b",
+      "\\bya29\\.[0-9A-Za-z._-]{20,}\\b",
+      "\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b",
+    ],
+  },
 ];
 
 function safeCompileRegex(source: string): RegExp | null {
@@ -70,11 +84,24 @@ let ruleCache: { rules: CompiledRule[]; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 30_000;
 const FALLBACK_TTL_MS = 5_000;
 
+// Intent rules detect malicious intent in user INPUT and false-positive on
+// model OUTPUT (a refusal that says "I won't reveal credentials or bypass
+// safety" matches them). This detector only ever scans responses, so they are
+// skipped entirely — we look only for actual sensitive DATA in the text.
+const INTENT_RULE_KEYS = new Set<string>([
+  "prompt_injection",
+  "secret_extraction",
+  "data_exfiltration",
+  "malware_or_phishing",
+  "dangerous_autonomy",
+]);
+
 function compileRules(
   rows: Array<{ key: string; label: string; severity: string; patterns: string[] }>
 ): CompiledRule[] {
   const compiled: CompiledRule[] = [];
   for (const row of rows) {
+    if (INTENT_RULE_KEYS.has(row.key)) continue;
     const patterns = row.patterns
       .map((src) => safeCompileRegex(src))
       .filter((p): p is RegExp => p !== null);
@@ -111,7 +138,10 @@ export function sanitizeText(value: string | null): string | null {
   const cleaned = value
     .replace(/-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----/g, "[private-key]")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
-    .replace(/\b(?:sk|AIza|ya29|ghp)_[A-Za-z0-9._-]+\b/g, "[secret]")
+    .replace(
+      /\b(?:sk-[A-Za-z0-9_-]{10,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,}|ya29\.[0-9A-Za-z._-]{10,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:sk|AIza|ya29|ghp)_[A-Za-z0-9._-]+)\b/gi,
+      "[secret]"
+    )
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[aws-key]")
     .replace(/\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6011)[ -]?\d{4}[ -]?\d{4}[ -]?\d{2,4}\b/g, "[card]")
     .replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[ssn]")

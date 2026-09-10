@@ -45,6 +45,11 @@ const LATEST_MODEL_FALLBACK: Record<AIProviderKey, string> = {
   openai: "gpt-4o",
 };
 
+// Models the Anthropic Models API lists but this org can't actually call
+// (access-gated previews). "latest" resolution skips these so it doesn't pick a
+// model that 404s. Update as the org's model access changes.
+const LATEST_MODEL_DENYLIST = new Set<string>(["claude-fable-5"]);
+
 type LatestCacheEntry = { model: string; expiresAt: number };
 const latestModelCache: Partial<Record<AIProviderKey, LatestCacheEntry>> = {};
 const LATEST_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -67,7 +72,10 @@ async function resolveLatestModel(
   if (provider === "anthropic" && apiKey) {
     try {
       const list = await new Anthropic({ apiKey }).models.list();
-      const newest = list.data?.[0]?.id;
+      // Models are returned newest-first; take the newest callable one.
+      const newest = list.data?.find(
+        (m) => m.id?.startsWith("claude-") && !LATEST_MODEL_DENYLIST.has(m.id)
+      )?.id;
       if (newest) model = newest;
     } catch {
       // unreachable / no access — keep the pinned fallback
@@ -75,6 +83,16 @@ async function resolveLatestModel(
   }
   latestModelCache[provider] = { model, expiresAt: Date.now() + LATEST_TTL_MS };
   return model;
+}
+
+// Models that accept `output_config.effort`. Allowlisted rather than
+// denylisted so an unknown model just runs at the API default instead of
+// erroring on an unsupported parameter (Haiku and pre-4.6 Sonnet reject it).
+const EFFORT_MODELS =
+  /^claude-(fable-5|mythos-5|opus-5|sonnet-5|opus-4-[5-9]|sonnet-4-6)/;
+
+function supportsEffort(model: string): boolean {
+  return EFFORT_MODELS.test(model);
 }
 
 /**
@@ -137,12 +155,30 @@ export async function generateAIResponse(
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model,
-    max_tokens: 2048,
+    // Thinking is on by default on Claude Opus 5+, and max_tokens caps thinking
+    // + response text together — a tight budget can spend the whole allowance
+    // on thinking and return no text at all.
+    max_tokens: 16000,
+    ...(supportsEffort(model)
+      ? { output_config: { effort: "medium" as const } }
+      : {}),
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  const content = response.content[0];
-  if (content.type !== "text") throw new Error("Unexpected response type");
-  return content.text;
+  // Responses may lead with thinking blocks, so collect every text block
+  // rather than assuming content[0] is the answer.
+  const text = response.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+
+  if (!text) {
+    throw new Error(
+      response.stop_reason === "max_tokens"
+        ? "Model hit the output token limit before producing a response."
+        : `No text in model response (stop_reason: ${response.stop_reason ?? "unknown"}).`
+    );
+  }
+  return text;
 }

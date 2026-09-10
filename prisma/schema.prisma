@@ -19,6 +19,16 @@ enum Role {
   VIEWER
 }
 
+// Account lifecycle. Only ACTIVE users can hold a session — SUSPENDED is
+// reversible, DELETED is terminal and has had its identifying fields scrubbed.
+// Rows are never removed, so audit logs and governance evidence keep a stable
+// (if anonymized) actor.
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
 enum RiskLevel {
   CRITICAL
   HIGH
@@ -203,6 +213,11 @@ model User {
   role          Role      @default(VIEWER)
   department    String?
 
+  status       UserStatus @default(ACTIVE)
+  statusReason String?    @db.Text
+  suspendedAt  DateTime?
+  deletedAt    DateTime?
+
   accounts     Account[]
   sessions     Session[]
   ownedSystems AISystem[]    @relation("SystemOwner")
@@ -316,6 +331,13 @@ model DiscoveredAITool {
   matchScore      Int?            // numeric score from resolveAIToolMatch
   matchReasons    Json?           // array of reason strings
 
+  // Identity-provider app handle captured at scan time, used to target
+  // identity-layer enforcement (revoke/disable the app's SSO access).
+  // externalAppProvider: "google_workspace" | "microsoft_365".
+  // externalAppId: Google OAuth client_id, or Entra servicePrincipal object id.
+  externalAppId       String?
+  externalAppProvider String?
+
   alerts Alert[]
 
   createdAt DateTime @default(now())
@@ -323,6 +345,7 @@ model DiscoveredAITool {
 
   @@unique([toolName, detectedDomain])
   @@index([status, matchConfidence])
+  @@index([externalAppProvider, externalAppId])
 }
 
 model DismissedCandidate {
@@ -555,6 +578,9 @@ model UsageBucket {
   @@index([provider, bucketStart, granularity])
   @@index([syncRunId])
   @@index([aiSystemId])
+  // Serves the KeyUsageRule evaluator: the per-key telemetry window scan and
+  // the min(bucketStart) first-seen backfill both filter on provider + key.
+  @@index([provider, apiKeyExternalId, bucketStart])
 }
 
 model CostBucket {
@@ -910,6 +936,10 @@ model Alert {
 
   // Structured prompt risk metadata (for source = "dangerous_prompt")
   promptRiskMetadata    Json?
+  // Structured key-usage rule metadata (for source = "key_usage_rule"):
+  // { ruleKey, conditionType, provider, apiKeyExternalId, apiKeyName,
+  //   metric?, observed?, baseline?, threshold?, windowStart, windowEnd }
+  keyUsageMetadata      Json?
   falsePositive         Boolean   @default(false)
   falsePositiveReason   String?   @db.Text
   falsePositiveByUser   User?     @relation("AlertFalsePositiveBy", fields: [falsePositiveByUserId], references: [id], onDelete: SetNull)
@@ -1367,4 +1397,80 @@ model ReportRun {
 
   @@index([definitionId, createdAt])
   @@index([scheduleId, createdAt])
+}
+
+// ─── Key Usage Rules (anomalous API key detection) ─────
+// Admin-authored rules evaluated hourly against per-key UsageBucket
+// telemetry. Matches raise Alerts (source = "key_usage_rule"); nothing is
+// blocked — this is a detection/flagging surface, not an enforcement one.
+//
+// Condition-specific parameters live in `config` rather than a wide table of
+// mutually-exclusive nullable columns. The shape is a discriminated union on
+// `conditionType`, validated by Zod in `src/lib/validations/key-usage-rule.ts`
+// and parsed by `parseKeyUsageRuleConfig()` in `src/lib/key-usage-rules.ts`.
+enum KeyUsageConditionType {
+  // Absolute volume over the window: tokens / cost / requests past a ceiling.
+  VOLUME_THRESHOLD
+  // Recent window vs. the immediately preceding baseline window.
+  SPIKE_MULTIPLIER
+  // A key observed for the first time, with non-trivial volume.
+  NEW_KEY
+  // A key idle for N days that started transacting again.
+  DORMANT_REACTIVATION
+  // Activity outside declared business hours/days. Requires hourly buckets.
+  OFF_HOURS
+  // Key used a model outside its allowlist.
+  MODEL_ALLOWLIST
+  // Key suddenly spanning more distinct projects/actors than expected.
+  FAN_OUT
+}
+
+model KeyUsageRule {
+  id                String                @id @default(cuid())
+  // Stable identifier, used for alert dedupe keys and audit references.
+  key               String                @unique
+  label             String
+  description       String?               @db.Text
+  conditionType     KeyUsageConditionType
+  severity          AlertSeverity
+  // Scope filters. Empty array = applies to every value of that dimension.
+  providers         String[]              @default([])
+  apiKeyExternalIds String[]              @default([])
+  // Condition-specific parameters (see enum comment above).
+  config            Json
+  enabled           Boolean               @default(true)
+  builtIn           Boolean               @default(false)
+
+  // Snapshots of the seeded definition, so "reset to default" can restore a
+  // built-in rule an admin has since edited. Mirrors PromptRiskRule.
+  defaultLabel    String?
+  defaultSeverity AlertSeverity?
+  defaultConfig   Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([conditionType])
+}
+
+// Observed lifetime state per provider API key. Maintained by the hourly
+// evaluator; the NEW_KEY and DORMANT_REACTIVATION conditions read it.
+//
+// `firstSeenAt` is backfilled from the earliest UsageBucket for the key when
+// the profile row is created, NOT set to the creation timestamp — otherwise
+// every pre-existing key would look brand new the first time the job runs.
+model ApiKeyProfile {
+  id           String   @id @default(cuid())
+  provider     String
+  externalId   String
+  name         String?
+  firstSeenAt  DateTime
+  // Last bucket start with non-zero volume attributed to this key.
+  lastActiveAt DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([provider, externalId])
+  @@index([provider, lastActiveAt])
 }

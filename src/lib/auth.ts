@@ -19,6 +19,24 @@ async function getBooleanSetting(key: string, fallback: boolean) {
   return fallback;
 }
 
+/**
+ * Sessions are JWTs, so an already-signed-in user keeps their token until it
+ * expires. Every request re-reads the account from the database and drops the
+ * identity claims unless the account is still ACTIVE — that is what makes
+ * suspension and deletion take effect immediately rather than eventually.
+ */
+export function isActiveStatus(status: string | null | undefined): boolean {
+  return status === "ACTIVE";
+}
+
+function revokeClaims(token: JWT, status: string): JWT {
+  token.status = status;
+  delete (token as Partial<JWT>).userId;
+  delete (token as Partial<JWT>).role;
+  delete (token as Partial<JWT>).department;
+  return token;
+}
+
 export async function hydrateJwtClaims(
   token: JWT,
   user?: { email?: string | null; id?: string | null }
@@ -28,21 +46,32 @@ export async function hydrateJwtClaims(
 
   const dbUser = await prisma.user.findUnique({
     where: { email: jwtEmail },
-    select: { id: true, role: true, department: true },
+    select: { id: true, role: true, department: true, status: true },
   });
 
   if (dbUser) {
+    // `status` is absent when a stubbed/legacy record predates the column.
+    const status = dbUser.status ?? "ACTIVE";
+    if (!isActiveStatus(status)) {
+      return revokeClaims(token, status);
+    }
     token.userId = dbUser.id;
     token.role = dbUser.role;
     token.department = dbUser.department;
+    token.status = status;
     return token;
   }
 
+  // Mid-sign-in the adapter may not have committed the row yet, so trust the
+  // provider's user object. Otherwise the account has gone (or was deleted and
+  // its email scrubbed) and the token must stop granting access.
   if (user?.id) {
     token.userId = user.id;
+    token.status = "ACTIVE";
+    return token;
   }
 
-  return token;
+  return revokeClaims(token, "DELETED");
 }
 
 export async function getAuthOptions(): Promise<NextAuthOptions> {
@@ -107,6 +136,7 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           });
 
           if (!user?.passwordHash) return null;
+          if (!isActiveStatus(user.status)) return null;
 
           const isValid = await verifyPassword(credentials.password, user.passwordHash);
           if (!isValid) return null;
@@ -152,6 +182,7 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           }
 
           if (!user) return null;
+          if (!isActiveStatus(user.status)) return null;
 
           return {
             id: user.id,
@@ -178,7 +209,18 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           (account?.provider === "google" || account?.provider === "azure-ad") &&
           email
         ) {
-          const userCount = await prisma.user.count();
+          // SSO bypasses the credentials providers' own status check, so gate
+          // it here — a suspended account must not get a session from Google
+          // or Entra either.
+          const existing = await prisma.user.findUnique({
+            where: { email },
+            select: { status: true },
+          });
+          if (existing && !isActiveStatus(existing.status)) return false;
+
+          const userCount = await prisma.user.count({
+            where: { status: "ACTIVE" },
+          });
           if (userCount <= 1) {
             await prisma.user.updateMany({
               where: { email },
@@ -195,7 +237,10 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
         return token;
       },
       async session({ session, token }) {
-        if (session.user) {
+        // No userId means hydrateJwtClaims revoked the token (suspended or
+        // deleted account). Leaving the claims off makes getSession() return
+        // null, which redirects the dashboard to /login and 401s the APIs.
+        if (session.user && token.userId) {
           session.user.userId = token.userId as string;
           session.user.role = token.role as string;
           session.user.department = token.department as string | null;
@@ -205,6 +250,9 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
     },
     pages: {
       signIn: "/login",
+      // Keep provider errors (including the AccessDenied a suspended account
+      // gets) on the branded login screen instead of NextAuth's default page.
+      error: "/login",
     },
   };
 }

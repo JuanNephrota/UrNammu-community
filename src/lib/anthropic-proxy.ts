@@ -12,6 +12,16 @@ const ANTHROPIC_BASE = "https://api.anthropic.com";
 
 // Pricing per million tokens (approximate)
 const PRICING: Record<string, { input: number; output: number }> = {
+  // Current bare model IDs (no date suffix). Listed first so current requests
+  // resolve to current pricing — the cost calc uses substring matching
+  // (model.includes(key) || key.includes(model)) and returns the first hit.
+  "claude-opus-4-8": { input: 5.0, output: 25.0 },
+  "claude-opus-4-7": { input: 5.0, output: 25.0 },
+  "claude-opus-4-6": { input: 5.0, output: 25.0 },
+  "claude-sonnet-4-6": { input: 3.0, output: 15.0 },
+  "claude-haiku-4-5": { input: 1.0, output: 5.0 },
+  "claude-fable-5": { input: 10.0, output: 50.0 },
+  // Deprecated dated IDs kept for any in-flight traffic still using them.
   "claude-sonnet-4-20250514": { input: 3.0, output: 15.0 },
   "claude-haiku-4-5-20251001": { input: 0.8, output: 4.0 },
   "claude-opus-4-20250514": { input: 15.0, output: 75.0 },
@@ -267,7 +277,9 @@ export async function handleAnthropicProxy(
   // Inline DLP on the model's response — detect sensitive info coming back
   // (only sanitized excerpts are persisted by recordSensitiveFinding).
   const responseDlp = anthropicResponse.ok
-    ? await analyzeText(extractAnthropicResponseText(responseBody))
+    ? await analyzeText(extractAnthropicResponseText(responseBody), {
+        excludeIntentRules: true,
+      })
     : null;
 
   let flagged = promptRisk.flagged;
@@ -427,7 +439,9 @@ async function extractStreamUsage(
     // Inline DLP on the streamed response text.
     const responseDlp =
       responseTextParts.length > 0
-        ? await analyzeText(responseTextParts.join(""))
+        ? await analyzeText(responseTextParts.join(""), {
+            excludeIntentRules: true,
+          })
         : null;
     if (responseDlp?.flagged) {
       await recordSensitiveFinding({

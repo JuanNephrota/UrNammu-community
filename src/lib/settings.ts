@@ -59,6 +59,7 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.GOVERNANCE_ESCALATION_OVERDUE_DAYS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
     proxy_secret: process.env.PROXY_SECRET,
+    shadow_ai_blocklist_token: process.env.SHADOW_AI_BLOCKLIST_TOKEN,
     openrouter_provisioning_key: process.env.OPENROUTER_PROVISIONING_KEY,
     helicone_api_key: process.env.HELICONE_API_KEY,
     helicone_api_base_url: process.env.HELICONE_API_BASE_URL,

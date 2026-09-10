@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/page-header";
 import { ClaudeCodeAnalyticsView } from "@/components/oversight/claude-code-analytics-view";
+import { ClaudeCodeDrilldownLinks } from "@/components/oversight/claude-code-drilldown-links";
 
 // Dedicated Cowork dashboard — the same OTel analytics view, scoped to the
 // Cowork surface (app.entrypoint = "local-agent").
@@ -17,7 +18,9 @@ export default async function CoworkPage({
       <PageHeader
         title="Cowork Analytics"
         description="Productivity, cost, and governance metrics for Claude Cowork sessions (Claude Desktop VM), sourced from live OTel telemetry. Last 7 days."
-      />
+      >
+        <ClaudeCodeDrilldownLinks surface={COWORK_SURFACE} />
+      </PageHeader>
       <ClaudeCodeAnalyticsView
         surface={COWORK_SURFACE}
         userEmail={selectedUser}

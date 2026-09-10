@@ -101,6 +101,28 @@ export async function getMicrosoft365AccessToken(): Promise<string> {
   return payload.access_token;
 }
 
+/**
+ * The application permissions actually consented for the integration, read from
+ * the `roles` claim of a client-credentials access token. Lets the readiness
+ * check confirm enforcement permissions (e.g. Application.ReadWrite.All) without
+ * any mutating Graph call. Returns [] if the token can't be decoded.
+ */
+export async function getMicrosoftGrantedAppRoles(): Promise<string[]> {
+  const token = await getMicrosoft365AccessToken();
+  const payload = token.split(".")[1];
+  if (!payload) return [];
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8")
+    ) as { roles?: unknown };
+    return Array.isArray(decoded.roles)
+      ? decoded.roles.filter((r): r is string => typeof r === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 async function graphGet<T>(path: string, accessToken: string): Promise<T> {
   const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     headers: {
@@ -121,6 +143,51 @@ async function graphGet<T>(path: string, accessToken: string): Promise<T> {
   }
 
   return payload;
+}
+
+async function graphPatch(
+  path: string,
+  accessToken: string,
+  body: Record<string, unknown>
+): Promise<void> {
+  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  // Successful PATCH returns 204 No Content.
+  if (response.ok) return;
+
+  let message = `Microsoft Graph request failed with ${response.status}.`;
+  try {
+    const payload = (await response.json()) as { error?: { message?: string } };
+    if (payload.error?.message) message = payload.error.message;
+  } catch {
+    // Non-JSON error body — keep the status-based message.
+  }
+  throw new Error(message);
+}
+
+/**
+ * Enable or disable an enterprise application (service principal) in Entra ID.
+ * Setting `accountEnabled: false` blocks all sign-ins to that app — the cleanest
+ * identity-layer block for a discovered shadow AI tool.
+ *
+ * Requires the app registration to hold `Application.ReadWrite.All` (admin
+ * consented). A 403 surfaces as a clear permissions error to the caller.
+ */
+export async function setMicrosoftAppEnabled(
+  servicePrincipalId: string,
+  enabled: boolean
+): Promise<void> {
+  const accessToken = await getMicrosoft365AccessToken();
+  await graphPatch(`/servicePrincipals/${servicePrincipalId}`, accessToken, {
+    accountEnabled: enabled,
+  });
 }
 
 async function graphList<T>(
@@ -340,6 +407,10 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
         toolName: resolvedMatch.tool.toolName,
         vendor: resolvedMatch.tool.vendor,
         domain: candidateDomains[0] ?? resolvedMatch.tool.domains[0],
+        // Entra servicePrincipal object id — the handle for disabling the
+        // enterprise app's sign-ins (PATCH accountEnabled=false).
+        externalAppId: servicePrincipal.id ?? undefined,
+        externalAppProvider: servicePrincipal.id ? "microsoft_365" : undefined,
         userEmails: [],
         userCount,
         matchConfidence: resolvedMatch.confidence,

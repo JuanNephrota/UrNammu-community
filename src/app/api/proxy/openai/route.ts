@@ -332,7 +332,8 @@ export async function POST(req: NextRequest) {
   // Inline DLP on the model's response — detect sensitive info coming back.
   const responseDlp = openaiResponse.ok
     ? await analyzeText(
-        (responseBody as OpenAIResponseTextBody).choices?.[0]?.message?.content ?? ""
+        (responseBody as OpenAIResponseTextBody).choices?.[0]?.message?.content ?? "",
+        { excludeIntentRules: true }
       )
     : null;
 

@@ -18,5 +18,8 @@ declare module "next-auth/jwt" {
     userId: string;
     role: string;
     department: string | null;
+    // Re-read from the database on every request so suspending or deleting an
+    // account revokes an already-issued JWT instead of waiting for it to expire.
+    status?: string;
   }
 }

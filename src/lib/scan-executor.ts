@@ -113,6 +113,12 @@ export async function executeScan(
           updates.matchScore = discovery.matchScore ?? null;
           updates.matchReasons = discovery.matchReasons ?? [];
         }
+        // Backfill the identity-provider app handle if a prior scan didn't
+        // capture it (e.g. discovered via DNS import first, then OAuth scan).
+        if (!existing.externalAppId && discovery.externalAppId) {
+          updates.externalAppId = discovery.externalAppId;
+          updates.externalAppProvider = discovery.externalAppProvider ?? null;
+        }
         if (Object.keys(updates).length > 0) {
           await prisma.discoveredAITool.update({
             where: { id: existing.id },
@@ -152,6 +158,8 @@ export async function executeScan(
               matchConfidence: discovery.matchConfidence ?? null,
               matchScore: discovery.matchScore ?? null,
               matchReasons: discovery.matchReasons ?? [],
+              externalAppId: discovery.externalAppId ?? null,
+              externalAppProvider: discovery.externalAppProvider ?? null,
               notes: governedMatch
                 ? `${baseNotes} Suppressed: matches governed system "${governedMatch.name}".`
                 : baseNotes,

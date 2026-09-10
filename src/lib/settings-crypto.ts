@@ -8,6 +8,9 @@ const SECRET_KEYS = new Set([
   "google_service_account_key",
   "openai_admin_key",
   "proxy_secret",
+  // Bearer token for the Shadow AI blocklist feed. Ends in `_token`, which the
+  // suffix rules below don't catch, so it's listed explicitly to be encrypted.
+  "shadow_ai_blocklist_token",
 ]);
 
 function getEncryptionKey(): Buffer | null {

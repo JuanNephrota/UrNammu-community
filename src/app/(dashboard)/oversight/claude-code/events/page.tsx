@@ -123,12 +123,20 @@ export default async function ClaudeCodeEventsPage({
         description="Per-event audit trail from Claude Code telemetry (metadata only — no prompt or code content). Searchable and filterable across the last 30 days."
       />
 
-      <Link
-        href="/oversight/claude-code"
-        className="inline-block text-xs font-medium text-[var(--accent)] hover:underline"
-      >
-        ← Back to Claude Code analytics
-      </Link>
+      <div className="flex items-center gap-4">
+        <Link
+          href="/oversight/claude-code"
+          className="text-xs font-medium text-[var(--accent)] hover:underline"
+        >
+          ← Back to Claude Code analytics
+        </Link>
+        <Link
+          href="/oversight/claude-code/sessions"
+          className="text-xs font-medium text-[var(--accent)] hover:underline"
+        >
+          Session traces →
+        </Link>
+      </div>
 
       <EventLogFilters
         eventTypes={eventTypes}
@@ -229,7 +237,17 @@ export default async function ClaudeCodeEventsPage({
                         {eventDetail(e) || "—"}
                       </td>
                       <td className="px-3 py-2 font-mono text-[11px] text-[var(--text-faint)]">
-                        {e.sessionId ? e.sessionId.slice(0, 8) : "—"}
+                        {e.sessionId ? (
+                          <Link
+                            href={`/oversight/claude-code/sessions/${encodeURIComponent(e.sessionId)}`}
+                            className="text-[var(--accent)] hover:underline"
+                            title="View session trace"
+                          >
+                            {e.sessionId.slice(0, 8)}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                     </tr>
                   ))

@@ -37,6 +37,26 @@ export function GovernanceIncidentsCard({
   const [severity, setSeverity] = useState<Incident["severity"]>("MEDIUM");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  async function handleStatusChange(incidentId: string, status: Incident["status"]) {
+    setUpdatingId(incidentId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/ai-systems/${systemId}/incidents/${incidentId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error ?? "Failed to update incident.");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update incident.");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -118,6 +138,48 @@ export function GovernanceIncidentsCard({
                 <p className="mt-2 text-xs text-[var(--text-faint)]">
                   Opened by {incident.openedByUser.name ?? incident.openedByUser.email}
                 </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {updatingId === incident.id && <Loader2 className="h-4 w-4 animate-spin text-[var(--text-muted)]" />}
+                  {incident.status !== "ACKNOWLEDGED" && incident.status !== "RESOLVED" && incident.status !== "DISMISSED" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={updatingId === incident.id}
+                      onClick={() => handleStatusChange(incident.id, "ACKNOWLEDGED")}
+                    >
+                      Acknowledge
+                    </Button>
+                  )}
+                  {incident.status !== "RESOLVED" && (
+                    <Button
+                      size="sm"
+                      disabled={updatingId === incident.id}
+                      onClick={() => handleStatusChange(incident.id, "RESOLVED")}
+                    >
+                      Resolve
+                    </Button>
+                  )}
+                  {incident.status !== "DISMISSED" && incident.status !== "RESOLVED" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={updatingId === incident.id}
+                      onClick={() => handleStatusChange(incident.id, "DISMISSED")}
+                    >
+                      Dismiss
+                    </Button>
+                  )}
+                  {(incident.status === "RESOLVED" || incident.status === "DISMISSED") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={updatingId === incident.id}
+                      onClick={() => handleStatusChange(incident.id, "OPEN")}
+                    >
+                      Reopen
+                    </Button>
+                  )}
+                </div>
               </div>
             ))
           )}

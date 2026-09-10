@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload } from "lucide-react";
+import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload, X } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,6 +102,10 @@ export default function ShadowAIPage() {
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
   const [scanResult, setScanResult] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    kind: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
@@ -281,6 +285,14 @@ export default function ShadowAIPage() {
         if (isRegister) {
           if (data.nextHref) router.push(data.nextHref);
           router.refresh();
+        }
+        // Surface identity-layer enforcement outcome for block/unblock actions.
+        const enf = data.identityEnforcement;
+        if (enf) {
+          setActionNotice({
+            kind: enf.enforced ? "success" : enf.action === "failed" ? "error" : "info",
+            message: enf.message,
+          });
         }
       }
     } finally {
@@ -538,6 +550,48 @@ export default function ShadowAIPage() {
           </DialogContent>
         </Dialog>
       </PageHeader>
+
+      {/* Identity-enforcement notice (block/unblock outcome) */}
+      {actionNotice && (
+        <div
+          className="flex items-start justify-between gap-3 rounded-lg border px-4 py-3"
+          style={{
+            borderColor:
+              actionNotice.kind === "success"
+                ? "rgba(16, 185, 129, 0.25)"
+                : actionNotice.kind === "error"
+                  ? "rgba(239, 68, 68, 0.25)"
+                  : "rgba(245, 158, 11, 0.25)",
+            background:
+              actionNotice.kind === "success"
+                ? "rgba(16, 185, 129, 0.06)"
+                : actionNotice.kind === "error"
+                  ? "rgba(239, 68, 68, 0.06)"
+                  : "rgba(245, 158, 11, 0.06)",
+          }}
+        >
+          <p
+            className="text-sm"
+            style={{
+              color:
+                actionNotice.kind === "success"
+                  ? "var(--success)"
+                  : actionNotice.kind === "error"
+                    ? "var(--critical)"
+                    : "var(--warning)",
+            }}
+          >
+            {actionNotice.message}
+          </p>
+          <button
+            onClick={() => setActionNotice(null)}
+            className="shrink-0 text-[var(--text-faint)] hover:text-[var(--text-primary)]"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Scan status bar */}
       {(scanStatus || scanResult) && (

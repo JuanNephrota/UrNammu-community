@@ -8,18 +8,24 @@ import { GoogleWorkspaceSettings } from "../google-workspace-settings";
 import { HexnodeSettings } from "../hexnode-settings";
 import { CrowdStrikeSettings } from "../crowdstrike-settings";
 import { NetskopeSettings } from "../netskope-settings";
+import { BlocklistFeedSettings } from "../blocklist-feed-settings";
+import { EnforcementReadiness } from "../enforcement-readiness";
 import { getSettingsPageData } from "../data";
 
 export default async function ShadowAISettingsPage() {
   await requireRole(["ADMIN"]);
 
-  const [{ settingsMap, proxySecret, platformUrl }, lastSuccessfulScan] = await Promise.all([
-    getSettingsPageData(),
-    prisma.scanHistory.findFirst({
-      where: { status: "completed", completedAt: { not: null } },
-      orderBy: { completedAt: "desc" },
-    }),
-  ]);
+  const [{ settingsMap, proxySecret, platformUrl }, lastSuccessfulScan, blockedCount] =
+    await Promise.all([
+      getSettingsPageData(),
+      prisma.scanHistory.findFirst({
+        where: { status: "completed", completedAt: { not: null } },
+        orderBy: { completedAt: "desc" },
+      }),
+      prisma.discoveredAITool.count({
+        where: { status: "BLOCKED", detectedDomain: { not: null } },
+      }),
+    ]);
   const [lastGoogleScan, lastMicrosoftScan, lastHexnodeScan, lastCrowdStrikeScan] =
     await Promise.all([
       prisma.scanHistory.findFirst({
@@ -212,6 +218,24 @@ export default async function ShadowAISettingsPage() {
       <NetskopeSettings
         webhookUrl={`${platformUrl}/api/discovered-tools/ingest/netskope`}
         proxySecret={proxySecret}
+      />
+
+      <EnforcementReadiness
+        feedTokenSet={!!settingsMap.shadow_ai_blocklist_token}
+        microsoftConfigured={
+          !!settingsMap.microsoft_shadow_ai_tenant_id &&
+          !!settingsMap.microsoft_shadow_ai_client_id &&
+          !!settingsMap.microsoft_shadow_ai_client_secret
+        }
+        googleConfigured={
+          !!settingsMap.google_service_account_key && !!settingsMap.google_admin_email
+        }
+      />
+
+      <BlocklistFeedSettings
+        feedUrl={`${platformUrl}/api/discovered-tools/blocklist`}
+        hasToken={!!settingsMap.shadow_ai_blocklist_token}
+        blockedCount={blockedCount}
       />
 
       <GoogleWorkspaceSettings

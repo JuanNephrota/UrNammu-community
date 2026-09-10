@@ -103,4 +103,27 @@ export const BUILTIN_PROMPT_RISK_RULES: BuiltInPromptRiskRule[] = [
     description:
       "Literal secrets or regulated identifiers (SSN, payment card, private key, cloud access key) present in the prompt body — a potential data-leak / compliance exposure when sent to an external model.",
   },
+  {
+    key: "secret_token_in_text",
+    label: "API key or token present",
+    severity: "critical",
+    patterns: [
+      // OpenAI / Anthropic (sk-, sk-ant-, sk-proj-)
+      "\\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}\\b",
+      // Stripe live/test keys (sk_/pk_/rk_)
+      "\\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\\b",
+      // GitHub tokens (ghp_/gho_/ghu_/ghs_/ghr_)
+      "\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\\b",
+      // GitHub fine-grained PAT
+      "\\bgithub_pat_[A-Za-z0-9_]{60,}\\b",
+      // Google API key
+      "\\bAIza[0-9A-Za-z_-]{35}\\b",
+      // Google OAuth access token
+      "\\bya29\\.[0-9A-Za-z._-]{20,}\\b",
+      // Slack tokens (xoxb-/xoxp-/xoxa-/xoxr-/xoxs-)
+      "\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b",
+    ],
+    description:
+      "A literal API key or access token (OpenAI, Anthropic, Stripe, GitHub, Google, Slack, etc.) is present in the text — a credential leak whether in a prompt or a model response.",
+  },
 ];

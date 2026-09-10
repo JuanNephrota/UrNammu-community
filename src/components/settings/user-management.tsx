@@ -14,7 +14,10 @@ import {
   Plus,
   Shield,
   ShieldCheck,
+  Trash2,
   UserCog,
+  UserMinus,
+  UserCheck,
   FlaskConical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,6 +25,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type ManagedUser = {
   id: string;
@@ -32,10 +42,24 @@ type ManagedUser = {
   createdAt: string | Date;
   hasLocalPassword: boolean;
   authProviders: string[];
+  status: string;
+  statusReason: string | null;
+  suspendedAt: string | Date | null;
+  deletedAt: string | Date | null;
+};
+
+type UserUpdates = {
+  name?: string;
+  role?: string;
+  department?: string | null;
+  password?: string | null;
+  status?: "ACTIVE" | "SUSPENDED";
+  statusReason?: string | null;
 };
 
 export function UserManagement({
   initialUsers,
+  currentUserId,
   localAuthEnabled,
   devLoginEnabled,
   microsoftEnabled,
@@ -44,6 +68,7 @@ export function UserManagement({
   platformUrl,
 }: {
   initialUsers: ManagedUser[];
+  currentUserId: string;
   localAuthEnabled: boolean;
   devLoginEnabled: boolean;
   microsoftEnabled: boolean;
@@ -58,6 +83,9 @@ export function UserManagement({
   platformUrl: string;
 }) {
   const [users, setUsers] = useState(initialUsers);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [loadingDirectory, setLoadingDirectory] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
   const [creating, setCreating] = useState(false);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [savingIdentity, setSavingIdentity] = useState(false);
@@ -136,10 +164,7 @@ export function UserManagement({
     }
   }
 
-  async function updateUser(
-    userId: string,
-    updates: { name?: string; role?: string; department?: string | null; password?: string | null }
-  ) {
+  async function updateUser(userId: string, updates: UserUpdates) {
     setSavingUserId(userId);
     setMessage(null);
 
@@ -153,11 +178,61 @@ export function UserManagement({
       if (!res.ok) throw new Error(payload.error ?? "Failed to update user");
 
       setUsers((current) => current.map((user) => (user.id === userId ? payload : user)));
-      setMessage("User updated.");
+      setMessage(
+        updates.status === "SUSPENDED"
+          ? "Account suspended. Their sessions have been revoked."
+          : updates.status === "ACTIVE"
+            ? "Account reactivated."
+            : "User updated."
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to update user");
     } finally {
       setSavingUserId(null);
+    }
+  }
+
+  async function deleteUser(userId: string, reason: string) {
+    setSavingUserId(userId);
+    setMessage(null);
+
+    try {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() || null }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error ?? "Failed to delete user");
+
+      setUsers((current) =>
+        showDeleted
+          ? current.map((user) => (user.id === userId ? payload : user))
+          : current.filter((user) => user.id !== userId)
+      );
+      setPendingDelete(null);
+      setMessage("Account deleted. Its audit history is retained under an anonymized record.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to delete user");
+    } finally {
+      setSavingUserId(null);
+    }
+  }
+
+  async function toggleDeletedVisibility() {
+    const next = !showDeleted;
+    setLoadingDirectory(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/users${next ? "?includeDeleted=true" : ""}`);
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error ?? "Failed to load users");
+      setUsers(payload);
+      setShowDeleted(next);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load users");
+    } finally {
+      setLoadingDirectory(false);
     }
   }
 
@@ -566,11 +641,15 @@ export function UserManagement({
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="flex items-center gap-2">
             <UserCog className="h-4 w-4 text-[var(--accent)]" />
             User Directory ({users.length})
           </CardTitle>
+          <Button variant="outline" size="sm" onClick={toggleDeletedVisibility} disabled={loadingDirectory}>
+            {loadingDirectory && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+            {showDeleted ? "Hide deleted accounts" : "Show deleted accounts"}
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -578,41 +657,199 @@ export function UserManagement({
               <UserRow
                 key={user.id}
                 user={user}
+                isSelf={user.id === currentUserId}
                 saving={savingUserId === user.id}
                 onSave={updateUser}
+                onRequestDelete={setPendingDelete}
               />
             ))}
           </div>
         </CardContent>
       </Card>
+
+      <DeleteUserDialog
+        user={pendingDelete}
+        deleting={!!pendingDelete && savingUserId === pendingDelete.id}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={deleteUser}
+      />
     </div>
+  );
+}
+
+function statusBadge(status: string) {
+  if (status === "SUSPENDED") return <Badge variant="warning">Suspended</Badge>;
+  if (status === "DELETED") return <Badge variant="critical">Deleted</Badge>;
+  return <Badge variant="success">Active</Badge>;
+}
+
+function DeleteUserDialog({
+  user,
+  deleting,
+  onCancel,
+  onConfirm,
+}: {
+  user: ManagedUser | null;
+  deleting: boolean;
+  onCancel: () => void;
+  onConfirm: (userId: string, reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+
+  // Remount per user so the typed confirmation can never carry over.
+  return (
+    <Dialog
+      key={user?.id ?? "none"}
+      open={!!user}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <DialogContent>
+        {user && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Trash2 className="h-4 w-4 text-[var(--critical)]" />
+                Delete {user.name ?? user.email}
+              </DialogTitle>
+              <DialogDescription>
+                This cannot be undone. Sign-in is revoked permanently and the email address is
+                released for reuse.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3 text-xs leading-relaxed text-[var(--text-muted)]">
+                <p className="font-semibold text-[var(--text-primary)]">What happens</p>
+                <ul className="mt-2 space-y-1">
+                  <li>· Password and linked OAuth accounts are erased, and all sessions end.</li>
+                  <li>· Name, email, and department are scrubbed from the account record.</li>
+                  <li>
+                    · Their audit log, approvals, reviews, and evidence are retained under an
+                    anonymized record so the governance trail stays intact.
+                  </li>
+                  <li>
+                    · Any AI systems or agents they own keep pointing at that anonymized record —
+                    reassign an owner if it still needs one.
+                  </li>
+                </ul>
+                <p className="mt-2">
+                  Suspending instead keeps the account recoverable with its identity intact.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Reason (recorded in the audit log)</Label>
+                <Input
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Offboarded — left the company"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Type <span className="font-mono text-[var(--text-primary)]">{user.email}</span> to
+                  confirm
+                </Label>
+                <Input
+                  value={confirmation}
+                  onChange={(e) => setConfirmation(e.target.value)}
+                  placeholder={user.email}
+                  autoComplete="off"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3">
+                <Button variant="ghost" onClick={onCancel} disabled={deleting}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={deleting || confirmation.trim() !== user.email}
+                  onClick={() => onConfirm(user.id, reason)}
+                >
+                  {deleting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="mr-2 h-4 w-4" />
+                  )}
+                  {deleting ? "Deleting..." : "Delete Account"}
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function UserRow({
   user,
+  isSelf,
   saving,
   onSave,
+  onRequestDelete,
 }: {
   user: ManagedUser;
+  isSelf: boolean;
   saving: boolean;
-  onSave: (
-    userId: string,
-    updates: { name?: string; role?: string; department?: string | null; password?: string | null }
-  ) => Promise<void>;
+  onSave: (userId: string, updates: UserUpdates) => Promise<void>;
+  onRequestDelete: (user: ManagedUser) => void;
 }) {
   const [name, setName] = useState(user.name ?? "");
   const [role, setRole] = useState(user.role);
   const [department, setDepartment] = useState(user.department ?? "");
   const [password, setPassword] = useState("");
+  const [suspendReason, setSuspendReason] = useState("");
+  const [confirmingSuspend, setConfirmingSuspend] = useState(false);
+
+  const isDeleted = user.status === "DELETED";
+  const isSuspended = user.status === "SUSPENDED";
+
+  if (isDeleted) {
+    return (
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 opacity-70">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-[var(--text-primary)]">{user.name ?? user.email}</p>
+            <p className="text-xs text-[var(--text-muted)]">{user.email}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {statusBadge(user.status)}
+              <Badge variant="info">{user.role.replace("_", " ")}</Badge>
+            </div>
+            {user.statusReason && (
+              <p className="mt-2 text-xs text-[var(--text-muted)]">Reason: {user.statusReason}</p>
+            )}
+          </div>
+          <Badge variant="outline">
+            Deleted {user.deletedAt ? new Date(user.deletedAt).toLocaleDateString() : ""}
+          </Badge>
+        </div>
+        <p className="mt-3 text-xs text-[var(--text-faint)]">
+          Kept as an anonymized record so audit logs and governance evidence stay attributable.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-xl border border-[var(--border-subtle)] p-4">
+    <div
+      className={`rounded-xl border p-4 ${
+        isSuspended
+          ? "border-[var(--warning-border)] bg-[var(--warning-dim)]/20"
+          : "border-[var(--border-subtle)]"
+      }`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-[var(--text-primary)]">{user.name ?? user.email}</p>
           <p className="text-xs text-[var(--text-muted)]">{user.email}</p>
           <div className="mt-2 flex flex-wrap gap-2">
+            {statusBadge(user.status)}
             {user.department && <Badge variant="outline">{user.department}</Badge>}
             <Badge variant="info">{user.role.replace("_", " ")}</Badge>
             {user.hasLocalPassword && <Badge variant="success">Local Password</Badge>}
@@ -622,6 +859,14 @@ function UserRow({
               </Badge>
             ))}
           </div>
+          {isSuspended && (
+            <p className="mt-2 text-xs text-[var(--warning-strong)]">
+              Suspended{" "}
+              {user.suspendedAt ? `on ${new Date(user.suspendedAt).toLocaleDateString()}` : ""}
+              {user.statusReason ? ` — ${user.statusReason}` : ""}. Sign-in is blocked on every
+              provider.
+            </p>
+          )}
         </div>
         <Badge variant="outline">
           {new Date(user.createdAt).toLocaleDateString()}
@@ -660,7 +905,7 @@ function UserRow({
         </div>
       </div>
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button
           onClick={() =>
             onSave(user.id, {
@@ -675,11 +920,89 @@ function UserRow({
           {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
           {saving ? "Saving..." : "Save Changes"}
         </Button>
+
+        {isSuspended ? (
+          <Button
+            variant="outline"
+            disabled={saving}
+            onClick={() => onSave(user.id, { status: "ACTIVE" })}
+          >
+            <UserCheck className="mr-2 h-4 w-4" />
+            Reactivate
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            disabled={saving || isSelf}
+            title={isSelf ? "You cannot suspend your own account." : undefined}
+            onClick={() => setConfirmingSuspend((current) => !current)}
+          >
+            <UserMinus className="mr-2 h-4 w-4" />
+            Suspend
+          </Button>
+        )}
+
+        <Button
+          variant="ghost"
+          className="text-[var(--critical)] hover:text-[var(--critical-strong)]"
+          disabled={saving || isSelf}
+          title={isSelf ? "You cannot delete your own account." : undefined}
+          onClick={() => onRequestDelete(user)}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Delete
+        </Button>
+
         <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
           <Shield className="h-3.5 w-3.5" />
-          <span>Accounts can use local passwords, OAuth providers, or both.</span>
+          <span>Suspending revokes sessions immediately and is reversible.</span>
         </div>
       </div>
+
+      {confirmingSuspend && !isSuspended && (
+        <div className="mt-4 rounded-lg border border-[var(--warning-border)] bg-[var(--warning-dim)]/30 p-4">
+          <p className="text-sm font-semibold text-[var(--text-primary)]">
+            Suspend {user.name ?? user.email}?
+          </p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            They lose access on the next request — including any session already open — across
+            local, Google, and Microsoft sign-in. Everything they own is left untouched.
+          </p>
+          <div className="mt-3 space-y-2">
+            <Label>Reason (recorded in the audit log)</Label>
+            <Input
+              value={suspendReason}
+              onChange={(e) => setSuspendReason(e.target.value)}
+              placeholder="Under investigation / extended leave"
+            />
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <Button
+              variant="destructive"
+              disabled={saving}
+              onClick={() =>
+                onSave(user.id, {
+                  status: "SUSPENDED",
+                  statusReason: suspendReason.trim() || null,
+                }).then(() => {
+                  setConfirmingSuspend(false);
+                  setSuspendReason("");
+                })
+              }
+            >
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <UserMinus className="mr-2 h-4 w-4" />
+              )}
+              {saving ? "Suspending..." : "Confirm Suspend"}
+            </Button>
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirmingSuspend(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

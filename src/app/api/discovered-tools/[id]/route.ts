@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { withRole } from "@/lib/auth-guard";
 import { createAuditLog } from "@/lib/audit";
 import { classifyDiscoveredTool } from "@/lib/ai-classification";
+import { enforceIdentityBlock, type IdentityEnforcementResult } from "@/lib/identity-enforcement";
 
 const updateDiscoveredToolSchema = z.object({
   status: z.enum([
@@ -176,6 +177,25 @@ export async function PUT(
       },
     });
 
+    // Identity-layer enforcement: when a tool enters BLOCKED, disable its IdP
+    // sign-ins; when it leaves BLOCKED, restore them. Best-effort — a failure
+    // here is reported, not fatal, so the status change still persists.
+    let identityEnforcement: IdentityEnforcementResult | undefined;
+    const enteringBlocked =
+      parsed.data.status === "BLOCKED" && existing.status !== "BLOCKED";
+    const leavingBlocked =
+      existing.status === "BLOCKED" && parsed.data.status !== "BLOCKED";
+    if (enteringBlocked || leavingBlocked) {
+      identityEnforcement = await enforceIdentityBlock(
+        {
+          toolName: existing.toolName,
+          externalAppId: existing.externalAppId,
+          externalAppProvider: existing.externalAppProvider,
+        },
+        enteringBlocked
+      );
+    }
+
     if (existing.status !== parsed.data.status) {
       const action = existing.status === "BLOCKED" ? "UNBLOCK" : "UPDATE_STATUS";
       await createAuditLog({
@@ -183,10 +203,22 @@ export async function PUT(
         action,
         entityType: "DiscoveredAITool",
         entityId: id,
-        changes: { from: existing.status, to: parsed.data.status },
+        changes: {
+          from: existing.status,
+          to: parsed.data.status,
+          ...(identityEnforcement
+            ? {
+                identityEnforcement: {
+                  provider: identityEnforcement.provider,
+                  action: identityEnforcement.action,
+                  enforced: identityEnforcement.enforced,
+                },
+              }
+            : {}),
+        },
       });
     }
 
-    return NextResponse.json(updated);
+    return NextResponse.json({ ...updated, identityEnforcement });
   });
 }

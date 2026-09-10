@@ -2,7 +2,7 @@
 
 UrNammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
-- AI system, agent, and skill inventory (AI Skills synced from CertifID Forge)
+- AI system and agent inventory
 - Shadow AI discovery from Google Workspace, Microsoft 365, Hexnode UEM devices, and DNS/proxy/Netskope log imports
 - Risk assessments with templates, branching questions, issue tracking, and agent-aware overlays
 - Governance workflows with staged approvals, exceptions, evidence, incidents, renewal automation, and escalations
@@ -24,7 +24,6 @@ For a codebase walkthrough and extension guide, see [docs/implementation-guide.m
 
 - `Registry`: central inventory of AI systems
 - `Agents`: tracked AI agents and assistants
-- `AI Skills`: Forge-synced skill catalog, auto-promoting agent-like content into Agents/Systems
 - `Shadow AI`: discovery and triage of unregistered tools (Google Workspace, Microsoft 365, Hexnode, DNS/Netskope)
 - `Risk Center`: system and agent-aware risk assessments
 - `Compliance`: policy assignment, audit evidence, runtime policy enforcement, and a Policy Denials log
@@ -129,7 +128,7 @@ RESEND_API_KEY=
 REPORT_EMAIL_FROM=
 ```
 
-Most integration credentials (Cursor Admin API, Forge Skills, Azure Monitor, Netskope) are configured at runtime in **Settings > Integrations** / **Settings > Shadow AI** rather than via env vars.
+Most integration credentials (Cursor Admin API, Azure Monitor, Netskope) are configured at runtime in **Settings > Integrations** / **Settings > Shadow AI** rather than via env vars.
 
 3. Run Prisma migrations and seed data:
 
@@ -318,10 +317,6 @@ Prompt and code text are stripped at ingest; routes run the dangerous-prompt rul
 
 Adds Cursor spend (`provider="cursor"`) and per-user "lines produced" metrics to the Cursor dashboard. Requires a team-admin Cursor API key (configured in `Settings > Integrations`).
 
-### CertifID Forge (AI Skills)
-
-Syncs the Forge skill catalog into the AI Skills registry. `content_type="skill"` rows land in AI Skills; `agent` / `app` / `agent_system` content auto-promotes into the Agents / Systems registries. Configure the Forge base URL + API key in `Settings > Integrations`.
-
 ### Azure Monitor (proxy health)
 
 Pulls Function App metrics (invocations, response time, HTTP status distribution) into `ProxyHealthSnapshot` records for the Proxy Health board. Configure subscription / resource group / function app / region plus a service principal in `Settings > Integrations`.
@@ -346,18 +341,17 @@ It handles:
 - Google Workspace shadow-AI follow-up scans
 - Microsoft 365 shadow-AI follow-up scans
 - Hexnode UEM device scans
-- Forge Skills sync
 - Azure Monitor proxy-health snapshots
 - governance renewal and exception notice alerts
 - overdue, blocked, and ownership escalation alerts
 
-Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRET`, wired in `vercel.json`): `/api/cron/forge-skills-sync`, `/api/cron/run-report-schedules` (scheduled report email delivery), and `/api/cron/prune-claude-code-metrics` + `/api/cron/prune-cursor-metrics` (OTel telemetry retention).
+Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRET`, wired in `vercel.json`): `/api/cron/run-report-schedules` (scheduled report email delivery) and `/api/cron/prune-claude-code-metrics` + `/api/cron/prune-cursor-metrics` (OTel telemetry retention).
 
 Cadence is controlled in Settings:
 
 - `Settings > Provider Admin APIs`: provider sync enable/interval
 - `Settings > Shadow AI`: Google Workspace, Microsoft 365, and Hexnode auto-scan enable/interval
-- `Settings > Integrations`: AI gateway, Forge, and Azure Monitor sync enable/interval
+- `Settings > Integrations`: AI gateway and Azure Monitor sync enable/interval
 - `Settings > Reporting`: telemetry retention windows and report email delivery
 
 For Vercel deployments, [vercel.json](/Users/pmarsh/scripts/AI-gov/vercel.json) is configured to call the maintenance endpoint hourly. The route itself checks each job’s saved interval before running, so one hourly cron can safely drive multiple background jobs.
@@ -415,7 +409,6 @@ npm run db:reset
 - Cache tokens (cache_read + cache_creation) are separated from default token and cost totals across the oversight dashboard and usage page. A client-side toggle on the usage page shows or hides cache tokens on demand.
 - All `toLocaleString()` calls and number formatters are now pinned to `en-US` so numbers render consistently regardless of the Vercel runtime locale.
 - **Policy-as-code runtime enforcement**: the proxy evaluates machine-readable policy rules with an org-wide gate (`off` / `dry-run` / `enforce`), per-policy advisory-vs-blocking semantics, and a ~30s policy cache. Denials (and dangerous-prompt content blocks) are recorded and surfaced in a filterable, CSV-exportable Policy Denials viewer.
-- **AI Skills registry** synced from CertifID Forge, with manual + scheduled sync, on-demand content fetch, per-field local overrides, and auto-promotion of agent-like content into the Agents/Systems registries.
 - **Per-surface developer-AI oversight** via an OpenTelemetry pipeline: dedicated Claude Platform/API, Claude Code (+ searchable audit log), Cowork (local-agent surface), and Cursor dashboards, with per-user attribution and retention-prune crons. Prompt/code text is stripped at ingest; only metadata, decisions, and prompt-risk verdicts are stored.
 - **Custom reporting suite**: eight data sources and starter templates, detail/grouped output, PDF/CSV/JSON export, and scheduled email delivery via Resend.
 - **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync.
@@ -471,7 +464,6 @@ npm run db:reset
 
 - [x] "Autofill with AI" button on the manual registration form
 - [x] Filter bar with department, risk, status, sensitivity, and vendor dropdowns
-- [x] AI Skills registry synced from CertifID Forge with auto-promotion
 
 ### Reporting
 

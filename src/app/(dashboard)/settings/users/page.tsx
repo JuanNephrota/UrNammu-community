@@ -1,33 +1,25 @@
 import { requireRole } from "@/lib/auth-guard";
 import { UserManagement } from "@/components/settings/user-management";
 import { prisma } from "@/lib/prisma";
+import { managedUserSelect, serializeManagedUser } from "@/lib/user-lifecycle";
 import { getSettingsPageData } from "../data";
 
 export default async function UserSettingsPage() {
-  await requireRole(["ADMIN"]);
+  const session = await requireRole(["ADMIN"]);
   const [{ settingsMap }, users] = await Promise.all([
     getSettingsPageData(),
     prisma.user.findMany({
+      where: { status: { not: "DELETED" } },
       orderBy: { createdAt: "desc" },
-      include: {
-        accounts: { select: { provider: true } },
-      },
+      select: managedUserSelect,
     }),
   ]);
 
   return (
     <div className="space-y-6">
       <UserManagement
-        initialUsers={users.map((user) => ({
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          department: user.department,
-          createdAt: user.createdAt,
-          hasLocalPassword: !!user.passwordHash,
-          authProviders: user.accounts.map((account) => account.provider),
-        }))}
+        initialUsers={users.map(serializeManagedUser)}
+        currentUserId={session.user.userId}
         localAuthEnabled={
           settingsMap.enable_local_auth === "true" ||
           (settingsMap.enable_local_auth === null &&

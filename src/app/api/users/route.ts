@@ -4,6 +4,7 @@ import { withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/passwords";
 import { createAuditLog } from "@/lib/audit";
+import { managedUserSelect, serializeManagedUser } from "@/lib/user-lifecycle";
 
 const createUserSchema = z.object({
   email: z.string().email(),
@@ -13,29 +14,19 @@ const createUserSchema = z.object({
   password: z.string().min(8).max(200).optional().nullable(),
 });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   return withRole(["ADMIN"], async () => {
+    // Retired accounts stay in the table forever to keep the audit trail
+    // attributable, so keep them out of the directory unless asked for.
+    const includeDeleted = req.nextUrl.searchParams.get("includeDeleted") === "true";
+
     const users = await prisma.user.findMany({
+      where: includeDeleted ? undefined : { status: { not: "DELETED" } },
       orderBy: { createdAt: "desc" },
-      include: {
-        accounts: {
-          select: { provider: true },
-        },
-      },
+      select: managedUserSelect,
     });
 
-    return NextResponse.json(
-      users.map((user) => ({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        department: user.department,
-        createdAt: user.createdAt,
-        hasLocalPassword: !!user.passwordHash,
-        authProviders: user.accounts.map((account) => account.provider),
-      }))
-    );
+    return NextResponse.json(users.map(serializeManagedUser));
   });
 }
 
@@ -69,6 +60,7 @@ export async function POST(req: NextRequest) {
           department: parsed.data.department || null,
           passwordHash,
         },
+        select: managedUserSelect,
       });
 
       await createAuditLog({
@@ -84,15 +76,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        department: user.department,
-        hasLocalPassword: !!user.passwordHash,
-        authProviders: [],
-      }, { status: 201 });
+      return NextResponse.json(serializeManagedUser(user), { status: 201 });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Failed to create user" },

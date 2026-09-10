@@ -168,7 +168,12 @@ export function sanitizeText(value: string | null): string | null {
   const cleaned = value
     .replace(/-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----/g, "[private-key]")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
-    .replace(/\b(?:sk|AIza|ya29|ghp)_[A-Za-z0-9._-]+\b/g, "[secret]")
+    // API keys / access tokens — keep aligned with the `secret_token_in_text`
+    // rule so a matched token is never surfaced raw in a finding or alert.
+    .replace(
+      /\b(?:sk-[A-Za-z0-9_-]{10,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,}|ya29\.[0-9A-Za-z._-]{10,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:sk|AIza|ya29|ghp)_[A-Za-z0-9._-]+)\b/gi,
+      "[secret]"
+    )
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[aws-key]")
     // Payment card (major brand prefixes, optional separators) — redact before
     // the generic \d{6,} rule, which wouldn't catch dash/space-grouped cards.
@@ -194,6 +199,20 @@ export async function analyzePromptRisk(
   return analyzeText(extractPromptText(requestBody));
 }
 
+// Built-in rules that detect malicious INTENT in user input. They match on
+// keywords/verbs ("reveal credentials", "bypass safety", "ignore previous
+// instructions"), so they false-positive on model OUTPUT — a refusal that
+// explains itself ("I won't reveal credentials or bypass safety guardrails")
+// trips them. Response scanning (inline DLP + leakage probe) excludes these and
+// looks only for actual sensitive DATA in the text.
+const INTENT_RULE_KEYS = new Set<string>([
+  "prompt_injection",
+  "secret_extraction",
+  "data_exfiltration",
+  "malware_or_phishing",
+  "dangerous_autonomy",
+]);
+
 /**
  * Run the active prompt-risk rule set against an arbitrary piece of text and
  * return the same structured analysis as {@link analyzePromptRisk}. This is the
@@ -203,7 +222,8 @@ export async function analyzePromptRisk(
  * one rule engine and one sanitizer.
  */
 export async function analyzeText(
-  text: string | null | undefined
+  text: string | null | undefined,
+  options?: { excludeIntentRules?: boolean }
 ): Promise<PromptRiskAnalysis> {
   const promptText = (text ?? "").slice(0, 8000);
   if (!promptText) {
@@ -221,7 +241,10 @@ export async function analyzeText(
     };
   }
 
-  const rules = await loadActiveRules();
+  const allRules = await loadActiveRules();
+  const rules = options?.excludeIntentRules
+    ? allRules.filter((r) => !INTENT_RULE_KEYS.has(r.key))
+    : allRules;
 
   const categories: string[] = [];
   const ruleKeys: string[] = [];

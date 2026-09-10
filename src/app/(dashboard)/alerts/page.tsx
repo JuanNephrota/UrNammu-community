@@ -79,6 +79,9 @@ export default async function AlertsPage() {
         <Link href="/alerts/prompt-rules" className="text-xs text-[var(--accent)] hover:underline">
           Tune detection rules
         </Link>
+        <Link href="/alerts/key-usage-rules" className="text-xs text-[var(--accent)] hover:underline">
+          Key usage rules
+        </Link>
         <Link href="/alerts/exceptions" className="text-xs text-[var(--accent)] hover:underline">
           Manage prompt risk exceptions
         </Link>

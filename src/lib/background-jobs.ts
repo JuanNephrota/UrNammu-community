@@ -28,6 +28,10 @@ import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
 import { isHexnodeConfigured } from "./hexnode";
 import { isCrowdStrikeConfigured } from "./crowdstrike";
 import { evaluateGovernanceAutomation } from "./governance-automation";
+import {
+  runKeyUsageRuleEvaluation,
+  type KeyUsageEvaluationResult,
+} from "./key-usage-evaluation";
 
 type BackgroundActor = string;
 
@@ -96,6 +100,7 @@ export type ScheduledMaintenanceResult = {
     exceptionRenewals: number;
     ownershipEscalations: number;
   };
+  keyUsageRules: KeyUsageEvaluationResult;
 };
 
 function parseBooleanSetting(value: string | null, defaultValue: boolean) {
@@ -616,6 +621,15 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
       exceptionRenewals: 0,
       ownershipEscalations: 0,
     },
+    keyUsageRules: {
+      rulesEvaluated: 0,
+      keysEvaluated: 0,
+      findings: 0,
+      alertsCreated: 0,
+      alertsUpdated: 0,
+      alertsResolved: 0,
+      profilesUpserted: 0,
+    },
   };
 
   if (providerSyncDue) {
@@ -761,6 +775,17 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     source: "ownership_escalation",
     candidates: automation.ownershipEscalations,
   });
+
+  // Key-usage rules run last and never fail the maintenance pass: a bad rule
+  // config or a slow telemetry read should not take the provider syncs and
+  // governance automation down with it.
+  try {
+    result.keyUsageRules = await runKeyUsageRuleEvaluation(now);
+  } catch (error) {
+    logger.error(
+      `key-usage rule evaluation failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   return result;
 }

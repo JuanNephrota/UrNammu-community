@@ -161,6 +161,11 @@ OPENAI_API_KEY=<optional>
 # Proxy
 PROXY_SECRET=<shared secret for API proxy auth>
 
+# Shadow AI blocklist feed (can also be set in Settings > Shadow AI)
+# Bearer token for GET /api/discovered-tools/blocklist — the denylist of BLOCKED
+# tool domains that an external DNS/proxy/firewall/CASB polls to enforce blocks.
+SHADOW_AI_BLOCKLIST_TOKEN=<random>
+
 # Google Workspace Shadow AI (can also be configured in Settings > Shadow AI)
 GOOGLE_SERVICE_ACCOUNT_KEY=<JSON>
 GOOGLE_ADMIN_EMAIL=<admin@domain.com>

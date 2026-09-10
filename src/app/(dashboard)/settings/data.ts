@@ -22,6 +22,7 @@ const SETTINGS_KEYS = [
   "crowdstrike_base_url",
   "crowdstrike_scan_enabled",
   "crowdstrike_scan_interval_hours",
+  "shadow_ai_blocklist_token",
   "gemini_billing_service_account_key",
   "gemini_billing_project_id",
   "gemini_billing_dataset",

@@ -1,12 +1,43 @@
 "use client";
 
 import { signIn, getProviders } from "next-auth/react";
-import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
 import Image from "next/image";
-import { Scan, Lock, LogIn, FlaskConical } from "lucide-react";
+import { Scan, Lock, LogIn, FlaskConical, CircleAlert } from "lucide-react";
 
 const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 const demoAdminEmail = "admin@example.com";
+
+/** NextAuth redirects here with `?error=` (pages.error in getAuthOptions). */
+function signInErrorMessage(code: string): string {
+  switch (code) {
+    case "AccessDenied":
+      return "This account is suspended or has been deleted. Contact your administrator.";
+    case "CredentialsSignin":
+      return "That email and password did not match an active account.";
+    case "SessionRequired":
+      return "Please sign in to continue.";
+    default:
+      return "Sign-in failed. Try again, or contact your administrator if this continues.";
+  }
+}
+
+// Isolated behind its own Suspense boundary so reading search params does not
+// force the whole login screen to client-render.
+function SignInErrorBanner() {
+  const error = useSearchParams().get("error");
+  if (!error) return null;
+
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-xl border border-[var(--critical-border)] bg-[var(--critical-dim)] px-4 py-3">
+      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-[var(--critical)]" />
+      <p className="text-xs leading-relaxed text-[var(--critical-strong)]">
+        {signInErrorMessage(error)}
+      </p>
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -97,6 +128,10 @@ export default function LoginPage() {
             <Lock className="h-3 w-3 text-[var(--text-faint)]" />
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-default)] to-transparent" />
           </div>
+
+          <Suspense fallback={null}>
+            <SignInErrorBanner />
+          </Suspense>
 
           <div className="space-y-4">
             {/* Google OAuth */}

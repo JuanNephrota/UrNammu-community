@@ -168,7 +168,12 @@ export async function executeSensitiveScan(
     for (const probe of SENSITIVE_PROBES) {
       try {
         const responseText = await call(probe.prompt);
-        const analysis = await analyzeText(responseText);
+        // A leak = the response contains actual sensitive DATA, not the model
+        // mentioning a sensitive topic. Exclude intent rules so refusals that
+        // explain themselves don't register as false leaks.
+        const analysis = await analyzeText(responseText, {
+          excludeIntentRules: true,
+        });
         const recorded = await recordSensitiveFinding({
           source: "probe",
           provider: target.id,

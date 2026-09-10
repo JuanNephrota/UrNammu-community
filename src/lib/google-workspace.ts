@@ -17,6 +17,10 @@ export interface ScanDiscovery {
   matchConfidence?: "high" | "medium" | "low";
   matchScore?: number;
   matchReasons?: string[];
+  // Identity-provider app handle for identity-layer enforcement (optional —
+  // only set when the scan source exposes it).
+  externalAppId?: string;
+  externalAppProvider?: "google_workspace" | "microsoft_365";
 }
 
 export interface FullScanResult {
@@ -116,9 +120,10 @@ export async function scanTokenActivity(
     for (const item of items) {
       const params = item.events?.[0]?.parameters ?? [];
       const eventName = item.events?.[0]?.name ?? "unknown";
+      const clientId = params.find((p) => p.name === "client_id")?.value ?? "";
       const appName =
         params.find((p) => p.name === "app_name")?.value ??
-        params.find((p) => p.name === "client_id")?.value ??
+        clientId ??
         "";
       const scopes = params
         .find((p) => p.name === "scope")
@@ -156,6 +161,7 @@ export async function scanTokenActivity(
       if (candidate) {
         events.push({
           appName,
+          clientId,
           scopes,
           userEmail: item.actor?.email ?? "unknown",
           timestamp: item.id?.time ?? new Date().toISOString(),
@@ -174,6 +180,7 @@ export async function scanTokenActivity(
 
 interface TokenEvent {
   appName: string;
+  clientId: string;
   scopes: string[];
   userEmail: string;
   timestamp: string;
@@ -216,6 +223,86 @@ export async function scanUserTokens(
   }
 
   return results;
+}
+
+export interface GoogleRevocationResult {
+  usersTargeted: number;
+  tokensRevoked: number;
+  errors: number;
+  capped: boolean;
+}
+
+/**
+ * Revoke an OAuth app's access across the domain by deleting each authorizing
+ * user's token grant for the given client_id. This invalidates the app's
+ * refresh tokens, cutting off its access to Google data.
+ *
+ * Uses only already-granted scopes — `admin.reports.audit.readonly` to find
+ * which users authorized the app (from the token audit log), and
+ * `admin.directory.user.security` to delete each grant. No re-consent needed.
+ *
+ * Caveats (surfaced to the admin by the caller):
+ *  - Google exposes no per-app *block* API, so users can re-authorize later.
+ *    Preventing re-consent requires the org-wide "Block all unconfigured apps"
+ *    policy (Admin console / Cloud Identity, applied globally).
+ *  - Only users seen in the audit lookback window are targeted.
+ *  - Revocations are capped per call to stay within the request timeout.
+ */
+export async function revokeGoogleAppAccess(
+  clientId: string,
+  options: { lookbackDays?: number; maxUsers?: number } = {}
+): Promise<GoogleRevocationResult> {
+  const { lookbackDays = 90, maxUsers = 50 } = options;
+  const auth = await getAuthClient();
+  const reports = google.admin({ version: "reports_v1", auth });
+  const directory = google.admin({ version: "directory_v1", auth });
+
+  // 1. Find users who authorized this client_id via the token audit log.
+  const userEmails = new Set<string>();
+  const startTime = new Date();
+  startTime.setDate(startTime.getDate() - lookbackDays);
+  let pageToken: string | undefined;
+  let pageCount = 0;
+  const maxPages = 10;
+
+  do {
+    const response = await reports.activities.list({
+      userKey: "all",
+      applicationName: "token",
+      eventName: "authorize",
+      filters: `client_id==${clientId}`,
+      startTime: startTime.toISOString(),
+      maxResults: 500,
+      pageToken,
+    });
+    for (const item of response.data.items ?? []) {
+      const email = item.actor?.email;
+      if (email) userEmails.add(email);
+    }
+    pageToken = response.data.nextPageToken ?? undefined;
+    pageCount++;
+  } while (pageToken && pageCount < maxPages);
+
+  // 2. Revoke the grant for each user, capped to bound request duration.
+  const targets = Array.from(userEmails);
+  const capped = targets.length > maxUsers;
+  const batch = targets.slice(0, maxUsers);
+  let tokensRevoked = 0;
+  let errors = 0;
+
+  for (const userEmail of batch) {
+    try {
+      await directory.tokens.delete({ userKey: userEmail, clientId });
+      tokensRevoked++;
+    } catch (err) {
+      // 404 = the user no longer has this grant; treat as already-revoked.
+      const code = (err as { code?: number; status?: number }).code;
+      if (code === 404) continue;
+      errors++;
+    }
+  }
+
+  return { usersTargeted: targets.length, tokensRevoked, errors, capped };
 }
 
 /**
@@ -267,11 +354,18 @@ export async function runFullScan(
           ? match.confidence
           : existing.confidence;
       existing.reasons = Array.from(new Set([...existing.reasons, ...match.reasons]));
+      // Backfill the OAuth client_id if an earlier event for this app lacked it.
+      if (!existing.externalAppId && event.clientId) {
+        existing.externalAppId = event.clientId;
+        existing.externalAppProvider = "google_workspace";
+      }
     } else {
       discoveryMap.set(key, {
         toolName: match.tool.toolName,
         vendor: match.tool.vendor,
         domain,
+        externalAppId: event.clientId || undefined,
+        externalAppProvider: event.clientId ? "google_workspace" : undefined,
         userEmails: [event.userEmail],
         userCount: 1,
         firstSeen: event.timestamp,
@@ -289,6 +383,8 @@ export async function runFullScan(
     toolName: discovery.toolName,
     vendor: discovery.vendor,
     domain: discovery.domain,
+    externalAppId: discovery.externalAppId,
+    externalAppProvider: discovery.externalAppProvider,
     userEmails: discovery.userEmails,
     userCount: discovery.userCount,
     matchConfidence: discovery.confidence,
