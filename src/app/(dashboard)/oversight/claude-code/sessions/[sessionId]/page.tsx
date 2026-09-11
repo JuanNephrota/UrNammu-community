@@ -84,6 +84,12 @@ export default async function ClaudeCodeSessionTracePage({
               />
               <Stat label="Turns" value={String(trace.turnCount)} />
               <Stat label="Events" value={String(trace.eventCount)} />
+              {/*
+                Only calls routed through the ai-proxy have a proxy row, so
+                this is 0 for most sessions. Shown rather than hidden: a zero
+                is the honest answer to "did the proxy see this work?".
+              */}
+              <Stat label="Proxied" value={String(trace.proxyCallCount)} />
               <Stat label="Errors" value={String(trace.errorCount)} />
               <Stat label="Flagged" value={String(trace.flaggedCount)} />
             </div>

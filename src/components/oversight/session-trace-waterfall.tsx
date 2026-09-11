@@ -35,6 +35,7 @@ function barColor(span: TraceSpan): string {
     case "denied":
       return "var(--high-strong)";
   }
+  if (span.kind === "proxy") return "var(--high-strong)";
   switch (span.eventName) {
     case "api_request":
     case "assistant_response":
@@ -246,7 +247,18 @@ function TurnRow({
       </summary>
       <div className="border-l border-[var(--border-subtle)] pl-1">
         {span.children.map((child) => (
-          <SpanRow key={child.id} span={child} totalMs={totalMs} indent={1} />
+          <div key={child.id}>
+            <SpanRow span={child} totalMs={totalMs} indent={1} />
+            {/* A model call the proxy also saw carries its row underneath. */}
+            {child.children.map((grandchild) => (
+              <SpanRow
+                key={grandchild.id}
+                span={grandchild}
+                totalMs={totalMs}
+                indent={2}
+              />
+            ))}
+          </div>
         ))}
       </div>
     </details>

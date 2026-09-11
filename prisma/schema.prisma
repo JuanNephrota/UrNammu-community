@@ -735,10 +735,19 @@ model APIUsageLog {
   flagCategory     String?
   flagReason       String?
 
+  // Upstream provider request id: Anthropic returns it as `request-id`,
+  // OpenAI as `x-request-id`. Claude Code records the same id on its OTel
+  // `api_request` event, so this is the join that lets a session trace show
+  // the proxy's view of a model call — its measured latency, the upstream
+  // status, and any policy decision. Null for calls that never reached the
+  // provider, and for providers that return no id.
+  requestId        String?
+
   createdAt DateTime @default(now())
 
   @@index([aiSystemId, createdAt])
   @@index([flagCategory, createdAt])
+  @@index([requestId])
 }
 
 // ─── Policy Denials (runtime enforcement log) ──────────

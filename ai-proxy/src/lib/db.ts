@@ -51,6 +51,12 @@ export async function logUsage(params: {
     | "sensitive_response"
     | null;
   flagReason?: string | null;
+  /**
+   * Upstream provider request id (Anthropic `request-id`, OpenAI
+   * `x-request-id`). Null when the call never reached the provider. This is
+   * what joins the row to a Claude Code session trace — see the schema.
+   */
+  requestId?: string | null;
   metadata?: Record<string, unknown>;
 }) {
   try {
@@ -82,6 +88,7 @@ export async function logUsage(params: {
         flagged: params.flagged,
         flagCategory: params.flagCategory ?? null,
         flagReason: params.flagReason,
+        requestId: params.requestId ?? null,
         promptMetadata: params.metadata
           ? JSON.parse(JSON.stringify(params.metadata))
           : undefined,

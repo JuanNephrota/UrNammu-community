@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEventRow,
   CLAUDE_CODE_EVENT_SELECT,
   eventDetail,
+  formatMs,
 } from "@/lib/claude-code-events";
 
 // ─── Session traces (synthesized) ────────────────────────────────────────
@@ -59,11 +60,34 @@ export interface TraceEventRow extends ClaudeCodeEventRow {
 
 export type SpanStatus = "ok" | "error" | "denied" | "flagged";
 
+/**
+ * The proxy's record of one model call, as seen from `APIUsageLog`.
+ *
+ * Claude Code reports an `api_request` event for every model call; when that
+ * call went through the ai-proxy, the proxy logged the same call separately
+ * and stored the provider's request id. Matching the two gives a trace the
+ * proxy's independent view — the latency it measured upstream, the cost it
+ * computed, and any policy decision it made — which the client's own
+ * telemetry cannot show.
+ */
+export interface ProxyCall {
+  id: string;
+  requestId: string;
+  model: string | null;
+  totalTokens: number;
+  cost: number;
+  flagged: boolean;
+  flagCategory: string | null;
+  flagReason: string | null;
+  /** Upstream latency the proxy measured, from promptMetadata.latencyMs. */
+  latencyMs: number | null;
+}
+
 export interface TraceSpan {
   id: string;
   /** Display label — an event name, "Turn N", or the session id. */
   name: string;
-  kind: "session" | "turn" | "event";
+  kind: "session" | "turn" | "event" | "proxy";
   /** Start/end as ms offsets from the start of the trace. */
   startMs: number;
   endMs: number;
@@ -116,6 +140,8 @@ export interface SessionTrace {
   idleGaps: IdleGap[];
   eventCount: number;
   turnCount: number;
+  /** Model calls in this trace that the proxy also logged. */
+  proxyCallCount: number;
   errorCount: number;
   flaggedCount: number;
   root: TraceSpan;
@@ -168,6 +194,43 @@ function compareEvents(a: TraceEventRow, b: TraceEventRow): number {
   const byTime = a.timestamp.getTime() - b.timestamp.getTime();
   if (byTime !== 0) return byTime;
   return (a.eventSequence ?? 0) - (b.eventSequence ?? 0);
+}
+
+/**
+ * The provider request id Claude Code recorded for a model call.
+ *
+ * Present on ~99% of `api_request` events as `request_id` (e.g.
+ * "req_011CeZ..."); the proxy stores the same value on APIUsageLog.requestId.
+ */
+export function requestIdOf(e: TraceEventRow): string | null {
+  const attrs = e.attributes as Record<string, unknown> | null;
+  const id = attrs?.request_id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/** How a proxy verdict maps onto the trace's status vocabulary. */
+export function proxyStatus(call: ProxyCall): SpanStatus {
+  switch (call.flagCategory) {
+    case "prompt_risk":
+      return "denied";
+    case "sensitive_response":
+      return "flagged";
+    case "upstream_error":
+    case "proxy_error":
+      return "error";
+    default:
+      return call.flagged ? "flagged" : "ok";
+  }
+}
+
+function proxyDetail(call: ProxyCall): string {
+  const parts: string[] = ["via proxy"];
+  if (call.latencyMs != null) parts.push(`${formatMs(call.latencyMs)} upstream`);
+  if (call.totalTokens > 0) parts.push(`${call.totalTokens.toLocaleString("en-US")} tok`);
+  if (call.cost > 0) parts.push(`$${call.cost.toFixed(4)}`);
+  if (call.flagReason) parts.push(call.flagReason);
+  else if (call.flagCategory) parts.push(call.flagCategory);
+  return parts.join(" · ");
 }
 
 interface ActiveInterval {
@@ -260,8 +323,12 @@ function mapTime(intervals: ActiveInterval[], abs: number): number {
 export function buildSessionTrace(
   sessionId: string,
   events: TraceEventRow[],
+  /** Proxy rows for this session's model calls, keyed by provider request id. */
+  proxyCalls: ProxyCall[] = [],
 ): SessionTrace | null {
   if (events.length === 0) return null;
+
+  const proxyByRequestId = new Map(proxyCalls.map((c) => [c.requestId, c]));
 
   const ordered = [...events].sort(compareEvents);
 
@@ -328,9 +395,54 @@ export function buildSessionTrace(
       riskSeverity: e.riskSeverity,
       riskCategory: e.riskCategory,
       timestamp: e.timestamp,
-      children: [],
+      children: proxyChildren(t),
     };
   };
+
+  /**
+   * The proxy's row for this call, as a child span.
+   *
+   * Both records end at the same moment — the response completing — so the
+   * child is right-aligned to its parent and sized by the latency the proxy
+   * measured upstream. That makes the gap between the two bars meaningful:
+   * it is the client-side overhead (network to the proxy, queueing) that the
+   * provider itself never saw. The child is clamped inside the parent so
+   * containment holds even if the two clocks disagree.
+   */
+  function proxyChildren(t: (typeof timed)[number]): TraceSpan[] {
+    if (t.event.eventName !== "api_request") return [];
+    const requestId = requestIdOf(t.event);
+    if (!requestId) return [];
+    const call = proxyByRequestId.get(requestId);
+    if (!call) return [];
+
+    const start =
+      call.latencyMs != null
+        ? Math.min(Math.max(t.end - call.latencyMs, t.start), t.end)
+        : t.start;
+
+    return [
+      {
+        id: `proxy:${call.id}`,
+        name: "proxy",
+        kind: "proxy",
+        startMs: mapTime(intervals, start),
+        endMs: mapTime(intervals, t.end),
+        instant: false,
+        clamped: false,
+        reportedMs: call.latencyMs,
+        clipped: false,
+        status: proxyStatus(call),
+        detail: proxyDetail(call),
+        eventName: null,
+        toolName: null,
+        riskSeverity: null,
+        riskCategory: null,
+        timestamp: t.event.timestamp,
+        children: [],
+      },
+    ];
+  }
 
   // Walk in sequence order, opening a turn span whenever the promptId changes.
   // Events without a promptId hang directly off the session root — they are
@@ -377,6 +489,19 @@ export function buildSessionTrace(
     turn.children.push(span);
   }
 
+  // A proxy verdict is a real governance outcome, so let it raise the status
+  // of the model call it belongs to rather than hiding one level down.
+  for (const turn of turnsByPrompt.values()) {
+    for (const child of turn.children) {
+      if (child.children.length > 0) {
+        child.status = worstStatus([
+          child.status,
+          ...child.children.map((c) => c.status),
+        ]);
+      }
+    }
+  }
+
   // Roll turn geometry, status, and summary up from their children.
   for (const turn of turnsByPrompt.values()) {
     turn.startMs = Math.min(...turn.children.map((c) => c.startMs));
@@ -387,11 +512,19 @@ export function buildSessionTrace(
     turn.detail = turnSummary(turn.children);
   }
 
-  const errorCount = ordered.filter((e) => {
-    const s = eventStatus(e);
-    return s === "error" || s === "denied";
-  }).length;
-  const flaggedCount = ordered.filter((e) => e.riskSeverity).length;
+  const proxyCallCount = topLevel
+    .flatMap((c) => (c.kind === "turn" ? c.children : [c]))
+    .filter((c) => c.children.some((g) => g.kind === "proxy")).length;
+
+  // Counted off the spans rather than the raw events, so a verdict that only
+  // the proxy saw is reflected in the header instead of contradicting it.
+  const leafSpans = topLevel.flatMap((c) =>
+    c.kind === "turn" ? c.children : [c],
+  );
+  const errorCount = leafSpans.filter(
+    (c) => c.status === "error" || c.status === "denied",
+  ).length;
+  const flaggedCount = leafSpans.filter((c) => c.status === "flagged").length;
 
   const root: TraceSpan = {
     id: `session:${sessionId}`,
@@ -428,6 +561,7 @@ export function buildSessionTrace(
     wallClockMs: Math.max(traceEnd - traceStart, 0),
     idleGaps,
     eventCount: ordered.length,
+    proxyCallCount,
     turnCount: turnsByPrompt.size,
     errorCount,
     flaggedCount,
@@ -617,11 +751,67 @@ export async function loadSessionTrace(
   })) as TraceEventRow[];
 
   const truncated = events.length > MAX_TRACE_EVENTS;
+  const windowed = truncated ? events.slice(0, MAX_TRACE_EVENTS) : events;
+
   const trace = buildSessionTrace(
     sessionId,
-    truncated ? events.slice(0, MAX_TRACE_EVENTS) : events,
+    windowed,
+    await loadProxyCalls(windowed),
   );
   return { trace, truncated };
+}
+
+/**
+ * Fetch the proxy's rows for this session's model calls.
+ *
+ * Only calls routed through the ai-proxy have a row, which today is a small
+ * fraction of traffic — so this skips the query entirely when the session
+ * reports no request ids, and is a single indexed `IN` lookup otherwise.
+ */
+async function loadProxyCalls(events: TraceEventRow[]): Promise<ProxyCall[]> {
+  const requestIds = [
+    ...new Set(
+      events
+        .filter((e) => e.eventName === "api_request")
+        .map(requestIdOf)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  if (requestIds.length === 0) return [];
+
+  const rows = await prisma.aPIUsageLog.findMany({
+    where: { requestId: { in: requestIds } },
+    select: {
+      id: true,
+      requestId: true,
+      model: true,
+      totalTokens: true,
+      cost: true,
+      flagged: true,
+      flagCategory: true,
+      flagReason: true,
+      promptMetadata: true,
+    },
+  });
+
+  return rows.flatMap((r) => {
+    if (!r.requestId) return [];
+    const meta = r.promptMetadata as Record<string, unknown> | null;
+    const latency = meta?.latencyMs;
+    return [
+      {
+        id: r.id,
+        requestId: r.requestId,
+        model: r.model,
+        totalTokens: r.totalTokens,
+        cost: r.cost,
+        flagged: r.flagged,
+        flagCategory: r.flagCategory,
+        flagReason: r.flagReason,
+        latencyMs: typeof latency === "number" ? latency : null,
+      },
+    ];
+  });
 }
 
 /** Distinct app.entrypoint values, for the surface filter. */

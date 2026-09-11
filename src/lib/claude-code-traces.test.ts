@@ -9,6 +9,9 @@ import {
   IDLE_GAP_MS,
   IDLE_RENDER_MS,
   MAX_EVENT_SPAN_MS,
+  type ProxyCall,
+  proxyStatus,
+  requestIdOf,
   type TraceEventRow,
 } from "./claude-code-traces";
 
@@ -422,4 +425,157 @@ test("formatElapsed picks a sensible unit at each scale", () => {
   assert.equal(formatElapsed(5 * min), "5m");
   assert.equal(formatElapsed(hour + 30 * min), "1h 30m");
   assert.equal(formatElapsed(3 * day + 5 * hour), "3d 5h");
+});
+
+// ─── Joining the proxy's view of a model call ────────────────────────────
+
+function proxyCall(overrides: Partial<ProxyCall> = {}): ProxyCall {
+  return {
+    id: "log-1",
+    requestId: "req_abc",
+    model: "claude-opus-5",
+    totalTokens: 2481,
+    cost: 0.0043,
+    flagged: false,
+    flagCategory: null,
+    flagReason: null,
+    latencyMs: 800,
+    ...overrides,
+  };
+}
+
+/** An api_request that reports the provider request id, as Claude Code does. */
+function apiRequest(id: string, at: number, durationMs: number, requestId?: string) {
+  return ev({
+    id,
+    eventName: "api_request",
+    promptId: "p1",
+    timestamp: new Date(at),
+    durationMs,
+    eventSequence: 1,
+    attributes: requestId ? { request_id: requestId } : {},
+  });
+}
+
+test("requestIdOf reads the provider request id, or null when absent", () => {
+  assert.equal(requestIdOf(apiRequest("a", T0, 1000, "req_abc")), "req_abc");
+  assert.equal(requestIdOf(apiRequest("a", T0, 1000)), null);
+  assert.equal(
+    requestIdOf(ev({ id: "a", attributes: { request_id: "" } })),
+    null,
+    "an empty id is not a usable join key",
+  );
+});
+
+test("attaches the proxy's row under the model call it describes", () => {
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_abc")],
+    [proxyCall()],
+  );
+  assert.ok(trace);
+  const call = trace.root.children[0].children[0];
+  assert.equal(call.id, "a");
+  assert.equal(call.children.length, 1);
+  assert.equal(call.children[0].kind, "proxy");
+  assert.equal(trace.proxyCallCount, 1);
+});
+
+test("leaves a model call alone when no proxy row matches it", () => {
+  // The overwhelmingly common case today: the call never went via the proxy.
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_zzz")],
+    [proxyCall({ requestId: "req_abc" })],
+  );
+  assert.ok(trace);
+  assert.equal(trace.root.children[0].children[0].children.length, 0);
+  assert.equal(trace.proxyCallCount, 0);
+});
+
+test("an event with no request id never matches a proxy row", () => {
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000)],
+    [proxyCall()],
+  );
+  assert.ok(trace);
+  assert.equal(trace.root.children[0].children[0].children.length, 0);
+});
+
+test("sizes the proxy bar by measured upstream latency, ending with its parent", () => {
+  // Client saw 1000ms; the proxy measured 800ms upstream. The 200ms gap is
+  // client-side overhead the provider never saw, and should be visible.
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_abc")],
+    [proxyCall({ latencyMs: 800 })],
+  );
+  assert.ok(trace);
+  const parent = trace.root.children[0].children[0];
+  const proxy = parent.children[0];
+  assert.equal(proxy.endMs, parent.endMs, "both end when the response completes");
+  assert.equal(proxy.startMs - parent.startMs, 200);
+  assert.equal(proxy.reportedMs, 800);
+});
+
+test("clamps a proxy bar that claims more time than its parent", () => {
+  // The two clocks are independent, so the proxy can report a longer window.
+  // Containment must hold regardless.
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_abc")],
+    [proxyCall({ latencyMs: 9000 })],
+  );
+  assert.ok(trace);
+  const parent = trace.root.children[0].children[0];
+  const proxy = parent.children[0];
+  assert.ok(proxy.startMs >= parent.startMs);
+  assert.ok(proxy.endMs <= parent.endMs);
+});
+
+test("maps the proxy's verdict onto the trace's status vocabulary", () => {
+  assert.equal(proxyStatus(proxyCall({ flagCategory: "prompt_risk", flagged: true })), "denied");
+  assert.equal(proxyStatus(proxyCall({ flagCategory: "sensitive_response", flagged: true })), "flagged");
+  assert.equal(proxyStatus(proxyCall({ flagCategory: "upstream_error", flagged: true })), "error");
+  assert.equal(proxyStatus(proxyCall({ flagCategory: "proxy_error", flagged: true })), "error");
+  assert.equal(proxyStatus(proxyCall()), "ok");
+});
+
+test("a proxy block raises the model call's own status", () => {
+  // Claude Code reports a clean api_request — it never learns the proxy
+  // refused the prompt. The trace must not look clean.
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_abc")],
+    [proxyCall({ flagged: true, flagCategory: "prompt_risk", flagReason: "secret in prompt" })],
+  );
+  assert.ok(trace);
+  const parent = trace.root.children[0].children[0];
+  assert.equal(parent.status, "denied");
+  assert.equal(trace.root.children[0].status, "denied", "and rolls up to the turn");
+  assert.match(parent.children[0].detail, /secret in prompt/);
+});
+
+test("a proxy-only verdict is counted in the header, not just the rows", () => {
+  // Claude Code saw a clean call, so counting raw events would report zero
+  // errors while the trace itself renders DENIED.
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_abc")],
+    [proxyCall({ flagged: true, flagCategory: "prompt_risk", flagReason: "secret in prompt" })],
+  );
+  assert.ok(trace);
+  assert.equal(trace.errorCount, 1);
+});
+
+test("a proxy latency under a second reads in ms, not 0.0s", () => {
+  const trace = buildSessionTrace(
+    "sess-1",
+    [apiRequest("a", T0 + 5000, 1000, "req_abc")],
+    [proxyCall({ latencyMs: 40 })],
+  );
+  assert.ok(trace);
+  const proxy = trace.root.children[0].children[0].children[0];
+  assert.match(proxy.detail, /40ms upstream/);
 });

@@ -15,6 +15,15 @@ import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
+/**
+ * OpenAI returns its request id as `x-request-id`. Kept alongside the
+ * Anthropic reader so both proxies populate APIUsageLog.requestId the same
+ * way — see the schema for what the column is for.
+ */
+function upstreamRequestId(res: Response): string | null {
+  return res.headers.get("x-request-id") ?? res.headers.get("request-id");
+}
+
 async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   // Auth
   const proxyKey = req.headers.get("x-proxy-key");
@@ -154,6 +163,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     return { status: 502, jsonBody: { error: "Failed to reach OpenAI API" } };
   }
 
+  const requestId = upstreamRequestId(openaiRes);
   const latencyMs = Date.now() - startTime;
 
   // ── Streaming ──
@@ -177,6 +187,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       userEmail,
       latencyMs,
       aiSystemId,
+      requestId,
     }).catch((err: unknown) => {
       console.error("extractOpenAIStreamUsage failed:", err);
     });
@@ -250,6 +261,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     flagged,
     flagCategory,
     flagReason,
+    requestId,
     metadata: { aiSystemId, latencyMs, status: openaiRes.status },
   }).catch((err) => {
     console.error("logUsage failed:", err);

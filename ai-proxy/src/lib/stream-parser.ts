@@ -10,6 +10,8 @@ interface StreamContext {
   userEmail: string | null;
   latencyMs: number;
   aiSystemId: string | null;
+  /** Upstream request id from the response headers; see logUsage. */
+  requestId: string | null;
 }
 
 /**
@@ -85,6 +87,7 @@ export async function extractAnthropicStreamUsage(
         flagged: !!dlp?.flagged,
         flagCategory: dlp?.flagged ? "sensitive_response" : null,
         flagReason: dlp?.flagged ? dlp.summary : null,
+        requestId: ctx.requestId,
         metadata: { latencyMs: ctx.latencyMs, streaming: true, aiSystemId: ctx.aiSystemId },
       });
     }
@@ -159,6 +162,7 @@ export async function extractOpenAIStreamUsage(
         flagged: !!dlp?.flagged,
         flagCategory: dlp?.flagged ? "sensitive_response" : null,
         flagReason: dlp?.flagged ? dlp.summary : null,
+        requestId: ctx.requestId,
         metadata: { latencyMs: ctx.latencyMs, streaming: true, aiSystemId: ctx.aiSystemId },
       });
     }

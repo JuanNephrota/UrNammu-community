@@ -16,6 +16,17 @@ import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 
+/**
+ * The provider's own id for this request, read from the response headers.
+ * Anthropic sends `request-id`; OpenAI sends `x-request-id`. Claude Code
+ * records the same value on its OTel `api_request` event, so persisting it
+ * is what lets a session trace line a proxied call up with the model call
+ * that produced it.
+ */
+function upstreamRequestId(res: Response): string | null {
+  return res.headers.get("request-id") ?? res.headers.get("x-request-id");
+}
+
 async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   // Auth
   const proxyKey = req.headers.get("x-proxy-key");
@@ -182,6 +193,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     return { status: 502, jsonBody: { error: "Failed to reach Anthropic API" } };
   }
 
+  const requestId = upstreamRequestId(anthropicRes);
   const latencyMs = Date.now() - startTime;
 
   // Non-messages endpoints: pass through
@@ -221,6 +233,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       userEmail,
       latencyMs,
       aiSystemId,
+      requestId,
     }).catch((err: unknown) => {
       console.error("extractAnthropicStreamUsage failed:", err);
     });
@@ -297,6 +310,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     flagged,
     flagCategory,
     flagReason,
+    requestId,
     metadata: {
       aiSystemId,
       latencyMs,
