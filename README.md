@@ -2,11 +2,13 @@
 
 UrNammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
-- AI system and agent inventory
+- AI system and agent inventory, with per-agent MCP server/tool allowlists enforced at the proxy
 - Shadow AI discovery from Google Workspace, Microsoft 365, Hexnode UEM devices, and DNS/proxy/Netskope log imports
 - Risk assessments with templates, branching questions, issue tracking, and agent-aware overlays
 - Governance workflows with staged approvals, exceptions, evidence, incidents, renewal automation, and escalations
 - Policy-as-code: machine-readable policy rules enforced at the proxy (off / dry-run / enforce) with a Policy Denials log
+- A seeded framework control catalog (NIST AI RMF, ISO/IEC 42001, EU AI Act, SOC 2) with cross-framework crosswalk and per-system coverage
+- EU AI Act classification wizard that derives a system's risk tier, pre-creates its article obligations, and gates approval
 - Vendor governance with contract, residency, subprocessors, and approved use-case tracking
 - Oversight telemetry from provider admin APIs, AI gateways (Helicone / OpenRouter / Portkey / LiteLLM), Google Gemini / Vertex AI billing export, and proxy-based prompt-risk detection
 - Per-surface developer-AI dashboards for Claude Platform/API, Claude Code, Cowork, and Cursor (OpenTelemetry pipeline)
@@ -23,10 +25,10 @@ For a codebase walkthrough and extension guide, see [docs/implementation-guide.m
 ## Modules
 
 - `Registry`: central inventory of AI systems
-- `Agents`: tracked AI agents and assistants
+- `Agents`: tracked AI agents and assistants, including MCP tool governance (allowlists, observed tool activity, enforce mode)
 - `Shadow AI`: discovery and triage of unregistered tools (Google Workspace, Microsoft 365, Hexnode, DNS/Netskope)
 - `Risk Center`: system and agent-aware risk assessments
-- `Compliance`: policy assignment, audit evidence, runtime policy enforcement, and a Policy Denials log
+- `Compliance`: policy assignment, audit evidence, runtime policy enforcement, a Policy Denials log, and the framework control catalog with coverage and crosswalk
 - `Oversight`: provider usage, costs, anomalies, investigations, vendor governance, and per-surface dashboards (Claude Platform, Claude Code, Cowork, Cursor)
 - `Reports`: build/export/schedule governance reports
 - `Integrations`: connect provider admin APIs, AI gateways, MDM, and observability sources
@@ -391,7 +393,7 @@ npm run db:reset
 - Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
 - Registry services can now be archived when they are no longer in use, and permanently deleted with explicit typed-name confirmation for duplicate or erroneous entries.
 - Dashboard stat cards and remediation status cards are clickable, routing directly to the relevant module page.
-- Proxy usage attribution now supports `x-user-email`, `x-department`, and `x-ai-system-id` headers. The setup guide generates Claude Code config snippets that include `${PROXY_USER_EMAIL}` for automatic per-user attribution via `git config user.email`.
+- Proxy usage attribution now supports `x-user-email`, `x-department`, `x-ai-system-id`, and `x-agent-id` headers. The setup guide generates Claude Code config snippets that include `${PROXY_USER_EMAIL}` for automatic per-user attribution via `git config user.email`.
 - API route validation hardened: alert status updates use Zod enum validation, agent updates check existence before writing, risk assessment operations are wrapped in error handling, and batch usage log ingestion reports per-entry validation errors.
 - Database indexes added on `AuditLog` and `Alert` foreign keys for query performance. `AuditLog` cascade deletes properly when users are removed.
 - Dangerous prompt alerts now store structured metadata (provider, model, categories, matched signals, excerpt) and render as investigation cards with category badges, signal evidence, and related usage logs.
@@ -414,12 +416,17 @@ npm run db:reset
 - **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync.
 - **Shadow AI** gained a single "Scan All Sources" action, Hexnode UEM device discovery, Netskope log-shipper ingestion, and an Unblock action for blocked tools.
 - **Proxy Health** live-ops board combines Azure Monitor heartbeat metrics with real-time DB counters (usage, flagged, policy denials).
+- **Framework control catalog** (`FrameworkControl` / `ControlCrosswalk`): 96 seeded controls — 19 NIST AI RMF categories, 38 ISO/IEC 42001 Annex A controls, 19 EU AI Act articles, 20 SOC 2 criteria — with a 107-link crosswalk. Systems are assessed control by control on the Compliance tab; a `COMPLIANT` control satisfies its crosswalked peers as *Inherited*, and coverage rolls up per framework at Compliance → Framework Coverage. The previously unused `/api/ai/summarize` endpoint now powers an advisory AI gap analysis per framework.
+- **EU AI Act classification** (`EuAiActClassification`): a stepped wizard (role, Art. 5 prohibited practices, Annex I, Annex III, Art. 6(3) derogation, Art. 50 transparency, GPAI, Art. 27 FRIA) derives the tier server-side, stores the answers and rationale, pre-creates `NOT_ASSESSED` mappings for every applicable article, raises `eu_ai_act` alerts for high-risk/prohibited outcomes, hard-blocks approval for prohibited systems, and feeds an "EU AI Act Classified" board metric on the Executive dashboard.
+- **MCP tool governance** (`AgentToolCall` / `AgentToolProfile`): both proxies extract declared MCP servers and invoked tools (`mcp_tool_use`, `server_tool_use`, `tool_use`, OpenAI `mcp_call` / `tool_calls`) from streaming and non-streaming responses. Agents carry server and tool allowlists with `monitor` (record dry-run denials + alerts) or `enforce` (403 unlisted servers, narrow `allowed_tools` before forwarding). Surfaced on the agent page, at Oversight → MCP Activity, and as tool-call counts on session-trace proxy spans.
 
 ## TODO / Roadmap
 
 ### Governance
 
 - [ ] Renewal automation for formal approval records and approval re-attestation campaigns
+- [x] EU AI Act classification wizard with obligation pre-creation and approval gating
+- [ ] Other regime applicability (Colorado AI Act, NYC Local Law 144) on the same wizard pattern
 
 ### Oversight
 
@@ -432,6 +439,8 @@ npm run db:reset
 - [ ] Evidence quality scoring for stale, weak, or missing governance artifacts
 - [x] Per-surface developer-AI dashboards (Claude Platform, Claude Code, Cowork, Cursor) over OpenTelemetry
 - [x] AI gateway oversight (Helicone, OpenRouter, Portkey, LiteLLM)
+- [x] MCP tool governance: per-agent server/tool allowlists, proxy enforcement, observed tool activity
+- [ ] Tool-call spans as children of proxy spans in session traces
 
 ### Risk
 
@@ -459,6 +468,8 @@ npm run db:reset
 - [x] Edit existing policies after creation
 - [x] Policy-as-code runtime enforcement (off / dry-run / enforce) with advisory vs blocking
 - [x] Policy Denials viewer with filters and CSV export
+- [x] Seeded framework control catalog (NIST AI RMF, ISO 42001, EU AI Act, SOC 2) with crosswalk inheritance and coverage
+- [ ] Editable crosswalk and custom-framework controls in the UI
 
 ### Registry
 

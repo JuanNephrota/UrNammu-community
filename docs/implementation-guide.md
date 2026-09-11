@@ -16,15 +16,15 @@ This guide is the fastest way to understand how UrNammu is put together, where t
 The app is organized around a few core governance surfaces:
 
 - `Registry`
-  Tracks governed AI systems, approval state, risk history, policy assignments, evidence, incidents, and linked shadow AI findings.
+  Tracks governed AI systems, approval state, risk history, policy assignments, evidence, incidents, linked shadow AI findings, and the EU AI Act classification (wizard, tier, applicable articles).
 - `Agents`
-  Tracks AI agents, autonomy, human review requirements, connected systems, and now AI-assisted agent risk review.
+  Tracks AI agents, autonomy, human review requirements, connected systems, AI-assisted agent risk review, and MCP tool governance (server/tool allowlists, observed tool activity from the proxy).
 - `Shadow AI`
   Ingests and normalizes discoveries from Google Workspace, Microsoft 365, Hexnode UEM, CrowdStrike Falcon, and DNS/proxy/Netskope imports. Also owns the two enforcement layers for blocked tools.
 - `Risk Center`
   Handles system risk assessments, dynamic review questions, use-case templates, agent-aware overlays, and reassessment triggers.
 - `Compliance`
-  Manages policies, rule-based enforcement, compliance evidence, and governance workflows.
+  Manages policies, rule-based enforcement, compliance evidence, governance workflows, and the seeded framework control catalog with crosswalk inheritance and per-framework coverage.
 - `Oversight`
   Surfaces normalized provider telemetry, drift, incidents, vendor governance, and operational follow-up. Also hosts the per-surface developer-AI dashboards (Claude Platform, Claude Code, Cowork, Cursor) and the provider security/privacy scan.
 - `Alerts`

@@ -1381,6 +1381,22 @@ Runs on every maintenance call. Produces alerts for:
 
 ---
 
+### I. Classify a system under the EU AI Act and evidence its obligations
+
+1. Open the system → Overview → **EU AI Act Classification** → **Run classification**.
+2. Answer the steps (role, prohibited practices, Annex I, Annex III, derogation, transparency, GPAI, FRIA). Watch the live result on the right.
+3. Save. You land on the Compliance tab with the EU AI Act framework selected and every applicable article listed as Not Assessed.
+4. Work down the list: click each status badge, record Compliant / Partial / Non-Compliant with evidence. Compliant ratings also satisfy crosswalked NIST and ISO controls.
+5. Re-check the Approval Review card: the high-risk obligation warning clears once every applicable article has a status.
+
+### J. Govern an agent's MCP tools
+
+1. Have the agent's runtime send `x-agent-id: <agent id>` (shown on the agent's MCP Tool Governance card) on its model calls through the proxy.
+2. Leave the allowlists empty for a week. Observed servers and tools accumulate on the card and under **Oversight → MCP Activity**.
+3. Click **Approve** on each expected row, or edit the agent and add server / tool entries by hand (`jira`, `*.internal.example.com`, `jira/search_issues`, `docs/*`).
+4. Switch the agent to **Enforce**. Unlisted servers now return `403` and the proxy narrows `allowed_tools` for listed servers.
+5. Watch **Alerts** for `mcp_tool_governance` entries: a HIGH alert means the model reached for a tool outside the allowlist; a MEDIUM alert means a new server or tool appeared.
+
 ## 17. Troubleshooting / FAQ
 
 **Why don't I see any usage data in Oversight?**
@@ -1441,6 +1457,12 @@ Runs on every maintenance call. Produces alerts for:
 | **PromptRiskRule** | A tunable detection rule (key, label, severity, up to 10 regex patterns) used by the proxy to flag dangerous prompts. Editable at `/alerts/prompt-rules`. |
 | **PromptRiskException** | Per-rule-key suppression record created via False Positive marking. Suppresses alert creation when all matched categories of a candidate alert are covered. |
 | **Audit Log** | Append-only record of every governance action. |
+| **FrameworkControl** | One seeded requirement of a framework (NIST AI RMF category, ISO 42001 Annex A control, EU AI Act article, SOC 2 criterion). Assessed per system as a `ComplianceMapping`. |
+| **Crosswalk** | Curated link between controls in different frameworks. A `COMPLIANT` control satisfies its crosswalked peers as *Inherited*; one hop, no chaining. |
+| **Coverage** | Compliant plus inherited controls as a share of a framework's controls. Partial ratings are shown but not counted. |
+| **EU AI Act Classification** | Per-system result of the classification wizard: risk tier (Prohibited / High-risk / Limited / Minimal), role, obligation flags, and applicable articles. |
+| **MCP Allowlist** | Per-agent lists of permitted MCP servers and tools, with `monitor` or `enforce` mode, applied by the proxy to calls carrying `x-agent-id`. |
+| **AgentToolCall / AgentToolProfile** | A tool the model invoked in one proxied response, and the first/last-seen roll-up per agent, server, and tool. |
 | **Policy Enforcement Mode** | Org-wide runtime mode (`Off` / `Dry run` / `Enforce`) that controls whether policy-as-code rules are enforced at the proxy. |
 | **Policy Denial** | A request the proxy blocked or flagged at runtime against a policy or content rule; listed at Compliance → Denials. |
 | **Report** | A saved, exportable, schedulable query over a governance data source (PDF/CSV/JSON). |
