@@ -45,7 +45,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │   │   ├── registry/   AI System Registry (CRUD + detail + edit)
 │   │   │   ├── agents/     AI Agent Registry (CRUD + detail + edit)
 │   │   │   ├── risk-center/ Risk scoring + heat map + assessments
-│   │   │   ├── compliance/ Policy management + audit trail
+│   │   │   ├── compliance/ Policy management + framework control catalog/coverage + audit trail
 │   │   │   ├── oversight/  API usage monitoring + cost tracking
 │   │   │   ├── shadow-ai/  Shadow AI discovery + Google Workspace scan + DNS import
 │   │   │   ├── alerts/     Alert management
@@ -72,7 +72,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │   ├── dashboard/      Stat cards, risk heat map, usage chart
 │   │   ├── forms/          AI system form, agent form, risk assessment form, policy form
 │   │   ├── registry/       Systems table
-│   │   └── compliance/     Compliance status editor + evidence display
+│   │   └── compliance/     Compliance status editor, framework controls card, coverage bar
 │   ├── lib/
 │   │   ├── prisma.ts       Prisma client singleton
 │   │   ├── auth.ts         NextAuth config (Google + Credentials, first user = ADMIN)

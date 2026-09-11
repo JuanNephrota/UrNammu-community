@@ -9,6 +9,9 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
+import { loadOrgCoverage } from "@/lib/framework-controls-data";
+import { CATALOG_FRAMEWORKS, FRAMEWORK_LABELS } from "@/lib/framework-catalog";
+import { CoverageBar } from "@/components/compliance/coverage-bar";
 
 function thirtyDaysAgo() {
   return new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -16,7 +19,7 @@ function thirtyDaysAgo() {
 
 export default async function CompliancePage() {
   const blockedSince = thirtyDaysAgo();
-  const [policies, assignments, frameworks, activeExceptions] = await Promise.all([
+  const [policies, assignments, frameworks, activeExceptions, orgCoverage] = await Promise.all([
     prisma.policy.findMany({
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { assignments: true } } },
@@ -41,7 +44,9 @@ export default async function CompliancePage() {
         approvedByUser: { select: { name: true, email: true } },
       },
     }),
+    loadOrgCoverage(),
   ]);
+  const policiesByFramework = new Map(frameworks.map((f) => [f.framework, f._count]));
 
   const statusCounts: Record<string, number> = {};
   assignments.forEach((a) => { statusCounts[a.complianceStatus] = a._count; });
@@ -123,20 +128,57 @@ export default async function CompliancePage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Framework Coverage</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>Framework Coverage</span>
+              <Link href="/compliance/frameworks">
+                <Button variant="outline" size="sm">Browse Controls</Button>
+              </Link>
+            </CardTitle>
+          </CardHeader>
           <CardContent>
-            {frameworks.length === 0 ? (
-              <p className="text-sm text-[var(--text-muted)]">No frameworks configured.</p>
-            ) : (
-              <div className="space-y-3">
-                {frameworks.map((f) => (
-                  <div key={f.framework} className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
-                    <span className="text-sm font-medium">{f.framework.replace(/_/g, " ")}</span>
-                    <Badge variant="info">{f._count} policies</Badge>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="space-y-3">
+              {CATALOG_FRAMEWORKS.map((framework) => {
+                const org = orgCoverage[framework];
+                const policyCount = policiesByFramework.get(framework) ?? 0;
+                return (
+                  <Link
+                    key={framework}
+                    href={`/compliance/frameworks/${framework}`}
+                    className="block rounded-md border border-[var(--border-subtle)] p-3 hover:bg-[var(--bg-hover)]"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium">{FRAMEWORK_LABELS[framework]}</span>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="info">{policyCount} {policyCount === 1 ? "policy" : "policies"}</Badge>
+                        <span className="w-12 text-right font-mono text-sm text-[var(--text-secondary)]">
+                          {org.systemsInScope === 0 ? "—" : `${org.avgCoveragePct}%`}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      {org.systemsInScope === 0
+                        ? `${org.controlCount} controls · no systems assessed yet`
+                        : `${org.controlCount} controls · ${org.systemsInScope} system${org.systemsInScope === 1 ? "" : "s"} in scope · ${org.controlsSatisfiedSomewhere} satisfied somewhere`}
+                    </p>
+                    {org.systemsInScope > 0 && (
+                      <CoverageBar
+                        className="mt-2"
+                        total={100}
+                        compliant={org.avgCoveragePct}
+                        height="h-1.5"
+                      />
+                    )}
+                  </Link>
+                );
+              })}
+              {(policiesByFramework.get("CUSTOM") ?? 0) > 0 && (
+                <div className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3">
+                  <span className="text-sm font-medium">Custom</span>
+                  <Badge variant="info">{policiesByFramework.get("CUSTOM")} policies</Badge>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
         <Card>

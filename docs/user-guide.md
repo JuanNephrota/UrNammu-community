@@ -16,6 +16,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
 5. [AI Agents](#5-ai-agents)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
+   - [Framework Control Catalog & Crosswalk](#framework-control-catalog--crosswalk)
    - [Policy-as-Code Runtime Enforcement](#policy-as-code-runtime-enforcement)
    - [Policy Denials Viewer](#policy-denials-viewer)
 8. [Governance Workflows](#8-governance-workflows)
@@ -418,6 +419,27 @@ A system can only be approved when every policy assignment is out of `NOT_ASSESS
 - "Policy *Internal AI Governance* is marked Compliant but has no evidence text. Describe the controls, testing, or artifacts that support the rating."
 
 Empty-evidence warnings on `COMPLIANT` assignments do not hard-block approval, but they are surfaced to reviewers so a blind approve-through is obvious.
+
+### Framework Control Catalog & Crosswalk
+
+Policies are your own documents. The **framework control catalog** is the external yardstick: the actual requirements of each framework, seeded into the database so you can attest to them one by one.
+
+| Framework | What is seeded |
+|---|---|
+| NIST AI RMF 1.0 | The 19 categories under Govern, Map, Measure, Manage |
+| ISO/IEC 42001:2023 | The 38 Annex A controls (A.2.2 – A.10.4) |
+| EU AI Act | 19 articles carrying provider or deployer obligations (Art. 4, 5, 9–17, 26, 27, 43, 49, 50, 53, 72, 73) |
+| SOC 2 (TSC 2017) | CC1–CC9, A1, C1, PI1, P1–P8 |
+
+**Assessing a system.** Open the system, switch to the **Compliance** tab, and scroll to **Framework Controls**. Pick a framework tile, then click a control's status badge to record Compliant / Partially Compliant / Non-Compliant with evidence. Each rating is stored per system and per control, and every change is written to the audit trail.
+
+**Crosswalk inheritance.** The catalog ships with a curated crosswalk of about a hundred links between frameworks (for example NIST *GOVERN 1* ↔ ISO *A.2.2* ↔ EU AI Act *Art. 17*). When a control is marked **Compliant**, its crosswalked peers show as **Inherited** in the other frameworks and count toward their coverage. Inheritance is a single hop and only flows from a direct Compliant rating; a Partially Compliant rating never propagates. Recording a direct rating on the inheriting control overrides the inherited status for that control only.
+
+**Coverage.** The coverage percentage is compliant plus inherited controls divided by the framework's control count. Partial ratings are shown in the bar but do not count toward coverage, so a half-finished framework does not read as half done.
+
+**Org-wide view.** **Compliance → Framework Coverage** (or the *Browse Controls* button on the Compliance page) shows average coverage per framework across the systems that have at least one direct rating in it, and each framework page lists its controls with descriptions, crosswalk links, and how many in-scope systems satisfy each one.
+
+**AI gap analysis.** The **AI Gap Analysis** button on the Framework Controls card sends the current control statuses to the configured AI provider and returns prioritised gaps with suggested remediation. It is advisory and saves nothing; use it to decide where to look next, then record your own ratings.
 
 ### Compliance Services View
 

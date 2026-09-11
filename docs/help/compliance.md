@@ -47,6 +47,17 @@ Approval requires every assignment to be out of `NOT_ASSESSED` and `NON_COMPLIAN
 
 Read this page alongside the enforcement mode: in dry run, entries are requests that **would** have been blocked, and are your tuning signal. In enforce, they are requests that actually failed, and someone may be waiting on one.
 
+## Framework controls
+
+**Compliance → Framework Coverage** (and the **Framework Controls** card on a system's Compliance tab) works from a seeded catalog of controls per framework: the 19 NIST AI RMF categories, the 38 ISO/IEC 42001 Annex A controls, the EU AI Act articles that carry provider or deployer obligations, and the SOC 2 trust services criteria.
+
+- Assess a system control by control. Each rating is a `ComplianceMapping` row with its own evidence text.
+- A control marked `COMPLIANT` also satisfies its **crosswalked** peers in the other frameworks, shown as **Inherited**. Inheritance is one hop and only from a direct `COMPLIANT` rating — a partial rating does not propagate.
+- **Coverage** is compliant plus inherited controls as a share of the framework. Partial ratings show separately so the gap stays visible.
+- **AI Gap Analysis** sends the current statuses to the configured AI provider and returns prioritised gaps. It is advisory: nothing is saved until you record a rating.
+
+The org-wide page rolls this up per framework. A system is **in scope** for a framework once it has at least one direct rating there.
+
 ## Services
 
 **Compliance → Services** groups services by their current compliance status across all assigned policies — the fastest way to see what is `NON_COMPLIANT` or still `NOT_ASSESSED` without walking the registry system by system.

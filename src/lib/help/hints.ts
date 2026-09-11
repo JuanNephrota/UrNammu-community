@@ -39,6 +39,10 @@ export const HELP_HINTS = {
     "ADVISORY flags violations but does not block approval. BLOCKING prevents a system from moving to APPROVED until the violation is resolved.",
   policy_rules_json:
     "Machine-evaluable constraints: allowed/blocked vendors, max data sensitivity, required approval stages, model patterns.",
+  framework_controls:
+    "Seeded catalog of NIST AI RMF, ISO 42001, EU AI Act and SOC 2 controls. Coverage counts controls marked Compliant plus those inherited through the crosswalk.",
+  framework_control_status:
+    "A direct assessment of this control for this system. Compliant here also satisfies crosswalked controls in other frameworks; Not Assessed clears the direct rating but keeps any inheritance.",
 
   // --- Shadow AI ---
   shadow_ai_status:

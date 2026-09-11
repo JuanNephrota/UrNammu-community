@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { controlKey, syncFrameworkCatalog } from "../src/lib/framework-catalog";
 import { hashPassword } from "../src/lib/passwords";
 
 const prisma = new PrismaClient();
@@ -376,26 +377,47 @@ async function main() {
     }),
   ]);
 
-  await Promise.all([
-    prisma.complianceMapping.create({
-      data: {
-        aiSystemId: systems[1].id,
-        framework: "EU_AI_ACT",
-        requirement: "Human oversight for high-risk transaction review",
-        status: "PARTIALLY_COMPLIANT",
-        evidence: "Analyst review exists, but explanation quality remains inconsistent.",
+  // Framework control catalog (NIST AI RMF, ISO 42001, EU AI Act, SOC 2) and a
+  // handful of per-system control assessments so coverage has something to show.
+  const controlIds = await syncFrameworkCatalog(prisma);
+  const control = (framework: "EU_AI_ACT" | "NIST_AI_RMF" | "ISO_42001" | "SOC2", code: string) => {
+    const id = controlIds.get(controlKey(framework, code));
+    if (!id) throw new Error(`Catalog control ${framework} ${code} missing`);
+    return { controlId: id, framework, requirement: code };
+  };
+  const controlMappings: Array<{
+    systemIndex: number;
+    framework: "EU_AI_ACT" | "NIST_AI_RMF" | "ISO_42001" | "SOC2";
+    code: string;
+    status: "COMPLIANT" | "PARTIALLY_COMPLIANT" | "NON_COMPLIANT";
+    evidence: string;
+  }> = [
+    { systemIndex: 1, framework: "EU_AI_ACT", code: "Art. 14", status: "PARTIALLY_COMPLIANT", evidence: "Analyst review exists, but explanation quality remains inconsistent." },
+    { systemIndex: 1, framework: "EU_AI_ACT", code: "Art. 9", status: "COMPLIANT", evidence: "Quarterly risk review with documented treatment decisions." },
+    { systemIndex: 1, framework: "EU_AI_ACT", code: "Art. 12", status: "COMPLIANT", evidence: "Decision logs retained 18 months in the audit store." },
+    { systemIndex: 1, framework: "NIST_AI_RMF", code: "GOVERN 1", status: "COMPLIANT", evidence: "AI policy v2 approved by the risk committee." },
+    { systemIndex: 1, framework: "NIST_AI_RMF", code: "MEASURE 2", status: "NON_COMPLIANT", evidence: "No fairness evaluation on file for the current model version." },
+    { systemIndex: 2, framework: "NIST_AI_RMF", code: "GOVERN 2", status: "COMPLIANT", evidence: "Approval board records and review notes are stored with each release." },
+    { systemIndex: 2, framework: "NIST_AI_RMF", code: "MANAGE 4", status: "COMPLIANT", evidence: "Incident runbook and rollback path tested in the last DR exercise." },
+    { systemIndex: 2, framework: "ISO_42001", code: "A.6.2.8", status: "COMPLIANT", evidence: "Event logging enabled with 12-month retention." },
+    { systemIndex: 2, framework: "SOC2", code: "CC8", status: "PARTIALLY_COMPLIANT", evidence: "Prompt changes reviewed but not yet under formal change tickets." },
+  ];
+  for (const m of controlMappings) {
+    const c = control(m.framework, m.code);
+    await prisma.complianceMapping.upsert({
+      where: { aiSystemId_controlId: { aiSystemId: systems[m.systemIndex].id, controlId: c.controlId } },
+      update: { status: m.status, evidence: m.evidence, assessedAt: daysAgo(3) },
+      create: {
+        aiSystemId: systems[m.systemIndex].id,
+        controlId: c.controlId,
+        framework: c.framework,
+        requirement: c.requirement,
+        status: m.status,
+        evidence: m.evidence,
+        assessedAt: daysAgo(3),
       },
-    }),
-    prisma.complianceMapping.create({
-      data: {
-        aiSystemId: systems[2].id,
-        framework: "NIST_AI_RMF",
-        requirement: "Documented accountability and review gates",
-        status: "COMPLIANT",
-        evidence: "Approval board records and review notes are stored with each release.",
-      },
-    }),
-  ]);
+    });
+  }
 
   await Promise.all([
     prisma.systemApproval.create({

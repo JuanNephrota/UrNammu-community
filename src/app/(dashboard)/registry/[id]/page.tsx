@@ -39,6 +39,8 @@ import { SystemLifecycleActions } from "@/components/registry/system-lifecycle-a
 import { getApprovalBlockers } from "@/lib/approval-blockers";
 import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
 import { parseEnforcementMode } from "@/lib/settings";
+import { FrameworkControlsCard } from "@/components/compliance/framework-controls-card";
+import { loadSystemCoverage, pickDefaultFramework } from "@/lib/framework-controls-data";
 import type { GovernanceReviewStage } from "@prisma/client";
 
 export default async function SystemDetailPage({
@@ -46,10 +48,10 @@ export default async function SystemDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; framework?: string }>;
 }) {
   const { id } = await params;
-  const { tab } = await searchParams;
+  const { tab, framework: requestedFramework } = await searchParams;
 
   const system = await prisma.aISystem.findUnique({
     where: { id },
@@ -119,11 +121,15 @@ export default async function SystemDetailPage({
 
   if (!system) notFound();
 
-  const linkedDiscoveries = await prisma.discoveredAITool.findMany({
-    where: { linkedSystemId: system.id },
-    orderBy: { detectedAt: "desc" },
-    take: 5,
-  });
+  const [linkedDiscoveries, frameworkCoverage] = await Promise.all([
+    prisma.discoveredAITool.findMany({
+      where: { linkedSystemId: system.id },
+      orderBy: { detectedAt: "desc" },
+      take: 5,
+    }),
+    loadSystemCoverage(system.id),
+  ]);
+  const selectedFramework = pickDefaultFramework(frameworkCoverage, requestedFramework);
   const now = new Date();
   const telemetryWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const denialsWindowStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -921,6 +927,16 @@ export default async function SystemDetailPage({
               )}
             </CardContent>
           </Card>
+
+          <div className="mt-6">
+            <FrameworkControlsCard
+              systemId={system.id}
+              systemName={system.name}
+              selected={selectedFramework}
+              coverage={frameworkCoverage}
+              basePath={`/registry/${system.id}?tab=compliance`}
+            />
+          </div>
         </TabsContent>
 
         <TabsContent value="audit">

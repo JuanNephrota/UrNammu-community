@@ -67,6 +67,8 @@ The most important Prisma models are:
   Stores multi-dimensional scores, justifications, notes, and contextual branching answers.
 - `Policy` and `PolicyAssignment`
   Policies can now contain structured rules that are evaluated directly against systems.
+- `FrameworkControl`, `ControlCrosswalk`, `ComplianceMapping`
+  The seeded per-framework control catalog (NIST AI RMF, ISO 42001, EU AI Act, SOC 2), the undirected crosswalk between controls in different frameworks, and a system's per-control assessment. Coverage is computed in `src/lib/framework-coverage.ts` (pure) and loaded in `src/lib/framework-controls-data.ts`; the catalog content lives in `src/lib/framework-catalog.ts` and is inserted by migration.
 - `GovernanceReview`, `GovernanceException`, `GovernanceIncident`
   Support staged signoff, exception handling, and oversight workflows.
 - `VendorProfile`
@@ -307,6 +309,8 @@ npm run check:secrets        # no credentials staged
   Add the variant to `KeyUsageConditionType` in the schema, the Zod config in `src/lib/validations/key-usage-rule.ts`, and the evaluator in `src/lib/key-usage-evaluation.ts`.
 - New prompt-risk category:
   Rules are data, not code — add a `PromptRiskRule` row. Rule keys are immutable once created because exceptions reference them.
+- New framework control or crosswalk link:
+  Edit `src/lib/framework-catalog.ts` (codes are immutable once shipped), then add a migration containing the output of `npx tsx scripts/gen-framework-catalog-sql.ts`. The inserts are idempotent, so re-emitting the whole block is safe.
 - New report column or data source:
   Start in `src/lib/reports/data-sources.ts`.
 - New help page:
