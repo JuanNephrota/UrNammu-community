@@ -81,13 +81,18 @@ export function RiskTierTrendChart({ data }: RiskTierTrendProps) {
         />
         <Tooltip
           contentStyle={tooltipStyle}
-          labelFormatter={(v) =>
-            new Date(v).toLocaleDateString("en-US", {
+          labelFormatter={(v) => {
+            // recharts types the tooltip label as ReactNode, since a label can
+            // be any renderable value. This chart's X axis is a date string,
+            // so narrow instead of casting: anything else renders as itself
+            // rather than as "Invalid Date".
+            if (typeof v !== "string" && typeof v !== "number") return v;
+            return new Date(v).toLocaleDateString("en-US", {
               month: "long",
               day: "numeric",
               year: "numeric",
-            })
-          }
+            });
+          }}
         />
         <Legend
           wrapperStyle={{ fontSize: "11px", color: "#94a3b8" }}
