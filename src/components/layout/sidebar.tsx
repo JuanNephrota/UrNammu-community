@@ -25,6 +25,7 @@ import {
   BarChart3,
   Cpu,
   ScanSearch,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -59,6 +60,7 @@ const navItems = [
       { name: "Claude Code", href: "/oversight/claude-code", icon: Terminal },
       { name: "Cowork", href: "/oversight/cowork", icon: Bot },
       { name: "Cursor", href: "/oversight/cursor", icon: MousePointer2 },
+      { name: "MCP Activity", href: "/oversight/mcp-activity", icon: Plug },
       { name: "Compliance", href: "/compliance", icon: FileCheck },
     ],
   },

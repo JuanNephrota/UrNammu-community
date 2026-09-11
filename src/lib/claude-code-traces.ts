@@ -81,6 +81,9 @@ export interface ProxyCall {
   flagReason: string | null;
   /** Upstream latency the proxy measured, from promptMetadata.latencyMs. */
   latencyMs: number | null;
+  /** Tool invocations the proxy observed in the response, from promptMetadata.mcp. */
+  toolCalls?: number;
+  toolNames?: string[];
 }
 
 export interface TraceSpan {
@@ -228,6 +231,12 @@ function proxyDetail(call: ProxyCall): string {
   if (call.latencyMs != null) parts.push(`${formatMs(call.latencyMs)} upstream`);
   if (call.totalTokens > 0) parts.push(`${call.totalTokens.toLocaleString("en-US")} tok`);
   if (call.cost > 0) parts.push(`$${call.cost.toFixed(4)}`);
+  const toolCalls = call.toolCalls ?? 0;
+  if (toolCalls > 0) {
+    const toolNames = call.toolNames ?? [];
+    const names = toolNames.slice(0, 3).join(", ");
+    parts.push(`${toolCalls} tool call${toolCalls === 1 ? "" : "s"}${names ? ` (${names}${toolNames.length > 3 ? ", …" : ""})` : ""}`);
+  }
   if (call.flagReason) parts.push(call.flagReason);
   else if (call.flagCategory) parts.push(call.flagCategory);
   return parts.join(" · ");
@@ -798,6 +807,11 @@ async function loadProxyCalls(events: TraceEventRow[]): Promise<ProxyCall[]> {
     if (!r.requestId) return [];
     const meta = r.promptMetadata as Record<string, unknown> | null;
     const latency = meta?.latencyMs;
+    const mcp = (meta?.mcp ?? null) as { toolCalls?: unknown; tools?: unknown } | null;
+    const toolCalls = typeof mcp?.toolCalls === "number" ? mcp.toolCalls : 0;
+    const toolNames = Array.isArray(mcp?.tools)
+      ? (mcp.tools as unknown[]).filter((t): t is string => typeof t === "string")
+      : [];
     return [
       {
         id: r.id,
@@ -809,6 +823,8 @@ async function loadProxyCalls(events: TraceEventRow[]): Promise<ProxyCall[]> {
         flagCategory: r.flagCategory,
         flagReason: r.flagReason,
         latencyMs: typeof latency === "number" ? latency : null,
+        toolCalls,
+        toolNames,
       },
     ];
   });

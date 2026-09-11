@@ -7,6 +7,22 @@ import { recordSensitiveFinding } from "./sensitive-alerts";
 import { applyMcpPassthrough } from "./mcp-passthrough";
 import { writeProxyUsageBucket } from "./proxy-bucket-writer";
 import { secretsMatch } from "./secret-compare";
+import {
+  evaluateServers,
+  extractAnthropicStreamToolUse,
+  extractAnthropicToolUses,
+  extractDeclaredMcpServers,
+  restrictAllowedTools,
+  summarizeMcpForMetadata,
+  type DeclaredMcpServer,
+  type ObservedToolUse,
+} from "./mcp-tool-governance";
+import {
+  loadAgentGovernance,
+  logMcpServerDenial,
+  recordToolActivity,
+  type AgentGovernance,
+} from "./mcp-tool-activity";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 
@@ -108,6 +124,11 @@ export async function handleAnthropicProxy(
         select: { id: true },
       })
     : null;
+  // x-agent-id attributes the call to a registered agent (and, through it,
+  // to its parent system when x-ai-system-id is absent). The agent's MCP
+  // allowlists govern which servers/tools the call may use.
+  const agent = await loadAgentGovernance(req.headers.get("x-agent-id"));
+  const attributedSystemId = linkedSystem?.id ?? agent?.aiSystemId ?? null;
 
   // Build the target URL
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
@@ -148,6 +169,51 @@ export async function handleAnthropicProxy(
   const model = (bodyJson?.model as string) ?? "unknown";
   const promptRisk = await analyzePromptRisk(bodyJson);
   const isStreaming = bodyJson?.stream === true;
+
+  // ── MCP server allowlist gate ──
+  // Monitor mode records a dry-run denial and forwards; enforce mode returns
+  // 403 for unlisted servers and narrows each server's allowed_tools so the
+  // provider only exposes allowlisted tools to the model.
+  const declaredServers: DeclaredMcpServer[] = extractDeclaredMcpServers(bodyJson);
+  if (agent && declaredServers.length > 0) {
+    const denied = evaluateServers(declaredServers, agent.config).filter((v) => !v.allowed);
+    if (denied.length > 0) {
+      await logMcpServerDenial({
+        provider: "claude",
+        model,
+        agent,
+        aiSystemId: attributedSystemId,
+        userEmail,
+        department,
+        deniedServers: denied.map((v) => v.server),
+        isStreaming,
+      });
+      if (agent.config.enforcement === "enforce") {
+        return NextResponse.json(
+          {
+            error: {
+              type: "policy_denied",
+              message: "Request blocked: an MCP server is not on this agent's allowlist. See `violations`.",
+              violations: denied.map((v) => ({
+                rule: "mcp_server_not_allowed",
+                message: `MCP server "${v.server.name}" is not allowlisted for agent "${agent.name}".`,
+                policy: `Agent MCP allowlist: ${agent.name}`,
+              })),
+            },
+          },
+          { status: 403 }
+        );
+      }
+    }
+    if (agent.config.enforcement === "enforce") {
+      const restricted = restrictAllowedTools(bodyJson, agent.config);
+      if (restricted.changed && restricted.body) {
+        bodyJson = restricted.body;
+        bodyText = JSON.stringify(restricted.body);
+      }
+    }
+  }
+
   const startTime = Date.now();
 
   // Forward to Anthropic
@@ -182,7 +248,7 @@ export async function handleAnthropicProxy(
               excerpt: promptRisk.excerpt,
             }
           : undefined,
-        aiSystemId: linkedSystem?.id ?? null,
+        aiSystemId: attributedSystemId,
       },
     });
 
@@ -192,7 +258,7 @@ export async function handleAnthropicProxy(
         model,
         department,
         userEmail,
-        aiSystemId: linkedSystem?.id ?? null,
+        aiSystemId: attributedSystemId,
         analysis: promptRisk,
       });
     }
@@ -236,9 +302,12 @@ export async function handleAnthropicProxy(
         userEmail,
         latencyMs,
         subpath,
-        aiSystemId: linkedSystem?.id ?? null,
+        aiSystemId: attributedSystemId,
         promptRisk,
         mcp: mcpResult,
+        agent,
+        declaredServers,
+        requestId: anthropicResponse.headers.get("request-id"),
       }).catch((err) => {
         console.error("extractStreamUsage failed:", err);
       })
@@ -250,7 +319,7 @@ export async function handleAnthropicProxy(
         model,
         department,
         userEmail,
-        aiSystemId: linkedSystem?.id ?? null,
+        aiSystemId: attributedSystemId,
         analysis: promptRisk,
       });
     }
@@ -273,6 +342,7 @@ export async function handleAnthropicProxy(
   const completionTokens = usage.output_tokens ?? 0;
   const totalTokens = promptTokens + completionTokens;
   const cost = calculateCost(model, promptTokens, completionTokens);
+  const toolUses = anthropicResponse.ok ? extractAnthropicToolUses(responseBody.content) : [];
 
   // Inline DLP on the model's response — detect sensitive info coming back
   // (only sanitized excerpts are persisted by recordSensitiveFinding).
@@ -321,13 +391,16 @@ export async function handleAnthropicProxy(
       latencyMs,
       status: anthropicResponse.status,
       path: subpath,
-      aiSystemId: linkedSystem?.id ?? null,
-      mcp: mcpResult.detected
-        ? {
-            servers: mcpResult.mcpServerCount,
-            forwardedHeaders: mcpResult.forwarded,
-          }
-        : undefined,
+      aiSystemId: attributedSystemId,
+      agentId: agent?.id ?? null,
+      mcp:
+        mcpResult.detected || declaredServers.length > 0 || toolUses.length > 0
+          ? {
+              servers: mcpResult.mcpServerCount,
+              forwardedHeaders: mcpResult.forwarded,
+              ...summarizeMcpForMetadata(declaredServers, toolUses),
+            }
+          : undefined,
       promptRisk: promptRisk.flagged
         ? {
             severity: promptRisk.severity,
@@ -345,7 +418,7 @@ export async function handleAnthropicProxy(
       model,
       department,
       userEmail,
-      aiSystemId: linkedSystem?.id ?? null,
+      aiSystemId: attributedSystemId,
       analysis: promptRisk,
     });
   }
@@ -356,9 +429,21 @@ export async function handleAnthropicProxy(
       provider: "claude",
       model,
       analysis: responseDlp,
-      aiSystemId: linkedSystem?.id ?? null,
+      aiSystemId: attributedSystemId,
     });
   }
+
+  await recordToolActivity({
+    agent,
+    aiSystemId: attributedSystemId,
+    provider: "claude",
+    model,
+    requestId: anthropicResponse.headers.get("request-id"),
+    userEmail,
+    department,
+    declaredServers,
+    toolUses,
+  });
 
   return NextResponse.json(responseBody, {
     status: anthropicResponse.status,
@@ -380,6 +465,9 @@ async function extractStreamUsage(
     aiSystemId: string | null;
     promptRisk: Awaited<ReturnType<typeof analyzePromptRisk>>;
     mcp: import("./mcp-passthrough").McpPassthroughResult;
+    agent: AgentGovernance | null;
+    declaredServers: DeclaredMcpServer[];
+    requestId: string | null;
   }
 ) {
   try {
@@ -389,6 +477,7 @@ async function extractStreamUsage(
     let inputTokens = 0;
     let outputTokens = 0;
     const responseTextParts: string[] = [];
+    const toolUses: ObservedToolUse[] = [];
 
     while (true) {
       const { done, value } = await reader.read();
@@ -427,6 +516,11 @@ async function extractStreamUsage(
           ) {
             responseTextParts.push(event.delta.text);
           }
+
+          // content_block_start announces tool invocations (mcp_tool_use,
+          // server_tool_use, tool_use) — the governance signal for agents.
+          const toolUse = extractAnthropicStreamToolUse(event);
+          if (toolUse) toolUses.push(toolUse);
         } catch {
           // skip non-JSON lines
         }
@@ -475,12 +569,15 @@ async function extractStreamUsage(
           streaming: true,
           path: ctx.subpath,
           aiSystemId: ctx.aiSystemId,
-          mcp: ctx.mcp.detected
-            ? {
-                servers: ctx.mcp.mcpServerCount,
-                forwardedHeaders: ctx.mcp.forwarded,
-              }
-            : undefined,
+          agentId: ctx.agent?.id ?? null,
+          mcp:
+            ctx.mcp.detected || ctx.declaredServers.length > 0 || toolUses.length > 0
+              ? {
+                  servers: ctx.mcp.mcpServerCount,
+                  forwardedHeaders: ctx.mcp.forwarded,
+                  ...summarizeMcpForMetadata(ctx.declaredServers, toolUses),
+                }
+              : undefined,
           promptRisk: ctx.promptRisk.flagged
             ? {
                 severity: ctx.promptRisk.severity,
@@ -492,6 +589,18 @@ async function extractStreamUsage(
         },
       });
     }
+
+    await recordToolActivity({
+      agent: ctx.agent,
+      aiSystemId: ctx.aiSystemId,
+      provider: "claude",
+      model: ctx.model,
+      requestId: ctx.requestId,
+      userEmail: ctx.userEmail,
+      department: ctx.department,
+      declaredServers: ctx.declaredServers,
+      toolUses,
+    });
   } catch (err) {
     console.error("Failed to extract stream usage:", err);
   }

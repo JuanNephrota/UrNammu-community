@@ -8,6 +8,11 @@ import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/bad
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
 import { AgentAIRiskCard } from "@/components/agents/agent-ai-risk-card";
+import { McpGovernanceCard } from "@/components/agents/mcp-governance-card";
+
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
 
 export default async function AgentDetailPage({
   params,
@@ -37,6 +42,22 @@ export default async function AgentDetailPage({
     },
   });
   if (!agent) notFound();
+
+  const since30d = daysAgo(30);
+  const [toolProfiles, calls30d, unapproved30d, lastCall] = await Promise.all([
+    prisma.agentToolProfile.findMany({
+      where: { agentId: agent.id },
+      orderBy: [{ approved: "asc" }, { lastSeenAt: "desc" }],
+      take: 100,
+    }),
+    prisma.agentToolCall.count({ where: { agentId: agent.id, createdAt: { gte: since30d } } }),
+    prisma.agentToolCall.count({ where: { agentId: agent.id, createdAt: { gte: since30d }, approved: false } }),
+    prisma.agentToolCall.findFirst({
+      where: { agentId: agent.id },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -119,6 +140,21 @@ export default async function AgentDetailPage({
             </div>
           </CardContent>
         </Card>
+        <McpGovernanceCard
+          agent={{
+            id: agent.id,
+            name: agent.name,
+            mcpServerAllowlist: agent.mcpServerAllowlist,
+            mcpToolAllowlist: agent.mcpToolAllowlist,
+            mcpEnforcement: agent.mcpEnforcement,
+            accessLevel: agent.accessLevel,
+            connectedSystems: agent.connectedSystems as string[],
+            capabilities: agent.capabilities as string[],
+            aiSystem: agent.aiSystem ? { id: agent.aiSystem.id, name: agent.aiSystem.name } : null,
+          }}
+          profiles={toolProfiles}
+          stats={{ calls30d, unapproved30d, lastCallAt: lastCall?.createdAt ?? null }}
+        />
         <AgentAIRiskCard
           agent={{
             id: agent.id,

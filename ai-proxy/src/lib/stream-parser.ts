@@ -2,6 +2,15 @@ import { Readable } from "stream";
 import { calculateCost } from "./pricing";
 import { logUsage } from "./db";
 import { scanResponseForSensitiveInfo } from "./sensitive-detect";
+import {
+  extractAnthropicStreamToolUse,
+  extractOpenAIStreamToolUses,
+  summarizeMcpForMetadata,
+  type DeclaredMcpServer,
+  type ObservedToolUse,
+} from "./mcp-tool-governance";
+import { recordToolActivity } from "./tool-activity";
+import type { LoadedAgent } from "./agent-loader";
 
 interface StreamContext {
   provider: "claude" | "chatgpt";
@@ -12,6 +21,12 @@ interface StreamContext {
   aiSystemId: string | null;
   /** Upstream request id from the response headers; see logUsage. */
   requestId: string | null;
+  /** Agent the call was attributed to via x-agent-id, if any. */
+  agent?: LoadedAgent | null;
+  /** MCP servers the request declared (for profiles + metadata). */
+  declaredServers?: DeclaredMcpServer[];
+  /** Passthrough summary, so streaming rows carry the same mcp metadata as non-streaming. */
+  mcp?: { servers: number; forwardedHeaders: string[] } | null;
 }
 
 /**
@@ -27,6 +42,7 @@ export async function extractAnthropicStreamUsage(
     let inputTokens = 0;
     let outputTokens = 0;
     const responseTextParts: string[] = [];
+    const toolUses: ObservedToolUse[] = [];
 
     for await (const chunk of stream) {
       buffer += typeof chunk === "string" ? chunk : chunk.toString();
@@ -41,6 +57,9 @@ export async function extractAnthropicStreamUsage(
 
         try {
           const event = JSON.parse(data);
+
+          const toolUse = extractAnthropicStreamToolUse(event);
+          if (toolUse) toolUses.push(toolUse);
 
           if (event.type === "message_start" && event.message?.usage) {
             inputTokens = event.message.usage.input_tokens ?? 0;
@@ -88,9 +107,30 @@ export async function extractAnthropicStreamUsage(
         flagCategory: dlp?.flagged ? "sensitive_response" : null,
         flagReason: dlp?.flagged ? dlp.summary : null,
         requestId: ctx.requestId,
-        metadata: { latencyMs: ctx.latencyMs, streaming: true, aiSystemId: ctx.aiSystemId },
+        metadata: {
+          latencyMs: ctx.latencyMs,
+          streaming: true,
+          aiSystemId: ctx.aiSystemId,
+          agentId: ctx.agent?.id ?? null,
+          mcp:
+            ctx.mcp || (ctx.declaredServers?.length ?? 0) > 0 || toolUses.length > 0
+              ? { ...(ctx.mcp ?? {}), ...summarizeMcpForMetadata(ctx.declaredServers ?? [], toolUses) }
+              : undefined,
+        },
       });
     }
+
+    await recordToolActivity({
+      agent: ctx.agent ?? null,
+      aiSystemId: ctx.aiSystemId,
+      provider: "claude",
+      model: ctx.model,
+      requestId: ctx.requestId,
+      userEmail: ctx.userEmail,
+      department: ctx.department,
+      declaredServers: ctx.declaredServers ?? [],
+      toolUses,
+    });
   } catch (err) {
     console.error("Failed to extract Anthropic stream usage:", err);
   }
@@ -110,6 +150,7 @@ export async function extractOpenAIStreamUsage(
     let inputTokens = 0;
     let outputTokens = 0;
     const responseTextParts: string[] = [];
+    const toolUses: ObservedToolUse[] = [];
 
     for await (const chunk of stream) {
       buffer += typeof chunk === "string" ? chunk : chunk.toString();
@@ -124,6 +165,7 @@ export async function extractOpenAIStreamUsage(
 
         try {
           const event = JSON.parse(data);
+          toolUses.push(...extractOpenAIStreamToolUses(event));
           if (event.usage) {
             inputTokens = event.usage.prompt_tokens ?? 0;
             outputTokens = event.usage.completion_tokens ?? 0;
@@ -163,9 +205,27 @@ export async function extractOpenAIStreamUsage(
         flagCategory: dlp?.flagged ? "sensitive_response" : null,
         flagReason: dlp?.flagged ? dlp.summary : null,
         requestId: ctx.requestId,
-        metadata: { latencyMs: ctx.latencyMs, streaming: true, aiSystemId: ctx.aiSystemId },
+        metadata: {
+          latencyMs: ctx.latencyMs,
+          streaming: true,
+          aiSystemId: ctx.aiSystemId,
+          agentId: ctx.agent?.id ?? null,
+          mcp: summarizeMcpForMetadata(ctx.declaredServers ?? [], toolUses),
+        },
       });
     }
+
+    await recordToolActivity({
+      agent: ctx.agent ?? null,
+      aiSystemId: ctx.aiSystemId,
+      provider: "chatgpt",
+      model: ctx.model,
+      requestId: ctx.requestId,
+      userEmail: ctx.userEmail,
+      department: ctx.department,
+      declaredServers: ctx.declaredServers ?? [],
+      toolUses,
+    });
   } catch (err) {
     console.error("Failed to extract OpenAI stream usage:", err);
   }

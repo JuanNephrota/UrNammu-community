@@ -180,6 +180,17 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 
 JSON list of conditions that force a human step — e.g. "dollar amount > $1000", "contains PII", "new vendor". Feeds the AI risk review and shows on the agent detail page.
 
+## MCP tool governance
+
+The **MCP Tool Governance** card on the agent detail page shows which MCP servers the agent has declared and which tools its model actually invoked, as seen by the proxy. Traffic is attributed with the \`x-agent-id\` request header (the agent's id is shown on the card); \`x-ai-system-id\` still links usage to the parent system.
+
+- **Allowed MCP servers** — server names, URL hosts, or wildcards such as \`*.example.com\`. Empty means observe only.
+- **Allowed MCP tools** — \`tool\`, \`server/tool\`, or \`server/*\`. Empty means any tool on an allowed server.
+- **Monitor** records a dry-run denial for unlisted servers and raises an alert for unapproved or never-seen tools, but forwards every request.
+- **Enforce** returns \`403\` for unlisted servers and rewrites each server's \`allowed_tools\` so the provider only exposes allowlisted tools to the model.
+
+**Approve** on an unapproved row adds it to the allowlist. **Oversight → MCP Activity** shows the same data across all agents.
+
 ## AI-assisted risk review
 
 The **AI Agent Risk Review** card on the agent detail page shows two things side by side:
@@ -392,7 +403,11 @@ When traffic flows through the proxy, prompts are scanned for 5 risk categories:
 
 ## Proxy attribution
 
-Proxy traffic is attributed via optional headers: \`x-user-email\` (per-user cost tracking), \`x-department\` (cost center), and \`x-ai-system-id\` (link to registry). Configure these in **Settings → Proxy Setup**.
+Proxy traffic is attributed via optional headers: \`x-user-email\` (per-user cost tracking), \`x-department\` (cost center), \`x-ai-system-id\` (link to registry), and \`x-agent-id\` (link to a registered agent, which also enables MCP tool governance). Configure these in **Settings → Proxy Setup**.
+
+## MCP Activity
+
+**Oversight → MCP Activity** lists every MCP server agents declare and every tool the model invokes through the proxy, with the allowlist verdict for each. Tools invoked outside an agent's allowlist appear under **Needs a decision**; open the agent to approve them or tighten the allowlist.
 
 ## Spend budgets
 
@@ -680,7 +695,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 - **Overview** — jump-off page to every settings area.
 - **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization). The global **policy enforcement mode** for the proxy — Off / Dry run / Enforce — is also set here.
 - **Provider Admin APIs** — admin keys for org telemetry: Anthropic, OpenAI, Google Gemini billing export. Each has its own enable toggle and sync interval. Anomaly thresholds, governance-automation notice days, and attribution tuning live here too.
-- **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`. For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile.
+- **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`. For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile.
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts.
 - **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary.
 - **Reporting** — email delivery for scheduled reports, via Resend. Schedules save without it but never send.

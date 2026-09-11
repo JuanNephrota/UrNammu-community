@@ -12,6 +12,9 @@ import {
   type LoadedPolicy,
 } from "../lib/policy-loader";
 import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
+import { loadAgent, type LoadedAgent } from "../lib/agent-loader";
+import { recordToolActivity } from "../lib/tool-activity";
+import { extractOpenAIToolUses, summarizeMcpForMetadata } from "../lib/mcp-tool-governance";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -44,7 +47,29 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
 
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
-  const aiSystemId = req.headers.get("x-ai-system-id") ?? null;
+
+  // x-agent-id attribution — see anthropic-proxy.ts. Chat Completions has no
+  // MCP servers to gate, so the agent only drives attribution and tool-call
+  // recording here.
+  const requestedAgentId = req.headers.get("x-agent-id") ?? null;
+  let agent: LoadedAgent | null = null;
+  if (requestedAgentId) {
+    try {
+      agent = await loadAgent(requestedAgentId);
+    } catch (err) {
+      console.error("Agent governance unavailable — failing closed:", err);
+      return {
+        status: 503,
+        jsonBody: {
+          error: {
+            type: "agent_unavailable",
+            message: "Agent governance state could not be loaded; request refused. Retry shortly.",
+          },
+        },
+      };
+    }
+  }
+  const aiSystemId = req.headers.get("x-ai-system-id") ?? agent?.aiSystemId ?? null;
 
   let bodyText: string;
   let bodyJson: Record<string, unknown>;
@@ -188,6 +213,8 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       latencyMs,
       aiSystemId,
       requestId,
+      agent,
+      declaredServers: [],
     }).catch((err: unknown) => {
       console.error("extractOpenAIStreamUsage failed:", err);
     });
@@ -221,6 +248,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const completionTokens = usage.completion_tokens ?? 0;
   const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
   const cost = calculateCost("chatgpt", model, promptTokens, completionTokens);
+  const toolUses = openaiRes.ok ? extractOpenAIToolUses(responseBody) : [];
 
   let flagged = false;
   let flagCategory: "upstream_error" | "sensitive_response" | null = null;
@@ -262,9 +290,27 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     flagCategory,
     flagReason,
     requestId,
-    metadata: { aiSystemId, latencyMs, status: openaiRes.status },
+    metadata: {
+      aiSystemId,
+      agentId: agent?.id ?? null,
+      latencyMs,
+      status: openaiRes.status,
+      mcp: summarizeMcpForMetadata([], toolUses),
+    },
   }).catch((err) => {
     console.error("logUsage failed:", err);
+  });
+
+  await recordToolActivity({
+    agent,
+    aiSystemId,
+    provider: "chatgpt",
+    model,
+    requestId,
+    userEmail,
+    department,
+    declaredServers: [],
+    toolUses,
   });
 
   return {

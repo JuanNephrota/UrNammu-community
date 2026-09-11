@@ -37,6 +37,9 @@ export default async function EditAgentPage({
           riskLevel: agent.riskLevel,
           status: agent.status,
           department: agent.department,
+          mcpServerAllowlist: agent.mcpServerAllowlist,
+          mcpToolAllowlist: agent.mcpToolAllowlist,
+          mcpEnforcement: agent.mcpEnforcement,
         }}
         systems={systems}
       />

@@ -45,7 +45,11 @@ When traffic flows through the proxy, prompts are scanned for 5 risk categories:
 
 ## Proxy attribution
 
-Proxy traffic is attributed via optional headers: `x-user-email` (per-user cost tracking), `x-department` (cost center), and `x-ai-system-id` (link to registry). Configure these in **Settings → Proxy Setup**.
+Proxy traffic is attributed via optional headers: `x-user-email` (per-user cost tracking), `x-department` (cost center), `x-ai-system-id` (link to registry), and `x-agent-id` (link to a registered agent, which also enables MCP tool governance). Configure these in **Settings → Proxy Setup**.
+
+## MCP Activity
+
+**Oversight → MCP Activity** lists every MCP server agents declare and every tool the model invokes through the proxy, with the allowlist verdict for each. Tools invoked outside an agent's allowlist appear under **Needs a decision**; open the agent to approve them or tighten the allowlist.
 
 ## Spend budgets
 

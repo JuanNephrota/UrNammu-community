@@ -535,6 +535,7 @@ Clients authenticate to the proxy with an `x-proxy-key: $PROXY_SECRET` header. T
 - `x-user-email` — links usage to a platform user for per-person cost tracking.
 - `x-department` — department or cost center label.
 - `x-ai-system-id` — links usage to a registered AI system in the registry.
+- `x-agent-id` — links usage to a registered AI agent and enables MCP tool governance (server/tool allowlists, enforced at the proxy).
 
 For **Claude Code**, the Proxy Setup page in Settings generates ready-to-paste managed settings and per-user `~/.claude/settings.json` snippets. These reference `${PROXY_USER_EMAIL}` for automatic per-user attribution. Each developer adds one line to their shell profile (`~/.zshrc` or `~/.bashrc`):
 

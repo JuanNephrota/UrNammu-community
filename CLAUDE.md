@@ -43,7 +43,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │   ├── (dashboard)/    All authenticated pages
 │   │   │   ├── dashboard/  Command center overview
 │   │   │   ├── registry/   AI System Registry (CRUD + detail + edit)
-│   │   │   ├── agents/     AI Agent Registry (CRUD + detail + edit)
+│   │   │   ├── agents/     AI Agent Registry (CRUD + detail + edit + MCP tool governance card)
 │   │   │   ├── risk-center/ Risk scoring + heat map + assessments
 │   │   │   ├── compliance/ Policy management + framework control catalog/coverage + audit trail
 │   │   │   ├── oversight/  API usage monitoring + cost tracking

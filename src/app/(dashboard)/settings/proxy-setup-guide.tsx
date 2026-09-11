@@ -449,6 +449,11 @@ completion = client.chat.completions.create(
                 <span className="text-[var(--text-faint)]">optional</span>
                 <span className="text-[var(--text-muted)]">Links usage to a registered AI system in the registry</span>
               </div>
+              <div className="grid grid-cols-[140px_60px_1fr] gap-2 items-start">
+                <code className="text-[var(--accent)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded">x-agent-id</code>
+                <span className="text-[var(--text-faint)]">optional</span>
+                <span className="text-[var(--text-muted)]">Links usage to a registered AI agent and enables its MCP server/tool allowlist</span>
+              </div>
             </div>
           </div>
 

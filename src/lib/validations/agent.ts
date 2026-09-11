@@ -19,6 +19,10 @@ export const createAgentSchema = z.object({
   riskLevel: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"]).default("MEDIUM"),
   status: z.enum(["DRAFT", "UNDER_REVIEW", "APPROVED", "DEPLOYED", "DEPRECATED", "RETIRED"]).default("DRAFT"),
   department: z.string().optional(),
+  // MCP tool governance
+  mcpServerAllowlist: z.array(z.string().trim().min(1).max(200)).max(200).default([]),
+  mcpToolAllowlist: z.array(z.string().trim().min(1).max(200)).max(500).default([]),
+  mcpEnforcement: z.enum(["monitor", "enforce"]).default("monitor"),
 });
 
 export const updateAgentSchema = createAgentSchema.partial();

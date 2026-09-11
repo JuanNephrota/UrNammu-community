@@ -320,8 +320,19 @@ model AIAgent {
   status              AISystemStatus @default(DRAFT)
   department          String?
 
+  // MCP tool governance. Empty allowlists mean "observe only". Entries:
+  // servers match the declared name or URL host (wildcards allowed); tools are
+  // "tool", "server/tool" or "server/*". `mcpEnforcement` is "monitor"
+  // (record + alert) or "enforce" (proxy blocks unlisted servers and narrows
+  // allowed_tools before forwarding).
+  mcpServerAllowlist String[] @default([])
+  mcpToolAllowlist   String[] @default([])
+  mcpEnforcement     String   @default("monitor")
+
   auditLogs    AuditLog[]        @relation("AgentAuditLogs")
   riskReviews  AgentRiskReview[]
+  toolCalls    AgentToolCall[]
+  toolProfiles AgentToolProfile[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -788,6 +799,68 @@ model PolicyDenial {
 
   @@index([aiSystemId, createdAt])
   @@index([mode, createdAt])
+}
+
+// ─── MCP Tool Governance ────────────────────────────────
+//
+// Written by both proxies (Vercel fallback and Azure Functions). One
+// AgentToolCall row per distinct tool the model invoked in a response, and
+// one AgentToolProfile row per (scope, server, tool) with first/last seen so
+// new tools can be surfaced. `scopeKey` is "agent:<id>", "system:<id>" or
+// "global" depending on what the request was attributed to via x-agent-id /
+// x-ai-system-id. Mirrored in ai-proxy/prisma/schema.prisma.
+
+model AgentToolCall {
+  id         String   @id @default(cuid())
+  agent      AIAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  agentId    String?
+  aiSystemId String?
+  provider   String
+  model      String?
+  /// "mcp_tool_use" | "server_tool_use" | "tool_use"
+  kind       String
+  serverName String?
+  toolName   String
+  /// Allowlist verdict at call time; true when no allowlist is configured.
+  approved   Boolean  @default(true)
+  requestId  String?
+  userEmail  String?
+  department String?
+
+  createdAt DateTime @default(now())
+
+  @@index([agentId, createdAt])
+  @@index([aiSystemId, createdAt])
+  @@index([approved, createdAt])
+  @@index([createdAt])
+}
+
+model AgentToolProfile {
+  id          String   @id @default(cuid())
+  scopeKey    String
+  agent       AIAgent? @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId     String?
+  aiSystemId  String?
+  /// Server name, or "-" for provider/client tools.
+  serverKey   String
+  serverName  String?
+  serverHost  String?
+  /// "*" for the server itself (declared in a request), else the tool name.
+  toolName    String
+  /// "mcp_server" | "mcp_tool_use" | "server_tool_use" | "tool_use"
+  kind        String
+  approved    Boolean  @default(true)
+  callCount   Int      @default(0)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scopeKey, serverKey, toolName])
+  @@index([agentId, lastSeenAt])
+  @@index([aiSystemId, lastSeenAt])
+  @@index([approved, lastSeenAt])
 }
 
 // ─── Compliance & Policy ────────────────────────────────

@@ -24,6 +24,9 @@ interface AgentFormProps {
     riskLevel: string;
     status: string;
     department: string | null;
+    mcpServerAllowlist?: string[];
+    mcpToolAllowlist?: string[];
+    mcpEnforcement?: string;
   };
   systems: { id: string; name: string }[];
 }
@@ -40,6 +43,10 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
   );
   const [capInput, setCapInput] = useState("");
   const [sysInput, setSysInput] = useState("");
+  const [mcpServers, setMcpServers] = useState<string[]>(initialData?.mcpServerAllowlist ?? []);
+  const [mcpTools, setMcpTools] = useState<string[]>(initialData?.mcpToolAllowlist ?? []);
+  const [mcpServerInput, setMcpServerInput] = useState("");
+  const [mcpToolInput, setMcpToolInput] = useState("");
 
   const isEditing = !!initialData?.id;
 
@@ -61,6 +68,9 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
       riskLevel: formData.get("riskLevel") as string,
       status: formData.get("status") as string,
       department: formData.get("department") as string,
+      mcpServerAllowlist: mcpServers,
+      mcpToolAllowlist: mcpTools,
+      mcpEnforcement: (formData.get("mcpEnforcement") as string) || "monitor",
     };
 
     try {
@@ -218,6 +228,65 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
                 <button type="button" onClick={() => setConnectedSystems(connectedSystems.filter((s) => s !== sys))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
               </span>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            MCP Tool Governance
+            <HelpHint hint="mcp_governance" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-[var(--text-muted)]">
+            Governs the MCP servers this agent may connect to and the tools it may invoke when its model calls
+            go through the proxy with <code className="rounded bg-[var(--bg-elevated)] px-1 py-0.5 text-[var(--accent)]">x-agent-id</code>.
+            Leave a list empty to observe without restricting.
+          </p>
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              Enforcement
+              <HelpHint hint="mcp_enforcement" />
+            </Label>
+            <select name="mcpEnforcement" defaultValue={initialData?.mcpEnforcement ?? "monitor"} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+              <option value="monitor">Monitor — record and alert, never block</option>
+              <option value="enforce">Enforce — block unlisted servers, narrow allowed_tools</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              Allowed MCP servers
+              <HelpHint hint="mcp_allowlist" />
+            </Label>
+            <div className="flex gap-2">
+              <Input placeholder="server name, host, or *.example.com" value={mcpServerInput} onChange={(e) => setMcpServerInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addChip(mcpServerInput, mcpServers, setMcpServers, setMcpServerInput); }}} />
+              <Button type="button" variant="outline" onClick={() => addChip(mcpServerInput, mcpServers, setMcpServers, setMcpServerInput)}>Add</Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {mcpServers.map((s) => (
+                <span key={s} className="inline-flex items-center gap-1 rounded-full bg-[var(--success-dim)] px-3 py-1 font-mono text-xs font-medium text-[var(--success-strong)]">
+                  {s}
+                  <button type="button" onClick={() => setMcpServers(mcpServers.filter((x) => x !== s))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Allowed MCP tools</Label>
+            <div className="flex gap-2">
+              <Input placeholder="tool, server/tool, or server/*" value={mcpToolInput} onChange={(e) => setMcpToolInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addChip(mcpToolInput, mcpTools, setMcpTools, setMcpToolInput); }}} />
+              <Button type="button" variant="outline" onClick={() => addChip(mcpToolInput, mcpTools, setMcpTools, setMcpToolInput)}>Add</Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {mcpTools.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 rounded-full bg-[var(--success-dim)] px-3 py-1 font-mono text-xs font-medium text-[var(--success-strong)]">
+                  {t}
+                  <button type="button" onClick={() => setMcpTools(mcpTools.filter((x) => x !== t))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
+                </span>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -22,6 +22,13 @@ export const HELP_HINTS = {
   connected_systems:
     "Which AI systems this agent acts on top of. Used for risk inheritance and telemetry attribution.",
 
+  mcp_governance:
+    "Which MCP servers and tools this agent may use. Observed activity comes from proxy traffic carrying x-agent-id; unlisted tools raise alerts and, in enforce mode, are blocked or hidden.",
+  mcp_allowlist:
+    "Servers match the declared name or URL host (wildcards like *.example.com allowed). Tools are `tool`, `server/tool`, or `server/*`. Empty = observe only.",
+  mcp_enforcement:
+    "Monitor records dry-run denials and alerts. Enforce returns 403 for unlisted servers and narrows each server's allowed_tools so the provider only exposes allowlisted tools.",
+
   // --- Risk assessment ---
   risk_bias: "Fairness of outputs across groups. Higher = more risk.",
   risk_security: "Vulnerability to attack, prompt injection, or model misuse. Higher = more risk.",

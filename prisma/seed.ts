@@ -814,6 +814,71 @@ async function main() {
     }),
   ]);
 
+  // MCP tool governance sample: give the first agent an allowlist and a few
+  // observed tool calls/profiles so the agent card and Oversight → MCP
+  // Activity have something to show. One tool is deliberately unapproved.
+  {
+    const agent = await prisma.aIAgent.findFirst({ orderBy: { createdAt: "asc" }, select: { id: true, aiSystemId: true } });
+    if (agent) {
+      await prisma.aIAgent.update({
+        where: { id: agent.id },
+        data: {
+          mcpServerAllowlist: ["jira", "*.internal.example.com"],
+          mcpToolAllowlist: ["jira/search_issues", "jira/get_issue", "docs/*"],
+          mcpEnforcement: "monitor",
+        },
+      });
+      await prisma.agentToolCall.deleteMany({ where: { agentId: agent.id } });
+      await prisma.agentToolProfile.deleteMany({ where: { agentId: agent.id } });
+      const scopeKey = `agent:${agent.id}`;
+      const samples: Array<{ serverKey: string; serverName: string | null; serverHost: string | null; toolName: string; kind: string; approved: boolean; calls: number; daysAgoFirst: number }> = [
+        { serverKey: "jira", serverName: "jira", serverHost: "mcp.internal.example.com", toolName: "*", kind: "mcp_server", approved: true, calls: 42, daysAgoFirst: 20 },
+        { serverKey: "jira", serverName: "jira", serverHost: "mcp.internal.example.com", toolName: "search_issues", kind: "mcp_tool_use", approved: true, calls: 31, daysAgoFirst: 20 },
+        { serverKey: "jira", serverName: "jira", serverHost: "mcp.internal.example.com", toolName: "get_issue", kind: "mcp_tool_use", approved: true, calls: 18, daysAgoFirst: 19 },
+        { serverKey: "jira", serverName: "jira", serverHost: "mcp.internal.example.com", toolName: "transition_issue", kind: "mcp_tool_use", approved: false, calls: 2, daysAgoFirst: 1 },
+        { serverKey: "-", serverName: null, serverHost: null, toolName: "web_search", kind: "server_tool_use", approved: true, calls: 7, daysAgoFirst: 12 },
+      ];
+      for (const sample of samples) {
+        await prisma.agentToolProfile.create({
+          data: {
+            scopeKey,
+            agentId: agent.id,
+            aiSystemId: agent.aiSystemId,
+            serverKey: sample.serverKey,
+            serverName: sample.serverName,
+            serverHost: sample.serverHost,
+            toolName: sample.toolName,
+            kind: sample.kind,
+            approved: sample.approved,
+            callCount: sample.calls,
+            firstSeenAt: daysAgo(sample.daysAgoFirst),
+            lastSeenAt: daysAgo(sample.approved ? 0 : 1),
+          },
+        });
+        if (sample.kind !== "mcp_server") {
+          const n = Math.min(sample.calls, 4);
+          for (let i = 0; i < n; i += 1) {
+            await prisma.agentToolCall.create({
+              data: {
+                agentId: agent.id,
+                aiSystemId: agent.aiSystemId,
+                provider: "claude",
+                model: "claude-sonnet-4-6",
+                kind: sample.kind,
+                serverName: sample.serverName,
+                toolName: sample.toolName,
+                approved: sample.approved,
+                userEmail: "agent-runner@example.com",
+                department: "Engineering",
+                createdAt: daysAgo(i, 9 + i),
+              },
+            });
+          }
+        }
+      }
+    }
+  }
+
   console.log("Demo workspace seeded successfully.");
   console.log("Use admin@example.com with password demo-password to explore the sample environment.");
 }

@@ -99,6 +99,69 @@ model AppSetting {
   createdAt DateTime @default(now())
 }
 
+// -- MCP tool governance (proxy reads AIAgent allowlists, writes calls +
+// profiles; main app owns migrations). Mirrors of the main app's models.
+
+model AIAgent {
+  id                 String   @id @default(cuid())
+  name               String
+  aiSystemId         String?
+  mcpServerAllowlist String[] @default([])
+  mcpToolAllowlist   String[] @default([])
+  mcpEnforcement     String   @default("monitor")
+
+  toolCalls    AgentToolCall[]
+  toolProfiles AgentToolProfile[]
+}
+
+model AgentToolCall {
+  id         String   @id @default(cuid())
+  agent      AIAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  agentId    String?
+  aiSystemId String?
+  provider   String
+  model      String?
+  kind       String
+  serverName String?
+  toolName   String
+  approved   Boolean  @default(true)
+  requestId  String?
+  userEmail  String?
+  department String?
+
+  createdAt DateTime @default(now())
+
+  @@index([agentId, createdAt])
+  @@index([aiSystemId, createdAt])
+  @@index([approved, createdAt])
+  @@index([createdAt])
+}
+
+model AgentToolProfile {
+  id          String   @id @default(cuid())
+  scopeKey    String
+  agent       AIAgent? @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId     String?
+  aiSystemId  String?
+  serverKey   String
+  serverName  String?
+  serverHost  String?
+  toolName    String
+  kind        String
+  approved    Boolean  @default(true)
+  callCount   Int      @default(0)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scopeKey, serverKey, toolName])
+  @@index([agentId, lastSeenAt])
+  @@index([aiSystemId, lastSeenAt])
+  @@index([approved, lastSeenAt])
+}
+
 // -- Sensitive-information detection (proxy writes findings/alerts, reads
 // rules/exceptions; main app owns migrations). Minimal mirrors of the main
 // app's models — only the columns the proxy touches. All omitted columns are

@@ -15,6 +15,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
 4. [AI System Registry](#4-ai-system-registry)
    - [EU AI Act Classification](#eu-ai-act-classification)
 5. [AI Agents](#5-ai-agents)
+   - [MCP Tool Governance](#mcp-tool-governance)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
    - [Framework Control Catalog & Crosswalk](#framework-control-catalog--crosswalk)
@@ -304,6 +305,32 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 ### Human Review Triggers
 
 Agents can declare triggers (JSON list) that force a human step — e.g. "dollar amount > $1 000", "contains PII", "new vendor". These feed the risk review and are shown on the agent detail page.
+
+### MCP Tool Governance
+
+Agents increasingly act through Model Context Protocol (MCP) servers. UrNammu governs that surface at the proxy: it records which servers each agent declares and which tools the model actually invokes, checks both against a per-agent allowlist, and can block or narrow requests.
+
+**Attribution.** Send the proxy header `x-agent-id: <agent id>` on the agent's model calls (the id is shown on the agent's MCP Tool Governance card). The agent's parent system is used for `x-ai-system-id` attribution automatically when that header is absent.
+
+**Allowlists** (agent edit page → *MCP Tool Governance*):
+
+| Field | Grammar |
+|---|---|
+| Allowed MCP servers | Server `name` as declared in the request, its URL host, a full URL, or a wildcard such as `*.example.com`. |
+| Allowed MCP tools | `tool` (any server), `server/tool`, or `server/*`. |
+| Enforcement | **Monitor** (default) or **Enforce**. |
+
+An empty list means "not configured" and allows everything for that dimension while still recording activity, so you can observe first and tighten later.
+
+**What the proxy does.**
+
+- *Declared servers* (Anthropic `mcp_servers[]`, OpenAI Responses `tools[type=mcp]`) are checked against the server allowlist before forwarding. In Monitor mode a dry-run denial is recorded and the request proceeds; in Enforce mode the proxy returns `403` with the violating server named. Denials appear under **Compliance → Blocked Queries** with rule `mcp_server_not_allowed`.
+- *Tool narrowing* (Enforce only): for each server the tool allowlist names specific tools for, the proxy sets `tool_configuration.allowed_tools` (Anthropic) or `allowed_tools` (OpenAI) to the intersection of what the request asked for and what the allowlist permits, so the provider never offers unlisted tools to the model.
+- *Observed invocations* (`mcp_tool_use`, provider `server_tool_use`, client `tool_use`, OpenAI `mcp_call` / `tool_calls`) are recorded per call, in both streaming and non-streaming responses, and profiled per agent with first-seen and last-seen timestamps. Only MCP tools are judged against the tool allowlist; provider and client tools are recorded for visibility.
+
+**Alerts** (source `mcp_tool_governance`): HIGH when an agent invokes an MCP tool outside its allowlist, MEDIUM the first time a new server or tool is seen for an agent. Both dedupe for 24 hours per agent and tool.
+
+**Where to look.** The agent detail page carries a **MCP Tool Governance** card with a blast-radius strip (access level, parent system, connected systems, capabilities, servers and tools seen), the allowlists, and every observed server and tool with an **Approve** button for unapproved rows. **Oversight → MCP Activity** shows the same across all agents plus the last hundred tool calls. Session traces annotate proxy spans with the number of tool calls observed.
 
 ### AI-Assisted Agent Risk Review
 
@@ -1136,6 +1163,7 @@ Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (A
 | `x-user-email` | Links usage to a platform user for per-person cost tracking. |
 | `x-department` | Department or cost center label for spend attribution. |
 | `x-ai-system-id` | Links usage to a registered AI system in the registry. |
+| `x-agent-id` | Links usage to a registered AI agent (and its parent system) and switches on MCP tool governance for the call. |
 
 For Claude Code, user attribution requires each developer to set a shell environment variable:
 

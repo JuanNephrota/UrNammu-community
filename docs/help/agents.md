@@ -19,6 +19,17 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 
 JSON list of conditions that force a human step — e.g. "dollar amount > $1000", "contains PII", "new vendor". Feeds the AI risk review and shows on the agent detail page.
 
+## MCP tool governance
+
+The **MCP Tool Governance** card on the agent detail page shows which MCP servers the agent has declared and which tools its model actually invoked, as seen by the proxy. Traffic is attributed with the `x-agent-id` request header (the agent's id is shown on the card); `x-ai-system-id` still links usage to the parent system.
+
+- **Allowed MCP servers** — server names, URL hosts, or wildcards such as `*.example.com`. Empty means observe only.
+- **Allowed MCP tools** — `tool`, `server/tool`, or `server/*`. Empty means any tool on an allowed server.
+- **Monitor** records a dry-run denial for unlisted servers and raises an alert for unapproved or never-seen tools, but forwards every request.
+- **Enforce** returns `403` for unlisted servers and rewrites each server's `allowed_tools` so the provider only exposes allowlisted tools to the model.
+
+**Approve** on an unapproved row adds it to the allowlist. **Oversight → MCP Activity** shows the same data across all agents.
+
 ## AI-assisted risk review
 
 The **AI Agent Risk Review** card on the agent detail page shows two things side by side:
