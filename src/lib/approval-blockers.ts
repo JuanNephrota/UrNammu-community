@@ -1,4 +1,4 @@
-import type { ComplianceStatus, GovernanceReviewStage } from "@prisma/client";
+import type { ComplianceStatus, EuAiActRiskTier, GovernanceReviewStage } from "@prisma/client";
 
 /**
  * Shared logic for computing the specific reasons a system cannot yet be
@@ -19,7 +19,10 @@ export type ApprovalBlocker = {
     | "compliance_evidence"
     | "policy_rule"
     | "stage_review"
-    | "review_date";
+    | "review_date"
+    | "eu_ai_act_classification"
+    | "eu_ai_act_prohibited"
+    | "eu_ai_act_obligation";
 };
 
 export type ApprovalBlockerInput = {
@@ -35,6 +38,18 @@ export type ApprovalBlockerInput = {
   requiredStages: GovernanceReviewStage[];
   approvedStages: Set<GovernanceReviewStage>;
   nextReviewDate?: Date | string | null;
+  /**
+   * EU AI Act posture. Optional so callers that have not loaded it keep the
+   * pre-existing blocker set; when supplied, an unclassified system gets a soft
+   * nudge, a PROHIBITED tier hard-blocks, and unassessed applicable articles
+   * on a high-risk system are surfaced as a soft warning.
+   */
+  euAiAct?: {
+    classified: boolean;
+    tier: EuAiActRiskTier | null;
+    unassessedObligations: number;
+    applicableArticles: number;
+  };
 };
 
 const STAGE_LABELS: Record<GovernanceReviewStage, string> = {
@@ -122,6 +137,31 @@ export function getApprovalBlockers(
     });
   }
 
+  if (input.euAiAct) {
+    const wizardHref = `/registry/${input.systemId}/eu-ai-act`;
+    if (!input.euAiAct.classified) {
+      blockers.push({
+        category: "eu_ai_act_classification",
+        message:
+          "EU AI Act classification has not been run. Determine the risk tier so the right obligations are on file.",
+        href: wizardHref,
+      });
+    } else if (input.euAiAct.tier === "PROHIBITED") {
+      blockers.push({
+        category: "eu_ai_act_prohibited",
+        message:
+          "EU AI Act classification identified a prohibited practice (Art. 5). Remove the practice and re-run the classification before approval.",
+        href: wizardHref,
+      });
+    } else if (input.euAiAct.tier === "HIGH_RISK" && input.euAiAct.unassessedObligations > 0) {
+      blockers.push({
+        category: "eu_ai_act_obligation",
+        message: `High-risk under the EU AI Act with ${input.euAiAct.unassessedObligations} of ${input.euAiAct.applicableArticles} applicable articles still unassessed. Record a status for each on the Compliance tab.`,
+        href: `/registry/${input.systemId}?tab=compliance&framework=EU_AI_ACT`,
+      });
+    }
+  }
+
   if (!input.nextReviewDate) {
     blockers.push({
       category: "review_date",
@@ -144,6 +184,12 @@ export function getApprovalBlockers(
  * Soft evidence warnings (compliant-but-no-evidence) are surfaced to the UI
  * but do not prevent approval, matching the existing API semantics.
  */
+const SOFT_CATEGORIES: ReadonlySet<ApprovalBlocker["category"]> = new Set([
+  "compliance_evidence",
+  "eu_ai_act_classification",
+  "eu_ai_act_obligation",
+]);
+
 export function isHardBlocker(blocker: ApprovalBlocker): boolean {
-  return blocker.category !== "compliance_evidence";
+  return !SOFT_CATEGORIES.has(blocker.category);
 }

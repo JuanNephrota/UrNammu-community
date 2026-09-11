@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { controlKey, syncFrameworkCatalog } from "../src/lib/framework-catalog";
+import { classifyEuAiAct, type EuAiActAnswers } from "../src/lib/eu-ai-act";
 import { hashPassword } from "../src/lib/passwords";
 
 const prisma = new PrismaClient();
@@ -402,6 +403,62 @@ async function main() {
     { systemIndex: 2, framework: "ISO_42001", code: "A.6.2.8", status: "COMPLIANT", evidence: "Event logging enabled with 12-month retention." },
     { systemIndex: 2, framework: "SOC2", code: "CC8", status: "PARTIALLY_COMPLIANT", evidence: "Prompt changes reviewed but not yet under formal change tickets." },
   ];
+  // EU AI Act classification for the fraud engine: a deployer of an Annex III
+  // credit/essential-services system, built on a foundation model. Applicable
+  // articles get NOT_ASSESSED mappings so the Compliance tab shows the work.
+  {
+    const euAnswers: EuAiActAnswers = {
+      role: "DEPLOYER",
+      prohibitedPractices: [],
+      annexIProduct: false,
+      annexIIICategories: ["essential_services"],
+      derogationGrounds: [],
+      profiling: null,
+      transparencyTriggers: [],
+      usesGpai: true,
+      providesGpai: false,
+      friaTriggers: ["credit_scoring"],
+    };
+    const eu = classifyEuAiAct(euAnswers);
+    const euData = {
+      role: eu.role,
+      tier: eu.tier,
+      annexIProduct: eu.annexIProduct,
+      annexIiiCategories: eu.annexIIICategories,
+      derogationClaimed: eu.derogationClaimed,
+      transparencyRequired: eu.transparencyRequired,
+      friaRequired: eu.friaRequired,
+      gpaiDeployer: eu.gpaiDeployer,
+      gpaiProvider: eu.gpaiProvider,
+      applicableArticles: eu.applicableArticles,
+      answers: euAnswers,
+      rationale: eu.rationale.join("\n"),
+      notes: "Demo classification. Legal sign-off recorded in the compliance shared drive.",
+      obligationDeadline: eu.deadline ? new Date(`${eu.deadline.date}T00:00:00Z`) : null,
+      classifiedByUserId: complianceOfficer.id,
+      classifiedAt: daysAgo(5),
+    };
+    await prisma.euAiActClassification.upsert({
+      where: { aiSystemId: systems[1].id },
+      update: euData,
+      create: { aiSystemId: systems[1].id, ...euData },
+    });
+    for (const code of eu.applicableArticles) {
+      const c = control("EU_AI_ACT", code);
+      await prisma.complianceMapping.upsert({
+        where: { aiSystemId_controlId: { aiSystemId: systems[1].id, controlId: c.controlId } },
+        update: {},
+        create: {
+          aiSystemId: systems[1].id,
+          controlId: c.controlId,
+          framework: "EU_AI_ACT",
+          requirement: code,
+          status: "NOT_ASSESSED",
+        },
+      });
+    }
+  }
+
   for (const m of controlMappings) {
     const c = control(m.framework, m.code);
     await prisma.complianceMapping.upsert({

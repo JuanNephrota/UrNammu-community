@@ -40,6 +40,9 @@ import { getApprovalBlockers } from "@/lib/approval-blockers";
 import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
 import { parseEnforcementMode } from "@/lib/settings";
 import { FrameworkControlsCard } from "@/components/compliance/framework-controls-card";
+import { EuAiActCard } from "@/components/registry/eu-ai-act-card";
+import { buildEuAiActGovernanceInput } from "@/lib/eu-ai-act-data";
+import { TIER_LABELS, tierBadgeVariant } from "@/lib/eu-ai-act";
 import { loadSystemCoverage, pickDefaultFramework } from "@/lib/framework-controls-data";
 import type { GovernanceReviewStage } from "@prisma/client";
 
@@ -57,6 +60,9 @@ export default async function SystemDetailPage({
     where: { id },
     include: {
       owner: { select: { name: true, email: true, image: true } },
+      euAiActClassification: {
+        include: { classifiedByUser: { select: { name: true, email: true } } },
+      },
       agents: {
         select: { id: true, name: true, autonomyLevel: true, status: true, riskLevel: true },
       },
@@ -130,6 +136,21 @@ export default async function SystemDetailPage({
     loadSystemCoverage(system.id),
   ]);
   const selectedFramework = pickDefaultFramework(frameworkCoverage, requestedFramework);
+  const euAiAct = buildEuAiActGovernanceInput(
+    system.euAiActClassification,
+    frameworkCoverage.EU_AI_ACT
+  );
+  const euObligationSummary = system.euAiActClassification
+    ? (() => {
+        const applicable = new Set(system.euAiActClassification.applicableArticles);
+        const rows = frameworkCoverage.EU_AI_ACT.rows.filter((row) => applicable.has(row.control.code));
+        return {
+          total: rows.length,
+          satisfied: rows.filter((row) => row.status === "COMPLIANT" || row.status === "INHERITED").length,
+          unassessed: rows.filter((row) => row.status === "NOT_ASSESSED").length,
+        };
+      })()
+    : undefined;
   const now = new Date();
   const telemetryWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const denialsWindowStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -228,6 +249,7 @@ export default async function SystemDetailPage({
       status: exception.status,
       expiresAt: exception.expiresAt,
     })),
+    euAiAct,
     governanceIncidents: system.governanceIncidents.map((incident) => ({
       id: incident.id,
       title: incident.title,
@@ -281,6 +303,7 @@ export default async function SystemDetailPage({
       requiredStages: requiredStages as GovernanceReviewStage[],
       approvedStages,
       nextReviewDate: system.nextReviewDate,
+      euAiAct,
     });
   })();
   const costLookup = buildCostLookup(costBuckets);
@@ -322,6 +345,11 @@ export default async function SystemDetailPage({
         </Badge>
         <Badge variant="outline">{system.dataSensitivity}</Badge>
         <Badge variant="info">{system.department}</Badge>
+        {system.euAiActClassification && (
+          <Badge variant={tierBadgeVariant(system.euAiActClassification.tier)}>
+            EU AI Act: {TIER_LABELS[system.euAiActClassification.tier]}
+          </Badge>
+        )}
       </div>
 
       <Tabs defaultValue={tab ?? "overview"}>
@@ -390,6 +418,11 @@ export default async function SystemDetailPage({
                 </p>
               </CardContent>
             </Card>
+            <EuAiActCard
+              systemId={system.id}
+              classification={system.euAiActClassification}
+              obligationSummary={euObligationSummary}
+            />
             <ApprovalDecisionCard
               systemId={system.id}
               latestDecision={system.approvals[0]?.decision ?? null}

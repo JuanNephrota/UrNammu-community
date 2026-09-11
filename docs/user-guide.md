@@ -13,6 +13,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
 3. [Dashboard (Command Center)](#3-dashboard-command-center)
    - [Executive Dashboard](#3a-executive-dashboard)
 4. [AI System Registry](#4-ai-system-registry)
+   - [EU AI Act Classification](#eu-ai-act-classification)
 5. [AI Agents](#5-ai-agents)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
@@ -237,6 +238,36 @@ Open a system from the Registry list. The detail page has these tabs:
 - **Approval & Governance** — the staged review history, pending stages, governance exceptions, and evidence artifacts.
 - **Telemetry & Cost** — usage buckets linked to this system (30-day window), token consumption trend, cost attribution.
 - **Incidents & Alerts** — open and closed governance incidents plus related alerts.
+
+### EU AI Act Classification
+
+Every system carries an **EU AI Act Classification** card on its Overview tab. Until the wizard has been run it shows *Not yet classified* and the Approval Review card lists a warning; afterwards it shows the risk tier, your role, the timeline, and the applicable articles.
+
+**Running the wizard.** Click **Run classification** (or **Update classification**). The steps are:
+
+| Step | What it decides |
+|---|---|
+| Your role | Provider, deployer, or both. Providers carry Arts. 9–17, 43, 49, 72; deployers carry Arts. 26–27. |
+| Prohibited practices | Any Art. 5 match makes the tier **Prohibited** and hard-blocks approval. |
+| Annex I products | Safety components of regulated products are high-risk under Art. 6(1), with the August 2027 timeline. |
+| Annex III use cases | Biometrics, critical infrastructure, education, employment, essential services, law enforcement, migration, justice. Any match is high-risk under Art. 6(2). |
+| Art. 6(3) derogation | Only shown when an Annex III area is selected. Narrow procedural, preparatory, human-improving or pattern-detection tasks that do **not** profile people are exempt. The claim must be documented (Art. 6(4)). |
+| Transparency triggers | Chatbots, synthetic content, emotion recognition, deep fakes, public-interest text. Adds Art. 50 regardless of tier; on its own gives **Limited risk**. |
+| General-purpose AI | Whether the system is built on a foundation model (keep the provider's Art. 53 documentation) and, for providers, whether you provide one. |
+| Fundamental rights impact | Only for high-risk deployers: public body, public services, credit scoring, or life/health insurance pricing triggers an Art. 27 FRIA. |
+| Review & save | Shows the tier, rationale, warnings and every obligation with the reason it applies. Add notes for the record. |
+
+The right-hand panel previews the outcome as you go. The server re-derives the tier from your answers on save, so the stored result always matches the stored answers.
+
+**What saving does.**
+
+- Stores the classification with rationale, notes, who classified it and when. Changes are audit-logged with the before/after tier.
+- Creates a `NOT_ASSESSED` **Framework Controls** entry for each applicable EU AI Act article that the system does not already have, so the obligations appear on the Compliance tab ready to evidence.
+- Raises an alert (source `eu_ai_act`) for **High-risk** (HIGH) or **Prohibited** (CRITICAL) outcomes, and resolves it if a later re-classification lowers the tier.
+
+**Effect on approval.** A **Prohibited** classification is a hard blocker. An unclassified system, or a high-risk system with applicable articles still unassessed, shows as a warning in the Approval Review card and a governance recommendation, but does not block approval on its own. The Executive Dashboard reports how many systems are classified and how many are high-risk.
+
+**Timelines.** The wizard shows the regulation's application dates: prohibitions and AI literacy from 2 February 2025, GPAI provider duties from 2 August 2025, transparency and Annex III high-risk from 2 August 2026, Annex I high-risk from 2 August 2027. Pending EU amendments may move the high-risk dates; the classification logic is unaffected.
 
 ### Lifecycle (status transitions)
 

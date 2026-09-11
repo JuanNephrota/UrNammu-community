@@ -5,6 +5,7 @@ import { withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { evaluatePolicyRules, parsePolicyRules } from "@/lib/policy-rules";
 import { getApprovalBlockers, isHardBlocker } from "@/lib/approval-blockers";
+import { loadEuAiActGovernanceInput } from "@/lib/eu-ai-act-data";
 
 const approvalSchema = z.object({
   decision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVOKED"]),
@@ -92,6 +93,8 @@ export async function POST(
       if (approved) approvedStages.add(stage as GovernanceReviewStage);
     }
 
+    const euAiAct = await loadEuAiActGovernanceInput(system.id);
+
     const blockers = getApprovalBlockers({
       systemId: system.id,
       riskAssessmentsCount: system.riskAssessments.length,
@@ -105,6 +108,7 @@ export async function POST(
       requiredStages: requiredStages as GovernanceReviewStage[],
       approvedStages,
       nextReviewDate: system.nextReviewDate,
+      euAiAct,
     });
 
     const hardBlockers = blockers.filter(isHardBlocker);

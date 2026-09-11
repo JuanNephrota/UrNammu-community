@@ -29,6 +29,11 @@ export type PostureMetrics = {
   totalSpend: number;
   topProvider: string | null;
   topProviderSpend: number;
+
+  // EU AI Act (optional so older callers/tests keep working)
+  euClassifiedSystems?: number;
+  euHighRiskSystems?: number;
+  euProhibitedSystems?: number;
 };
 
 export type PostureDimension = {
@@ -232,6 +237,25 @@ export function buildNarrative(
     paragraphs.push(shadowText);
   }
 
+  // EU AI Act
+  if (current.totalSystems > 0 && current.euClassifiedSystems !== undefined) {
+    const classified = current.euClassifiedSystems ?? 0;
+    const highRisk = current.euHighRiskSystems ?? 0;
+    const prohibited = current.euProhibitedSystems ?? 0;
+    let euText = `${classified} of ${current.totalSystems} systems have an EU AI Act classification`;
+    if (classified > 0) {
+      euText += `; ${highRisk} ${highRisk === 1 ? "is" : "are"} high-risk`;
+      if (prohibited > 0) {
+        euText += ` and ${prohibited} match${prohibited === 1 ? "es" : ""} a prohibited practice`;
+      }
+    }
+    euText += ".";
+    if (prior && prior.euClassifiedSystems !== undefined && classified > (prior.euClassifiedSystems ?? 0)) {
+      euText += ` ${classified - (prior.euClassifiedSystems ?? 0)} newly classified this period.`;
+    }
+    paragraphs.push(euText);
+  }
+
   // Incidents
   let incidentText = `${current.openIncidents} open incident${current.openIncidents !== 1 ? "s" : ""} and ${current.criticalAlerts} critical alert${current.criticalAlerts !== 1 ? "s" : ""}.`;
   if (prior) {
@@ -339,6 +363,26 @@ function buildBoardMetrics(
           : current.discoveredTools > 5
             ? "danger"
             : "warning",
+    },
+    {
+      label: "EU AI Act Classified",
+      value:
+        current.totalSystems > 0
+          ? `${current.euClassifiedSystems ?? 0}/${current.totalSystems}`
+          : "—",
+      delta:
+        prior && prior.euClassifiedSystems !== undefined
+          ? (current.euClassifiedSystems ?? 0) - (prior.euClassifiedSystems ?? 0)
+          : null,
+      deltaLabel: "newly classified",
+      variant:
+        (current.euProhibitedSystems ?? 0) > 0
+          ? "danger"
+          : current.totalSystems > 0 && (current.euClassifiedSystems ?? 0) === current.totalSystems
+            ? "success"
+            : (current.euClassifiedSystems ?? 0) > 0
+              ? "warning"
+              : "default",
     },
     {
       label: "Open Incidents",

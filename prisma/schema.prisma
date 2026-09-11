@@ -105,6 +105,19 @@ enum ComplianceFramework {
   CUSTOM
 }
 
+enum EuAiActRiskTier {
+  PROHIBITED
+  HIGH_RISK
+  LIMITED_RISK
+  MINIMAL_RISK
+}
+
+enum EuAiActRole {
+  PROVIDER
+  DEPLOYER
+  PROVIDER_AND_DEPLOYER
+}
+
 enum ProviderSyncStatus {
   RUNNING
   SUCCEEDED
@@ -230,6 +243,7 @@ model User {
   governanceReviews GovernanceReview[]
   governanceExceptions GovernanceException[]
   evidenceArtifacts EvidenceArtifact[]
+  euAiActClassifications EuAiActClassification[] @relation("EuAiActClassifiedBy")
   governanceIncidents GovernanceIncident[]
   investigations Investigation[]      @relation("InvestigationOwner")
   spendBudgets SpendBudget[]          @relation("SpendBudgetOwner")
@@ -268,6 +282,7 @@ model AISystem {
   requireComplianceApproval Boolean @default(true)
 
   complianceMappings ComplianceMapping[]
+  euAiActClassification EuAiActClassification?
   riskAssessments    RiskAssessment[]
   policyAssignments  PolicyAssignment[]
   approvals          SystemApproval[]
@@ -896,6 +911,44 @@ model ControlCrosswalk {
 
   @@unique([fromControlId, toControlId])
   @@index([toControlId])
+}
+
+// ─── EU AI Act Classification ───────────────────────────
+//
+// Output of the per-system classification wizard: the system's risk tier
+// under Regulation (EU) 2024/1689, the organisation's role, the flags that
+// drive specific obligations, and the list of applicable article codes
+// (matching FrameworkControl.code for EU_AI_ACT). `answers` keeps the raw
+// wizard input so the classification can be re-derived and audited; the
+// derived columns are what the UI, blockers and executive posture read.
+model EuAiActClassification {
+  id                   String          @id @default(cuid())
+  aiSystem             AISystem        @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId           String          @unique
+  role                 EuAiActRole
+  tier                 EuAiActRiskTier
+  annexIProduct        Boolean         @default(false)
+  annexIiiCategories   String[]        @default([])
+  derogationClaimed    Boolean         @default(false)
+  transparencyRequired Boolean         @default(false)
+  friaRequired         Boolean         @default(false)
+  gpaiDeployer         Boolean         @default(false)
+  gpaiProvider         Boolean         @default(false)
+  applicableArticles   String[]        @default([])
+  answers              Json
+  rationale            String?         @db.Text
+  notes                String?         @db.Text
+  obligationDeadline   DateTime?
+  classifiedByUser     User            @relation("EuAiActClassifiedBy", fields: [classifiedByUserId], references: [id], onDelete: Cascade)
+  classifiedByUserId   String
+  classifiedAt         DateTime        @default(now())
+  reviewDueAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tier])
+  @@index([classifiedByUserId, createdAt])
 }
 
 model SystemApproval {

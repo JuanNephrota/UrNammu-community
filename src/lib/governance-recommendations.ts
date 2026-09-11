@@ -17,7 +17,7 @@ export type GovernanceRecommendation = {
   detail: string;
   href: string;
   tone: GovernanceRecommendationTone;
-  source: "workflow" | "policy" | "exception" | "incident" | "monitoring";
+  source: "workflow" | "policy" | "exception" | "incident" | "monitoring" | "regulatory";
   priority: number;
 };
 
@@ -58,6 +58,13 @@ type GovernanceRecommendationInput = {
     status: "ACTIVE" | "EXPIRED" | "REVOKED";
     expiresAt: Date | string;
   }>;
+  /** EU AI Act posture; omit when the caller has not loaded it. */
+  euAiAct?: {
+    classified: boolean;
+    tier: "PROHIBITED" | "HIGH_RISK" | "LIMITED_RISK" | "MINIMAL_RISK" | null;
+    unassessedObligations: number;
+    applicableArticles: number;
+  };
   governanceIncidents: Array<{
     id: string;
     title: string;
@@ -176,6 +183,42 @@ export function getSystemGovernanceRecommendations(
       source: "incident",
       priority: 100,
     });
+  }
+
+  if (input.euAiAct) {
+    if (!input.euAiAct.classified) {
+      addRecommendation(recommendations, {
+        key: "eu-ai-act-unclassified",
+        title: "Run the EU AI Act classification",
+        detail:
+          "The system's risk tier under Regulation (EU) 2024/1689 has not been determined, so its regulatory obligations are unknown.",
+        href: `/registry/${input.id}/eu-ai-act`,
+        tone: "warning",
+        source: "regulatory",
+        priority: 80,
+      });
+    } else if (input.euAiAct.tier === "PROHIBITED") {
+      addRecommendation(recommendations, {
+        key: "eu-ai-act-prohibited",
+        title: "Withdraw or redesign: prohibited practice identified",
+        detail:
+          "The EU AI Act classification matched an Art. 5 prohibited practice. The system cannot be approved or used in the EU until the practice is removed.",
+        href: `/registry/${input.id}/eu-ai-act`,
+        tone: "critical",
+        source: "regulatory",
+        priority: 99,
+      });
+    } else if (input.euAiAct.tier === "HIGH_RISK" && input.euAiAct.unassessedObligations > 0) {
+      addRecommendation(recommendations, {
+        key: "eu-ai-act-obligations",
+        title: `Evidence ${input.euAiAct.unassessedObligations} EU AI Act obligation${input.euAiAct.unassessedObligations === 1 ? "" : "s"}`,
+        detail: `This high-risk system has ${input.euAiAct.unassessedObligations} of ${input.euAiAct.applicableArticles} applicable articles without an assessment on the Compliance tab.`,
+        href: `/registry/${input.id}?tab=compliance&framework=EU_AI_ACT`,
+        tone: "warning",
+        source: "regulatory",
+        priority: 84,
+      });
+    }
   }
 
   const missingStages = requiredStages.filter((stage) => !approvedStages.includes(stage));

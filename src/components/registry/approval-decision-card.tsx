@@ -31,7 +31,10 @@ export type ApprovalBlockerView = {
     | "compliance_evidence"
     | "policy_rule"
     | "stage_review"
-    | "review_date";
+    | "review_date"
+    | "eu_ai_act_classification"
+    | "eu_ai_act_prohibited"
+    | "eu_ai_act_obligation";
 };
 
 const decisionStyles = {

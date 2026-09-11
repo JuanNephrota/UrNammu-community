@@ -33,6 +33,7 @@ async function gatherMetrics(
     openAlerts,
     costBuckets,
     riskAssessments,
+    euClassifications,
   ] = await Promise.all([
     prisma.aISystem.groupBy({
       by: ["status"],
@@ -84,6 +85,11 @@ async function gatherMetrics(
       select: { overallScore: true },
       orderBy: { createdAt: "desc" },
       take: 200,
+    }),
+    prisma.euAiActClassification.groupBy({
+      by: ["tier"],
+      _count: true,
+      where: { classifiedAt: { lte: periodEnd } },
     }),
   ]);
 
@@ -143,10 +149,18 @@ async function gatherMetrics(
     }
   }
 
+  // EU AI Act
+  const euClassifiedSystems = euClassifications.reduce((s, g) => s + g._count, 0);
+  const euHighRiskSystems = euClassifications.find((g) => g.tier === "HIGH_RISK")?._count ?? 0;
+  const euProhibitedSystems = euClassifications.find((g) => g.tier === "PROHIBITED")?._count ?? 0;
+
   return {
     totalSystems,
     approvedOrDeployed,
     draftOrReview,
+    euClassifiedSystems,
+    euHighRiskSystems,
+    euProhibitedSystems,
     totalComplianceMappings,
     compliantMappings,
     avgRiskScore,
