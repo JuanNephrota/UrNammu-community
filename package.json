@@ -95,6 +95,6 @@
     "lint-staged": "^15.5.2",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
-    "typescript": "^6"
+    "typescript": "^7"
   }
 }
