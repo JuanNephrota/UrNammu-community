@@ -45,7 +45,7 @@
     }
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
+    "@anthropic-ai/sdk": "^0.125.0",
     "@auth/prisma-adapter": "^2.11.3",
     "@azure/identity": "^4.13.2",
     "@azure/monitor-query-metrics": "^1.0.0",
@@ -71,7 +71,7 @@
     "dotenv": "^17.4.2",
     "google-auth-library": "^10.6.2",
     "googleapis": "^173.0.0",
-    "lucide-react": "^1.42.0",
+    "lucide-react": "^1.45.0",
     "motion": "^13.2.0",
     "next": "16.3.4",
     "next-auth": "^4.24.14",
@@ -82,7 +82,7 @@
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.6.0",
     "vercel": "^59.16.0",
-    "zod": "^4.5.4"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
