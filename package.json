@@ -81,7 +81,7 @@
     "react-dom": "19.2.8",
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.6.0",
-    "vercel": "^54.13.0",
+    "vercel": "^59.16.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
