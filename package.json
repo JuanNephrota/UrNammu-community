@@ -78,7 +78,7 @@
     "openai": "^6.34.0",
     "prisma": "^6.19.3",
     "react": "19.3.0",
-    "react-dom": "19.2.8",
+    "react-dom": "19.3.0",
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.6.0",
     "vercel": "^59.16.0",
