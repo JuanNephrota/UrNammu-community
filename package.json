@@ -63,7 +63,7 @@
     "@radix-ui/react-tabs": "^1.1.21",
     "@radix-ui/react-tooltip": "^1.2.16",
     "@react-pdf/renderer": "^4.9.0",
-    "@tanstack/react-table": "^9.2.4",
+    "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "crowdstrike-falcon": "^0.7.0",
@@ -78,7 +78,7 @@
     "openai": "^6.34.0",
     "prisma": "^6.19.3",
     "react": "19.3.0",
-    "react-dom": "19.2.8",
+    "react-dom": "19.3.0",
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.6.0",
     "vercel": "^59.16.0",
@@ -89,12 +89,12 @@
     "@types/node": "^26",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^10",
+    "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
-    "typescript": "^7"
+    "typescript": "^6"
   }
 }

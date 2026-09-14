@@ -50,6 +50,18 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: prisma
         update-types: [version-update:semver-major]
+      # @tanstack/react-table v9 renamed the row-model API (getCoreRowModel ->
+      # createCoreRowModel, useReactTable -> ReactTable); needs a manual migration.
+      - dependency-name: "@tanstack/react-table"
+        update-types: [version-update:semver-major]
+      # typescript-eslint (bundled by eslint-config-next) refuses to run on
+      # TS 7.x, so `npm run lint` crashes. Lift once eslint-config-next supports it.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # ESLint 10 removed deprecated rule APIs (context.getFilename) that the
+      # eslint-plugin-react nested under eslint-config-next still uses.
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
 
   # ---------------------------------------------------------------------------
   # Companion Azure Functions proxy
