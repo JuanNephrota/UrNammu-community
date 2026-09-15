@@ -10,7 +10,8 @@ export type ReportDataSourceKey =
   | "API_USAGE"
   | "ALERTS"
   | "SHADOW_AI"
-  | "AUDIT_LOG";
+  | "AUDIT_LOG"
+  | "PEOPLE_USAGE";
 
 export type ReportFormatKey = "PDF" | "CSV" | "JSON";
 

@@ -13,11 +13,15 @@ import {
   ScrollText,
   Loader2,
   type LucideIcon,
+  Users,
+  Building2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { ReportTemplate } from "@/lib/reports/templates";
 
 const ICONS: Record<string, LucideIcon> = {
+  Building2,
+  Users,
   ShieldAlert,
   FileCheck,
   DollarSign,

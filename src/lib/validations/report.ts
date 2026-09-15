@@ -9,6 +9,7 @@ export const DATA_SOURCE_VALUES = [
   "ALERTS",
   "SHADOW_AI",
   "AUDIT_LOG",
+  "PEOPLE_USAGE",
 ] as const;
 
 export const REPORT_FORMAT_VALUES = ["PDF", "CSV", "JSON"] as const;

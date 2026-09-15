@@ -818,6 +818,11 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
       string,
       { day: string; model: string | null; cents: number }
     >();
+    // Per-(email, day) spend, stored on the user's UsageBucket metadata as
+    // `chargedCents` so Usage by Person can report Cursor cost per developer.
+    // Team-wide CostBuckets below stay the source for org totals; this is a
+    // per-user annotation, not a second cost row.
+    const centsByUserDay = new Map<string, number>();
     for (const ev of events) {
       const day = eventDay(ev.timestamp);
       if (!day) continue;
@@ -833,6 +838,10 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
         tokensByUserDay.set(k, agg);
       }
       const charged = asNumber(ev.chargedCents);
+      if (email && charged > 0) {
+        const k = `${email}|${day}`;
+        centsByUserDay.set(k, (centsByUserDay.get(k) ?? 0) + charged);
+      }
       if (charged > 0) {
         const model = asString(ev.model);
         const k = `${day}|${model ?? ""}`;
@@ -862,6 +871,14 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
         asNumber(row.cmdkUsages);
 
       const tokenAgg = email ? tokensByUserDay.get(`${email}|${day}`) : undefined;
+      // Only annotate spend when the events feed actually returned data;
+      // otherwise leave the field absent so readers can tell "unknown" from
+      // "zero" (Usage by Person shows Cursor cost as n/a when no row has it).
+      const bucketMetadata = toJsonValue(
+        events.length > 0 && email
+          ? { ...row, chargedCents: centsByUserDay.get(`${email}|${day}`) ?? 0 }
+          : row,
+      );
       const dimensionKey = makeDimensionKey({ actorId, date: day });
 
       await prisma.usageBucket.upsert({
@@ -885,7 +902,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
           cacheCreationTokens: tokenAgg?.cacheCreation ?? 0,
           requestCount,
           aiSystemId: managedSystemId,
-          metadata: toJsonValue(row),
+          metadata: bucketMetadata,
           syncRunId: syncRun.id,
         },
         create: {
@@ -904,7 +921,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
           cacheCreationTokens: tokenAgg?.cacheCreation ?? 0,
           requestCount,
           aiSystemId: managedSystemId,
-          metadata: toJsonValue(row),
+          metadata: bucketMetadata,
           syncRunId: syncRun.id,
         },
       });

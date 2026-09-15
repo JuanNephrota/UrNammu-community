@@ -1,5 +1,6 @@
 import { subDays } from "date-fns";
 import { prisma } from "@/lib/prisma";
+import { loadPeopleUsageReportRows } from "@/lib/people-usage";
 import type {
   ColumnType,
   FilterOperator,
@@ -27,11 +28,21 @@ export interface SourceColumn {
   aggregate?: "sum" | "avg";
 }
 
+// Computed sources get their rows from a loader instead of a Prisma model.
+// The loader receives the resolved date range (null = all time) and returns
+// flat rows keyed by column key; filtering, sorting, and grouping then happen
+// in memory (see ./in-memory.ts). Every column on such a source should set
+// `field` (= key) so the builder treats it as filterable/groupable/sortable.
+export type DataSourceLoader = (ctx: {
+  range: { from: Date; to: Date } | null;
+}) => Promise<Record<string, unknown>[]>;
+
 export interface DataSourceDef {
   key: ReportDataSourceKey;
   label: string;
   description: string;
-  model: string; // prisma delegate property name
+  model?: string; // prisma delegate property name (model-backed sources)
+  loader?: DataSourceLoader; // computed sources (exactly one of model / loader)
   dateField: string; // column used for date-range filtering + default sort
   include?: Record<string, unknown>; // relations to hydrate in detail mode
   columns: SourceColumn[];
@@ -265,6 +276,61 @@ export const DATA_SOURCES: Record<ReportDataSourceKey, DataSourceDef> = {
     ],
     defaultColumns: ["action", "entityType", "userName", "createdAt"],
   },
+
+  PEOPLE_USAGE: {
+    key: "PEOPLE_USAGE",
+    label: "Usage by Person",
+    description:
+      "One row per person: Claude Code, Cowork, Cursor, and proxied API cost and activity, merged by email.",
+    loader: ({ range }) => loadPeopleUsageReportRows(range),
+    dateField: "lastActiveAt",
+    columns: [
+      { key: "name", label: "Name", type: "string", field: "name" },
+      { key: "email", label: "Email", type: "string", field: "email" },
+      { key: "department", label: "Department", type: "string", field: "department" },
+      { key: "surfaces", label: "Surfaces", type: "string", field: "surfaces" },
+      { key: "surfaceCount", label: "Surface Count", type: "number", field: "surfaceCount", aggregate: "avg" },
+      { key: "totalCost", label: "Total Cost", type: "currency", field: "totalCost", aggregate: "sum" },
+      { key: "totalTokens", label: "Total Tokens", type: "number", field: "totalTokens", aggregate: "sum" },
+      { key: "claudeCodeCost", label: "Claude Code Cost", type: "currency", field: "claudeCodeCost", aggregate: "sum" },
+      { key: "claudeCodeSessions", label: "Claude Code Sessions", type: "number", field: "claudeCodeSessions", aggregate: "sum" },
+      { key: "claudeCodeTokens", label: "Claude Code Tokens", type: "number", field: "claudeCodeTokens", aggregate: "sum" },
+      { key: "claudeCodeLinesAdded", label: "Claude Code Lines Added", type: "number", field: "claudeCodeLinesAdded", aggregate: "sum" },
+      { key: "claudeCodeCommits", label: "Claude Code Commits", type: "number", field: "claudeCodeCommits", aggregate: "sum" },
+      {
+        key: "claudeCodeSource",
+        label: "Claude Code Source",
+        type: "enum",
+        field: "claudeCodeSource",
+        enumOptions: ["OTel", "Admin API"],
+      },
+      { key: "coworkCost", label: "Cowork Cost", type: "currency", field: "coworkCost", aggregate: "sum" },
+      { key: "coworkSessions", label: "Cowork Sessions", type: "number", field: "coworkSessions", aggregate: "sum" },
+      { key: "coworkTokens", label: "Cowork Tokens", type: "number", field: "coworkTokens", aggregate: "sum" },
+      { key: "cursorCost", label: "Cursor Cost", type: "currency", field: "cursorCost", aggregate: "sum" },
+      { key: "cursorRequests", label: "Cursor Requests", type: "number", field: "cursorRequests", aggregate: "sum" },
+      { key: "cursorTokens", label: "Cursor Tokens", type: "number", field: "cursorTokens", aggregate: "sum" },
+      { key: "cursorLinesAccepted", label: "Cursor Lines Accepted", type: "number", field: "cursorLinesAccepted", aggregate: "sum" },
+      { key: "cursorActiveDays", label: "Cursor Active Days", type: "number", field: "cursorActiveDays", aggregate: "sum" },
+      { key: "proxyCost", label: "API (proxy) Cost", type: "currency", field: "proxyCost", aggregate: "sum" },
+      { key: "proxyRequests", label: "API (proxy) Requests", type: "number", field: "proxyRequests", aggregate: "sum" },
+      { key: "proxyTokens", label: "API (proxy) Tokens", type: "number", field: "proxyTokens", aggregate: "sum" },
+      { key: "proxyFlagged", label: "API (proxy) Flagged", type: "number", field: "proxyFlagged", aggregate: "sum" },
+      { key: "lastActiveAt", label: "Last Active", type: "date", field: "lastActiveAt" },
+    ],
+    defaultColumns: [
+      "name",
+      "email",
+      "department",
+      "claudeCodeCost",
+      "coworkCost",
+      "cursorCost",
+      "proxyCost",
+      "totalCost",
+      "totalTokens",
+      "lastActiveAt",
+    ],
+  },
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -421,6 +487,9 @@ export function serializeRegistry() {
 
 // Resolve the Prisma delegate for a data source.
 export function delegateFor(source: DataSourceDef) {
+  if (!source.model) {
+    throw new Error(`Data source ${source.key} is computed (loader-backed) and has no Prisma delegate`);
+  }
   const client = prisma as unknown as Record<string, unknown>;
   const delegate = client[source.model];
   if (!delegate) throw new Error(`No Prisma delegate for ${source.model}`);

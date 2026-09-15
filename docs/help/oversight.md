@@ -31,6 +31,18 @@ One page per AI surface, because the telemetry each one emits is different:
 - **Cowork** — productivity, cost, and governance metrics for Claude Cowork (Claude Desktop VM) sessions, from OTel. Last 7 days.
 - **Cursor** — developer activity from Cursor via OTel spans. Last 7 days. **Cursor's hook carries no token or cost data**, so these are activity metrics only — do not read the absence of spend here as zero spend.
 
+## Usage by Person
+
+**Oversight → Usage by Person** answers "who is using what, and what does it cost?" with one row per human across every surface UrNammu observes:
+
+- **Claude Code** and **Cowork** — live OTel metrics (Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two never overlap). When a person has no OTel data, the Anthropic Admin API analytics sync fills in sessions, lines, commits, and an estimated cost, marked "est."
+- **Cursor** — the Cursor Admin API sync. Per-user spend is recorded from the usage-events feed on each sync; days synced before that field existed show Cursor cost as "n/a" rather than zero.
+- **API (proxy)** — Anthropic and OpenAI calls through the governance proxy, attributed by the `x-user-email` header, with a count of flagged requests.
+
+People are matched by lower-cased email. Name and department come from the UrNammu user profile when one exists, otherwise from the provider's member directory. Anything without an email identity (anonymous proxy calls, API-key actors, un-tagged OTel clients) is kept out of the table and totalled in the **Unattributed cost** card so totals stay honest. Anthropic Console usage is reported per API key, not per person, and is intentionally excluded — see **Claude Platform** for that view.
+
+Pick a **7 / 30 / 90-day** window, search by name, email, or department, click a surface chip to open that dashboard filtered to the person, or **Download CSV** for the full column set. **Save as report** (`ADMIN` / `COMPLIANCE_OFFICER`) creates a report from the **Usage by Person** template so the view can be exported as PDF/CSV/JSON and scheduled for email delivery.
+
 ## Session traces
 
 **Oversight → Claude Code → Session Traces** reconstructs a session as turns, model calls, and tool use in execution order, rendered as a waterfall.

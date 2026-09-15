@@ -412,7 +412,7 @@ npm run db:reset
 - All `toLocaleString()` calls and number formatters are now pinned to `en-US` so numbers render consistently regardless of the Vercel runtime locale.
 - **Policy-as-code runtime enforcement**: the proxy evaluates machine-readable policy rules with an org-wide gate (`off` / `dry-run` / `enforce`), per-policy advisory-vs-blocking semantics, and a ~30s policy cache. Denials (and dangerous-prompt content blocks) are recorded and surfaced in a filterable, CSV-exportable Policy Denials viewer.
 - **Per-surface developer-AI oversight** via an OpenTelemetry pipeline: dedicated Claude Platform/API, Claude Code (+ searchable audit log), Cowork (local-agent surface), and Cursor dashboards, with per-user attribution and retention-prune crons. Prompt/code text is stripped at ingest; only metadata, decisions, and prompt-risk verdicts are stored.
-- **Custom reporting suite**: eight data sources and starter templates, detail/grouped output, PDF/CSV/JSON export, and scheduled email delivery via Resend.
+- **Custom reporting suite**: nine data sources (including the computed Usage by Person rollup) and ten starter templates, detail/grouped output, PDF/CSV/JSON export, and scheduled email delivery via Resend.
 - **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync.
 - **Shadow AI** gained a single "Scan All Sources" action, Hexnode UEM device discovery, Netskope log-shipper ingestion, and an Unblock action for blocked tools.
 - **Proxy Health** live-ops board combines Azure Monitor heartbeat metrics with real-time DB counters (usage, flagged, policy denials).

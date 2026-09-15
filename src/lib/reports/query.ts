@@ -6,7 +6,10 @@ import {
   getColumn,
   getDataSource,
   resolveColumns,
+  resolveDateRange,
+  type DataSourceDef,
 } from "./data-sources";
+import { filterRows, groupRows, sortRows, toCell } from "./in-memory";
 import type {
   ReportConfig,
   ReportDataSourceKey,
@@ -54,6 +57,7 @@ export async function runReportQuery(
   overrides?: ReportRunOverrides
 ): Promise<ReportResult> {
   const source = getDataSource(dataSource);
+  if (source.loader) return runComputedReport(source, config, overrides);
   const delegate = delegateFor(source);
   const dateRange = overrides?.dateRange ?? config.dateRange;
   const where = buildWhere(source, config.filters, dateRange);
@@ -174,4 +178,58 @@ export async function runReportQuery(
     chartType: config.chartType ?? "none",
     generatedAt: new Date().toISOString(),
   };
+}
+
+// ── Computed (loader-backed) sources ─────────────────────────────────────
+// The loader returns the full row set for the date range; filters, grouping,
+// sorting, and the row limit are applied here. Row counts are small by
+// construction (one row per person / entity), so this stays cheap.
+async function runComputedReport(
+  source: DataSourceDef,
+  config: ReportConfig,
+  overrides?: ReportRunOverrides
+): Promise<ReportResult> {
+  const dateRange = overrides?.dateRange ?? config.dateRange;
+  const rowLimit = Math.min(
+    Math.max(overrides?.rowLimit ?? config.rowLimit ?? DEFAULT_ROW_LIMIT, 1),
+    MAX_ROW_LIMIT
+  );
+  const appliedFilters = humanizeFilters(source, config.filters);
+  const columnFor = (key: string) => getColumn(source, key);
+
+  const loaded = await source.loader!({ range: resolveDateRange(dateRange) });
+  const filtered = filterRows(loaded, config.filters, columnFor);
+  const selected = resolveColumns(source, config.columns);
+  const groupColumn = config.groupBy ? getColumn(source, config.groupBy) : undefined;
+
+  const base = {
+    source: { key: source.key, label: source.label },
+    appliedFilters,
+    dateRangeLabel: dateRangeLabel(dateRange),
+    chartType: config.chartType ?? "none",
+    generatedAt: new Date().toISOString(),
+  } as const;
+
+  if (groupColumn) {
+    const numeric = selected.filter(
+      (c) => c.key !== groupColumn.key && (c.type === "number" || c.type === "currency")
+    );
+    const grouped = groupRows(filtered, groupColumn, numeric);
+    const rows = grouped.rows.slice(0, rowLimit);
+    return { ...base, columns: grouped.columns, rows, totalRows: rows.length, grouped: true };
+  }
+
+  const sortColumn = config.sort ? getColumn(source, config.sort.field) : undefined;
+  const sorted = sortColumn
+    ? sortRows(filtered, config.sort, sortColumn)
+    : sortRows(filtered, { field: source.dateField, direction: "desc" }, getColumn(source, source.dateField));
+
+  const columns: ReportOutputColumn[] = selected.map((c) => ({ key: c.key, label: c.label, type: c.type }));
+  const rows = sorted.slice(0, rowLimit).map((record) => {
+    const row: Record<string, string | number | boolean | null> = {};
+    for (const c of selected) row[c.key] = toCell(record[c.key]);
+    return row;
+  });
+
+  return { ...base, columns, rows, totalRows: filtered.length, grouped: false };
 }

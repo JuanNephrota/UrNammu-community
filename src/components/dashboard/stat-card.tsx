@@ -14,6 +14,7 @@ import {
   Activity,
   MousePointer2,
   Wrench,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -29,6 +30,7 @@ const iconMap: Record<string, LucideIcon> = {
   Activity,
   MousePointer2,
   Wrench,
+  Users,
 };
 
 interface StatCardProps {

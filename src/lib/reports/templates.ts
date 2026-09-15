@@ -16,6 +16,46 @@ export interface ReportTemplate {
 
 export const REPORT_TEMPLATES: ReportTemplate[] = [
   {
+    key: "usage-by-person",
+    name: "Usage by Person",
+    description:
+      "Per-person AI cost and activity across Claude Code, Cowork, Cursor, and proxied API calls over the last 30 days, highest spend first.",
+    icon: "Users",
+    dataSource: "PEOPLE_USAGE",
+    config: {
+      columns: [
+        "name",
+        "email",
+        "department",
+        "surfaces",
+        "claudeCodeCost",
+        "coworkCost",
+        "cursorCost",
+        "proxyCost",
+        "totalCost",
+        "totalTokens",
+        "lastActiveAt",
+      ],
+      sort: { field: "totalCost", direction: "desc" },
+      dateRange: { preset: "30d" },
+      chartType: "none",
+    },
+  },
+  {
+    key: "cost-by-department",
+    name: "Cost by Department",
+    description:
+      "Per-person AI spend rolled up by department (from each person's UrNammu user profile) over the last 30 days.",
+    icon: "Building2",
+    dataSource: "PEOPLE_USAGE",
+    config: {
+      columns: ["department", "totalCost", "totalTokens"],
+      groupBy: "department",
+      dateRange: { preset: "30d" },
+      chartType: "bar",
+    },
+  },
+  {
     key: "risk-posture",
     name: "Risk Posture",
     description:

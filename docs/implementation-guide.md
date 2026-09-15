@@ -30,7 +30,7 @@ The app is organized around a few core governance surfaces:
 - `Alerts`
   Central alert inbox, plus two tunable rule engines: prompt-risk rules (what is being asked) and key usage rules (how a credential behaves).
 - `Reports`
-  Definition-driven reporting over eight data sources, with PDF/CSV/JSON export and scheduled email delivery.
+  Definition-driven reporting over nine data sources (eight Prisma-model sources plus the computed Usage by Person source), with PDF/CSV/JSON export and scheduled email delivery.
 - `Executive`
   Board-facing posture scorecard: a weighted governance score, period-over-period deltas, and a generated narrative.
 - `Sensitive Scan`
@@ -177,6 +177,7 @@ There are two distinct telemetry pipelines, and mixing them is the most common m
 - `src/lib/oversight-telemetry.ts`
 - `src/app/(dashboard)/oversight/page.tsx`
 - `src/app/(dashboard)/oversight/usage/page.tsx`
+- `src/app/(dashboard)/oversight/people/page.tsx` — Usage by Person (cross-surface per-person rollup; data in `src/lib/people-usage.ts`)
 
 Prefer `UsageBucket` and `CostBucket` over reading `APIUsageLog` directly. `APIUsageLog` is the proxy's own write path and is the right source only for proxy-specific views such as Proxy Health.
 
@@ -234,13 +235,13 @@ The `Integrations` page reads the same settings data but is deliberately catalog
 
 Reports are definition-driven rather than hand-coded per report:
 
-- `src/lib/reports/data-sources.ts` — the eight sources and their typed, filterable columns. This is the file to touch when exposing new data to reporting.
+- `src/lib/reports/data-sources.ts` — the nine sources and their typed, filterable columns. This is the file to touch when exposing new data to reporting. A source is either **model-backed** (`model` = a Prisma delegate; Prisma does the filtering/grouping) or **computed** (`loader` = an async function returning flat rows for the date range; `src/lib/reports/in-memory.ts` filters, sorts, and groups them). `PEOPLE_USAGE` is the computed example — its loader is `loadPeopleUsageReportRows()` in `src/lib/people-usage.ts`.
 - `src/lib/reports/query.ts` and `generate.ts` — turn a stored definition into rows, then into an artifact.
 - `src/lib/reports/export/` — `pdf.tsx`, `csv.ts`, `json.ts`.
 - `src/lib/reports/schedule.ts` and `email.ts` — recurrence and delivery.
 - `src/lib/reports/access.ts` — `PRIVATE` / `SHARED` visibility and the author-role checks.
 
-Adding a column to an existing source is a `data-sources.ts` change only; the builder, preview, filters, and every export format pick it up automatically. Run artifacts above `MAX_STORED_ARTIFACT_BYTES` (5 MB) are still streamed to the requester but not persisted to run history.
+Adding a column to an existing source is a `data-sources.ts` change only; the builder, preview, filters, and every export format pick it up automatically. Adding a new source also needs a value on the `ReportDataSource` Prisma enum (migration), `ReportDataSourceKey` in `types.ts`, and `DATA_SOURCE_VALUES` in `validations/report.ts`. Run artifacts above `MAX_STORED_ARTIFACT_BYTES` (5 MB) are still streamed to the requester but not persisted to run history.
 
 ## In-App Help Architecture
 

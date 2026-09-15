@@ -4,15 +4,17 @@ Build, export, and schedule custom reports across your governance data. Authorin
 
 ## Starting from a template
 
-Eight templates cover the common asks: **Risk Posture**, **Compliance Status**, **Usage & Cost**, **Shadow AI Inventory**, **AI System Inventory**, **Executive Summary**, **Alerts Activity**, and **Audit Trail**. A template is a starting configuration, not a fixed format — every column, filter, and grouping stays editable afterward.
+Ten templates cover the common asks: **Usage by Person**, **Cost by Department**, **Risk Posture**, **Compliance Status**, **Usage & Cost**, **Shadow AI Inventory**, **AI System Inventory**, **Executive Summary**, **Alerts Activity**, and **Audit Trail**. A template is a starting configuration, not a fixed format — every column, filter, and grouping stays editable afterward.
 
 ## Data sources
 
 Each report draws from exactly one source:
 
-`AI Systems` · `AI Agents` · `Risk Assessments` · `Compliance` · `API Usage & Cost` · `Alerts` · `Shadow AI` · `Audit Log`
+`AI Systems` · `AI Agents` · `Risk Assessments` · `Compliance` · `API Usage & Cost` · `Alerts` · `Shadow AI` · `Audit Log` · `Usage by Person`
 
 Columns are typed — string, enum, number, or date — and the builder offers filters appropriate to the type. Numeric columns on assessment and cost sources can be aggregated (for example, average risk score by department) rather than listed row by row.
+
+**Usage by Person** is a computed source: one row per person with their Claude Code, Cowork, Cursor, and proxied-API cost and activity merged by email (the same data as **Oversight → Usage by Person**). Every column can be filtered, sorted, and grouped — group by **Department** to get spend per team — and the date range sets the activity window.
 
 ## Building a report
 

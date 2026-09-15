@@ -1503,6 +1503,10 @@ enum ReportDataSource {
   ALERTS
   SHADOW_AI
   AUDIT_LOG
+  // Computed cross-surface rollup (Claude Code, Cowork, Cursor, proxy) keyed by
+  // person; served by a loader rather than a single model. See
+  // src/lib/people-usage.ts.
+  PEOPLE_USAGE
 }
 
 enum ReportFormat {

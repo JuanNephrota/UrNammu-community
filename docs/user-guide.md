@@ -719,7 +719,7 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 
 ## 10. Oversight (Telemetry & Cost)
 
-**Sidebar → Governance → AI Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, and investigation telemetry. The Governance group also carries dedicated **per-surface** dashboards — **Claude Platform / API**, **Claude Code**, **Cowork**, and **Cursor** — described below.
+**Sidebar → Governance → AI Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, and investigation telemetry. The Governance group also carries a cross-surface **Usage by Person** view and dedicated **per-surface** dashboards — **Claude Platform / API**, **Claude Code**, **Cowork**, and **Cursor** — described below.
 
 ### How Provider Sync Works
 
@@ -942,6 +942,26 @@ Two caveats worth knowing before you use durations as evidence:
 - **Lines produced (7d)** — per-user accepted/added/deleted lines and active days (requires the Cursor Admin API team key).
 - Recent spans list.
 
+The Cursor Admin API sync also records each developer's charged spend per day (from the usage-events feed) on their daily usage row, which is what **Usage by Person** reports as Cursor cost.
+
+### Usage by Person
+
+**Governance → Usage by Person** is the cross-surface answer to "who is using what, and what does it cost?" — one row per human, merged by lower-cased email, across:
+
+- **Claude Code** and **Cowork** — live OTel metrics. Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two columns never overlap. When a person has no OTel data in the window, the Anthropic Admin API analytics sync fills in sessions, lines, commits, and an estimated cost (marked *est.*), so people whose machines are not instrumented still appear.
+- **Cursor** — the Cursor Admin API sync: requests, tokens, accepted lines, active days, and per-user spend. Days synced before per-user spend was recorded show Cursor cost as *n/a* rather than zero.
+- **API (proxy)** — Anthropic and OpenAI calls made through the governance proxy, attributed by the `x-user-email` header, plus a count of flagged requests.
+
+The page shows:
+
+- **Stat cards** — people with activity, attributed cost, average cost per person, and **unattributed cost** (usage with no email identity: anonymous proxy calls, API-key actors, un-tagged OTel clients). Unattributed usage is kept out of the table and totalled separately so the per-person figures never silently absorb it.
+- **By surface** — cost, people, and tokens per surface, with any unattributed remainder called out.
+- **People table** — sortable and searchable (name, email, department), with a surface chip per person that opens the corresponding dashboard filtered to them, and **Download CSV** for the full column set (per-surface cost, tokens, sessions, lines, commits, requests, flags, last active).
+- **Window** — 7 / 30 / 90 days.
+- **Save as report** (`ADMIN` / `COMPLIANCE_OFFICER`) — creates a report from the *Usage by Person* template so the same data can be exported as PDF/CSV/JSON and scheduled for email delivery (see [Reports](#11-reports)).
+
+Name and department come from the person's UrNammu user profile when one exists (Settings → Users & Identity), otherwise from the provider's member directory. Anthropic Console usage is reported per API key, not per person, and is intentionally excluded — use **Claude Platform** for that view.
+
 ### Proxy Health
 
 **System → Proxy Health** is a live-ops board for the Azure Functions AI proxy. It auto-refreshes every ~15 seconds and keeps a 1-hour history.
@@ -1030,7 +1050,7 @@ Treat a finding as a lead, not a verdict. A gateway may legitimately echo a syst
 
 ### Building a report
 
-A report is built against one of eight **data sources** — AI Systems, AI Agents, Risk Assessments, Compliance, API Usage, Alerts, Shadow AI, or Audit Logs — with:
+A report is built against one of nine **data sources** — AI Systems, AI Agents, Risk Assessments, Compliance, API Usage, Alerts, Shadow AI, Audit Logs, or Usage by Person — with:
 
 - **Output mode** — *Detail rows* (every record) or a *grouped summary* (counts/sums/averages by a chosen field, with chart support).
 - **Filters** — date range (presets or custom), plus enum / boolean / text / numeric conditions.
@@ -1039,11 +1059,13 @@ A report is built against one of eight **data sources** — AI Systems, AI Agent
 
 Use **Preview** to see results live before saving.
 
+**Usage by Person** is a *computed* source rather than a single table: each row is one person with their Claude Code, Cowork, Cursor, and proxied-API cost and activity merged by email — the same data as **Governance → Usage by Person**. Every column can be filtered, sorted, and grouped (group by *Department* for spend per team), and the date range sets the activity window.
+
 ### Templates
 
-Eight starter templates pre-fill a sensible source, columns, and grouping:
+Ten starter templates pre-fill a sensible source, columns, and grouping:
 
-- **Risk Posture**, **Compliance Status**, **Usage & Cost**, **Shadow AI Inventory**, **AI System Inventory**, **Executive Summary**, **Alerts Activity**, and **Audit Trail**.
+- **Usage by Person**, **Cost by Department**, **Risk Posture**, **Compliance Status**, **Usage & Cost**, **Shadow AI Inventory**, **AI System Inventory**, **Executive Summary**, **Alerts Activity**, and **Audit Trail**.
 
 ### Exporting
 
