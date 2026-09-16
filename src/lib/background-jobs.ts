@@ -10,12 +10,16 @@ import { isOpenRouterConfigured } from "./openrouter-admin";
 import { isHeliconeConfigured } from "./helicone-admin";
 import { isPortkeyConfigured } from "./portkey-admin";
 import { isLiteLLMConfigured } from "./litellm-admin";
+import { isAnthropicComplianceConfigured } from "./anthropic-compliance";
+import { isClaudeEnterpriseConfigured } from "./claude-enterprise-analytics";
 import { logger } from "./observability";
 import { notifyDatadog } from "./datadog-client";
 import {
+  syncAnthropicCompliance,
   syncAnthropicTelemetry,
   syncChatGPTEnterprise,
   syncClaudeCodeAnalytics,
+  syncClaudeEnterpriseAnalytics,
   syncCursorTelemetry,
   syncGeminiTelemetry,
   syncGitHubCopilotTelemetry,
@@ -99,6 +103,8 @@ const PROVIDER_SYNC_FUNCTIONS: Record<
   portkey: syncPortkeyTelemetry,
   litellm: syncLiteLLMTelemetry,
   chatgpt_enterprise: syncChatGPTEnterprise,
+  anthropic_compliance: syncAnthropicCompliance,
+  claude_enterprise: syncClaudeEnterpriseAnalytics,
 };
 
 const PROVIDER_CONFIGURED_CHECKS: Record<SyncProviderId, () => Promise<boolean>> = {
@@ -113,6 +119,8 @@ const PROVIDER_CONFIGURED_CHECKS: Record<SyncProviderId, () => Promise<boolean>>
   portkey: isPortkeyConfigured,
   litellm: isLiteLLMConfigured,
   chatgpt_enterprise: isChatGPTEnterpriseConfigured,
+  anthropic_compliance: isAnthropicComplianceConfigured,
+  claude_enterprise: isClaudeEnterpriseConfigured,
 };
 
 const DISCOVERY_SCAN_SETTINGS: Record<
@@ -153,6 +161,10 @@ export type ProviderSyncOutcome = {
   rawSnapshotsStored: number;
   projectsUpserted: number;
   actorsUpserted: number;
+  /** Anthropic Compliance feed only: activity + session rows written. */
+  complianceActivitiesUpserted?: number;
+  complianceSessionsUpserted?: number;
+  alertsCreated?: number;
   /** OpenAI only: assistant inventory follow-up discovery. */
   assistants?: { found: number; created: number; updated: number; error?: string };
   /** The window the run was asked to cover (ISO strings). */
@@ -174,6 +186,9 @@ export type ProviderSyncJobResult = {
   cursorUsageSynced: number;
   githubCopilotUsageSynced: number;
   chatgptEnterpriseUsageSynced: number;
+  claudeEnterpriseUsageSynced: number;
+  anthropicComplianceActivitiesSynced: number;
+  anthropicComplianceSessionsSynced: number;
   anthropicCostBucketsSynced: number;
   openaiCostBucketsSynced: number;
   openRouterCostBucketsSynced: number;
@@ -185,6 +200,7 @@ export type ProviderSyncJobResult = {
   cursorCostBucketsSynced: number;
   githubCopilotCostBucketsSynced: number;
   chatgptEnterpriseCostBucketsSynced: number;
+  claudeEnterpriseCostBucketsSynced: number;
   rawSnapshotsStored: number;
   assistantsFound: number;
   agentsCreated: number;
@@ -547,6 +563,9 @@ export async function runProviderSync(
     actorsUpserted: raw.success ? raw.actorsUpserted : 0,
     window: windowIso,
     truncated: raw.success ? raw.truncated : false,
+    complianceActivitiesUpserted: raw.success ? raw.complianceActivitiesUpserted : undefined,
+    complianceSessionsUpserted: raw.success ? raw.complianceSessionsUpserted : undefined,
+    alertsCreated: raw.success ? raw.alertsCreated : undefined,
   };
 
   // Assistant inventory rides along with a regular OpenAI sync; a backfill
@@ -625,6 +644,9 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
     cursorUsageSynced: usage("cursor"),
     githubCopilotUsageSynced: usage("github_copilot"),
     chatgptEnterpriseUsageSynced: usage("chatgpt_enterprise"),
+    claudeEnterpriseUsageSynced: usage("claude_enterprise"),
+    anthropicComplianceActivitiesSynced: byProvider.get("anthropic_compliance")?.complianceActivitiesUpserted ?? 0,
+    anthropicComplianceSessionsSynced: byProvider.get("anthropic_compliance")?.complianceSessionsUpserted ?? 0,
     anthropicCostBucketsSynced: cost("anthropic"),
     openaiCostBucketsSynced: cost("openai"),
     openRouterCostBucketsSynced: cost("openrouter"),
@@ -636,6 +658,7 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
     cursorCostBucketsSynced: cost("cursor"),
     githubCopilotCostBucketsSynced: cost("github_copilot"),
     chatgptEnterpriseCostBucketsSynced: cost("chatgpt_enterprise"),
+    claudeEnterpriseCostBucketsSynced: cost("claude_enterprise"),
     rawSnapshotsStored: outcomes.reduce((sum, outcome) => sum + outcome.rawSnapshotsStored, 0),
     assistantsFound: assistants?.found ?? 0,
     agentsCreated: assistants?.created ?? 0,

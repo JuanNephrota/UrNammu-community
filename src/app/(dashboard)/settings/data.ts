@@ -61,6 +61,10 @@ const SETTINGS_KEYS = [
   "ai_model",
   "ai_api_key",
   "anthropic_admin_key",
+  "anthropic_compliance_key",
+  "anthropic_analytics_key",
+  "anthropic_compliance_lookback_days",
+  "org_timezone",
   "anthropic_managed_system_id",
   "cursor_admin_key",
   "cursor_managed_system_id",
@@ -212,6 +216,14 @@ export async function getSettingsPageData() {
     /** Azure Functions proxy host, when the Proxy Health connection names it. */
     functionAppName: settingsMap.azure_function_app_name ?? "",
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
+    // The Compliance Activity Feed also accepts the Admin key; the dedicated
+    // key is what unlocks session metadata.
+    hasAnthropicComplianceKey: !!settingsMap.anthropic_compliance_key,
+    hasClaudeEnterpriseAnalyticsKey: !!settingsMap.anthropic_analytics_key,
+    complianceAlerts: {
+      orgTimezone: settingsMap.org_timezone ?? "",
+      lookbackDays: settingsMap.anthropic_compliance_lookback_days ?? "",
+    },
     hasCursorAdminKey: !!settingsMap.cursor_admin_key,
     hasGitHubCopilotConfig:
       !!settingsMap.github_copilot_token &&

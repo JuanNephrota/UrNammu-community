@@ -47,7 +47,7 @@ export default async function PeopleUsagePage({
     <div className="space-y-6">
       <PageHeader
         title="Usage by Person"
-        description={`Who is using which AI surface, and what it costs — Claude Code, Cowork, Cursor, GitHub Copilot, and proxied API calls merged by email. ${rangeLabel}.`}
+        description={`Who is using which AI surface, and what it costs — Claude Code, Cowork, Claude Enterprise, Cursor, GitHub Copilot, and proxied API calls merged by email. ${rangeLabel}.`}
       >
         <PeopleRangeFilter initialRange={range} />
         {canAuthorReports && template && (
@@ -102,7 +102,7 @@ export default async function PeopleUsagePage({
           <CardTitle>By surface</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             {summary.bySurface.map((s) => (
               <div
                 key={s.surface}
@@ -171,6 +171,13 @@ export default async function PeopleUsagePage({
               counts as Claude Code, so the two columns never overlap. When a person has no OTel data, the Anthropic
               Admin API analytics sync fills in sessions, lines, commits, and an estimated cost (marked{" "}
               <span className="uppercase text-[10px] tracking-wider">est.</span>).
+            </li>
+            <li>
+              <span className="text-[var(--text-secondary)]">Claude Enterprise</span>{" "}
+              comes from the Claude Enterprise Analytics API sync: per-person daily activity for Claude.ai chat, Cowork,
+              Design, and the Office add-ins, with tokens and cost from the per-user usage and cost reports (about a day
+              behind). The Claude Code product is left out of this column because Claude Code already has its own. Cost
+              shows as <span className="text-[var(--text-faint)]">n/a</span> until the cost report has landed for the window.
             </li>
             <li>
               <span className="text-[var(--text-secondary)]">Cursor</span>{" "}

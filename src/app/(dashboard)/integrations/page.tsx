@@ -16,6 +16,9 @@ export default async function IntegrationsPage() {
     currentModel,
     hasAiKey,
     hasAnthropicAdminKey,
+    hasAnthropicComplianceKey,
+    hasClaudeEnterpriseAnalyticsKey,
+    complianceAlerts,
     hasOpenAIAdminKey,
     hasOpenRouterKey,
     hasHeliconeKey,
@@ -97,6 +100,9 @@ export default async function IntegrationsPage() {
           hasApiKey: hasAiKey,
         }}
         hasAnthropicAdminKey={hasAnthropicAdminKey}
+        hasAnthropicComplianceKey={hasAnthropicComplianceKey}
+        hasClaudeEnterpriseAnalyticsKey={hasClaudeEnterpriseAnalyticsKey}
+        complianceAlerts={complianceAlerts}
         hasOpenAIAdminKey={hasOpenAIAdminKey}
         hasOpenRouterKey={hasOpenRouterKey}
         hasHeliconeKey={hasHeliconeKey}

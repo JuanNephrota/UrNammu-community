@@ -281,7 +281,7 @@ export const DATA_SOURCES: Record<ReportDataSourceKey, DataSourceDef> = {
     key: "PEOPLE_USAGE",
     label: "Usage by Person",
     description:
-      "One row per person: Claude Code, Cowork, Cursor, GitHub Copilot, and proxied API cost and activity, merged by email.",
+      "One row per person: Claude Code, Cowork, Claude Enterprise, Cursor, GitHub Copilot, and proxied API cost and activity, merged by email.",
     loader: ({ range }) => loadPeopleUsageReportRows(range),
     dateField: "lastActiveAt",
     columns: [
@@ -307,6 +307,11 @@ export const DATA_SOURCES: Record<ReportDataSourceKey, DataSourceDef> = {
       { key: "coworkCost", label: "Cowork Cost", type: "currency", field: "coworkCost", aggregate: "sum" },
       { key: "coworkSessions", label: "Cowork Sessions", type: "number", field: "coworkSessions", aggregate: "sum" },
       { key: "coworkTokens", label: "Cowork Tokens", type: "number", field: "coworkTokens", aggregate: "sum" },
+      { key: "enterpriseCost", label: "Claude Enterprise Cost", type: "currency", field: "enterpriseCost", aggregate: "sum" },
+      { key: "enterpriseMessages", label: "Claude Enterprise Messages", type: "number", field: "enterpriseMessages", aggregate: "sum" },
+      { key: "enterpriseTokens", label: "Claude Enterprise Tokens", type: "number", field: "enterpriseTokens", aggregate: "sum" },
+      { key: "enterpriseActiveDays", label: "Claude Enterprise Active Days", type: "number", field: "enterpriseActiveDays", aggregate: "sum" },
+      { key: "enterpriseProducts", label: "Claude Enterprise Products", type: "string", field: "enterpriseProducts" },
       { key: "cursorCost", label: "Cursor Cost", type: "currency", field: "cursorCost", aggregate: "sum" },
       { key: "cursorRequests", label: "Cursor Requests", type: "number", field: "cursorRequests", aggregate: "sum" },
       { key: "cursorTokens", label: "Cursor Tokens", type: "number", field: "cursorTokens", aggregate: "sum" },
@@ -328,6 +333,7 @@ export const DATA_SOURCES: Record<ReportDataSourceKey, DataSourceDef> = {
       "department",
       "claudeCodeCost",
       "coworkCost",
+      "enterpriseCost",
       "cursorCost",
       "proxyCost",
       "totalCost",

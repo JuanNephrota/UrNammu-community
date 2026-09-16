@@ -10,6 +10,8 @@ export default async function ProviderAdminSettingsPage() {
 
   const {
     hasAnthropicAdminKey,
+    hasAnthropicComplianceKey,
+    hasClaudeEnterpriseAnalyticsKey,
     hasCursorAdminKey,
     hasGitHubCopilotConfig,
     githubCopilot,
@@ -89,6 +91,8 @@ export default async function ProviderAdminSettingsPage() {
   return (
     <AdminAPISettings
       hasAnthropicAdminKey={hasAnthropicAdminKey}
+      hasAnthropicComplianceKey={hasAnthropicComplianceKey}
+      hasClaudeEnterpriseAnalyticsKey={hasClaudeEnterpriseAnalyticsKey}
       hasCursorAdminKey={hasCursorAdminKey}
       hasGitHubCopilotConfig={hasGitHubCopilotConfig}
       githubCopilot={githubCopilot}

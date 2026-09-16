@@ -16,7 +16,8 @@ export type AssistantProvider =
   | "cursor"
   | "github_copilot"
   | "chatgpt"
-  | "codex";
+  | "codex"
+  | "claude_enterprise";
 
 /** Column values for one AssistantDailyStat row, minus id / sync-run bookkeeping. */
 export interface AssistantDailyStatValues {
@@ -24,6 +25,12 @@ export interface AssistantDailyStatValues {
   /** UTC midnight of the reported day. */
   day: Date;
   actorExternalId: string;
+  /**
+   * Product surface for providers that report several per person per day
+   * (Claude Enterprise: chat / claude_code / cowork / design / office).
+   * "" for single-surface providers; part of the unique key.
+   */
+  product: string;
   actorName: string | null;
   isActive: boolean | null;
   sessions: number | null;
@@ -102,6 +109,7 @@ export function claudeCodeEntryToDailyStat(
     provider: "claude_code",
     day,
     actorExternalId: actor.externalId,
+    product: "",
     actorName: actor.name,
     // The analytics report has no activity flag; a row exists only for days
     // the actor used Claude Code, but leave the column null rather than infer.
@@ -166,6 +174,7 @@ export function cursorDailyRowToStat(
     provider: "cursor",
     day,
     actorExternalId: actor.externalId,
+    product: "",
     actorName: actor.name,
     isActive: typeof row.isActive === "boolean" ? row.isActive : null,
     sessions: null,
@@ -212,6 +221,7 @@ export function chatgptDailyCountsToStat(
     provider: "chatgpt",
     day,
     actorExternalId: actor.externalId,
+    product: "",
     actorName: actor.name,
     // A row exists only for days with at least one message.
     isActive: true,
@@ -261,6 +271,7 @@ export function codexDailyCountsToStat(
     provider: "codex",
     day,
     actorExternalId: actor.externalId,
+    product: "",
     actorName: actor.name,
     isActive: true,
     sessions: counts.sessions,

@@ -35,6 +35,7 @@ import {
   ProviderSection,
 } from "@/app/(dashboard)/settings/admin-api-settings";
 import { GeminiBillingSettings } from "./gemini-billing-settings";
+import { ComplianceAlertSettings } from "./compliance-alert-settings";
 import { LiteLLMSettings } from "./litellm-settings";
 import { ChatGPTEnterpriseSettings } from "./chatgpt-enterprise-settings";
 import { DatadogSettings } from "./datadog-settings";
@@ -70,6 +71,9 @@ interface IntegrationTile {
 export interface IntegrationsGridProps {
   aiProvider: { currentProvider: string; currentModel: string; hasApiKey: boolean };
   hasAnthropicAdminKey: boolean;
+  hasAnthropicComplianceKey: boolean;
+  hasClaudeEnterpriseAnalyticsKey: boolean;
+  complianceAlerts: { orgTimezone: string; lookbackDays: string };
   hasOpenAIAdminKey: boolean;
   hasOpenRouterKey: boolean;
   hasHeliconeKey: boolean;
@@ -143,6 +147,24 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
       description: "Organization usage, workspace members, API key inventory, and audit logs from Anthropic.",
       icon: Eye,
       connected: props.hasAnthropicAdminKey,
+    },
+    {
+      id: "anthropic-compliance",
+      category: "Provider Telemetry",
+      name: "Anthropic Compliance API",
+      description: "Activity feed (key lifecycle, logins, Compliance API reads) and Claude app session metadata, with governance alerts.",
+      icon: Shield,
+      // The feed works with the Admin key; the dedicated key adds sessions.
+      connected: props.hasAnthropicComplianceKey || props.hasAnthropicAdminKey,
+      statusLabel: props.hasAnthropicComplianceKey ? "Feed + sessions" : props.hasAnthropicAdminKey ? "Feed via Admin key" : undefined,
+    },
+    {
+      id: "claude-enterprise",
+      category: "Provider Telemetry",
+      name: "Claude Enterprise Analytics",
+      description: "Per-user activity across Claude.ai, Claude Code, Cowork, Design, and Office; DAU/WAU/MAU, seats, and per-user cost.",
+      icon: Sparkles,
+      connected: props.hasClaudeEnterpriseAnalyticsKey,
     },
     {
       id: "openai-admin",
@@ -406,6 +428,15 @@ function renderModalBody(id: string, props: IntegrationsGridProps) {
       );
     case "anthropic-admin":
       return renderProviderSection("anthropic", props.hasAnthropicAdminKey);
+    case "anthropic-compliance":
+      return (
+        <div className="space-y-4">
+          {renderProviderSection("anthropic_compliance", props.hasAnthropicComplianceKey)}
+          <ComplianceAlertSettings initial={props.complianceAlerts} />
+        </div>
+      );
+    case "claude-enterprise":
+      return renderProviderSection("claude_enterprise", props.hasClaudeEnterpriseAnalyticsKey);
     case "openai-admin":
       return renderProviderSection("openai", props.hasOpenAIAdminKey);
     case "openrouter":

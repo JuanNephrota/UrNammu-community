@@ -116,6 +116,44 @@ export const PROVIDERS: ProviderConfig[] = [
     color: "var(--accent)",
   },
   {
+    id: "anthropic_compliance",
+    name: "Anthropic Compliance API",
+    description:
+      "Ingest the Anthropic Compliance Activity Feed (API-key lifecycle, logins, Compliance API reads) and Claude app session metadata into UrNammu, with governance alerts for off-hours or unknown-actor key creation, new Compliance API keys, and logins from new countries. Metadata only — transcripts are never pulled.",
+    keyPlaceholder: "sk-ant-api01-...",
+    testEndpoint: "/api/settings/test-anthropic-compliance",
+    settingKey: "anthropic_compliance_key",
+    hasKey: false,
+    setupSteps: [
+      "In the Anthropic Console (Enterprise), go to Settings > Compliance API and enable the Activity Feed if it is off",
+      "Create a Compliance Access Key with the read:compliance_activities scope, plus read:compliance_user_data for session metadata",
+      "Paste the key below. Without it, the Admin API key above still serves the Activity Feed (no sessions).",
+    ],
+    docsUrl: "https://docs.anthropic.com/en/api/compliance-api",
+    docsLabel: "Anthropic Compliance API Docs",
+    credentialLabel: "Compliance Access Key",
+    color: "var(--accent)",
+  },
+  {
+    id: "claude_enterprise",
+    name: "Claude Enterprise Analytics API",
+    description:
+      "Per-user daily activity across Claude.ai chat, Claude Code, Cowork, Design, and the Office add-ins, DAU / WAU / MAU and seats, and the per-user usage and cost reports — the Enterprise tab of Claude Platform and the Claude Enterprise column of Usage by Person.",
+    keyPlaceholder: "sk-ant-...",
+    testEndpoint: "/api/settings/test-claude-enterprise",
+    settingKey: "anthropic_analytics_key",
+    hasKey: false,
+    setupSteps: [
+      "In the Anthropic Console (Enterprise), go to Settings > Analytics API",
+      "Create an Analytics API key with the read:analytics scope",
+      "Paste the key below. Data lags about a day; cost is revised for up to 30 days, so the sync re-pulls the last 3 days each run.",
+    ],
+    docsUrl: "https://docs.anthropic.com/en/api/analytics-api",
+    docsLabel: "Claude Enterprise Analytics API Docs",
+    credentialLabel: "Analytics API Key",
+    color: "var(--accent)",
+  },
+  {
     id: "openai",
     name: "OpenAI Admin API",
     description: "Access organization usage, costs, API key inventory, and auto-discover OpenAI Assistants as AI agents.",
@@ -245,6 +283,9 @@ const BACKFILL_RESULT_KEYS: Record<SyncProvider, { usage: string; cost: string }
   cursor: { usage: "cursorUsageSynced", cost: "cursorCostBucketsSynced" },
   github_copilot: { usage: "githubCopilotUsageSynced", cost: "githubCopilotCostBucketsSynced" },
   chatgpt_enterprise: { usage: "chatgptEnterpriseUsageSynced", cost: "chatgptEnterpriseCostBucketsSynced" },
+  // The compliance feed writes ComplianceActivity / ComplianceSession rows, not usage buckets.
+  anthropic_compliance: { usage: "anthropicComplianceActivitiesSynced", cost: "anthropicComplianceSessionsSynced" },
+  claude_enterprise: { usage: "claudeEnterpriseUsageSynced", cost: "claudeEnterpriseCostBucketsSynced" },
 };
 
 function toDateInput(date: Date) {
@@ -253,6 +294,8 @@ function toDateInput(date: Date) {
 
 interface Props {
   hasAnthropicAdminKey: boolean;
+  hasAnthropicComplianceKey: boolean;
+  hasClaudeEnterpriseAnalyticsKey: boolean;
   hasCursorAdminKey: boolean;
   hasGitHubCopilotConfig: boolean;
   githubCopilot: { org: string; enterprise: string; hasToken: boolean };
@@ -299,6 +342,8 @@ const KEY_MAPPABLE_PROVIDER_LABELS: Record<KeyMappableProvider, string> = {
 
 export function AdminAPISettings({
   hasAnthropicAdminKey,
+  hasAnthropicComplianceKey,
+  hasClaudeEnterpriseAnalyticsKey,
   hasCursorAdminKey,
   hasGitHubCopilotConfig,
   githubCopilot,
@@ -400,6 +445,9 @@ export function AdminAPISettings({
     portkey: hasPortkeyKey,
     litellm: hasLiteLLMKey,
     chatgpt_enterprise: hasChatGPTEnterpriseConfig,
+    // The activity feed works with either key; session metadata needs the Compliance key.
+    anthropic_compliance: hasAnthropicComplianceKey || hasAnthropicAdminKey,
+    claude_enterprise: hasClaudeEnterpriseAnalyticsKey,
   };
 
   // Default the backfill range to the provider's full retention window.
@@ -415,6 +463,10 @@ export function AdminAPISettings({
     hasKey:
       p.id === "anthropic"
         ? hasAnthropicAdminKey
+        : p.id === "anthropic_compliance"
+          ? hasAnthropicComplianceKey
+        : p.id === "claude_enterprise"
+          ? hasClaudeEnterpriseAnalyticsKey
         : p.id === "cursor"
           ? hasCursorAdminKey
           : p.id === "openai"

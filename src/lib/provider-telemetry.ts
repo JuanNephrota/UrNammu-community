@@ -128,6 +128,47 @@ import {
   PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS,
 } from "./settings";
 import { logger } from "./observability";
+import { notifyDatadog } from "./datadog-client";
+import {
+  ANTHROPIC_COMPLIANCE_PROVIDER,
+  ANTHROPIC_COMPLIANCE_SETTINGS,
+  COMPLIANCE_ALERT_SOURCE,
+  COMPLIANCE_FEED_DEFAULT_LOOKBACK_DAYS,
+  COMPLIANCE_FEED_MAX_PAGES,
+  COMPLIANCE_RECORD_PROVIDER,
+  COMPLIANCE_SESSIONS_MAX_PAGES,
+  classifyComplianceActivity,
+  evaluateComplianceAlerts,
+  extractCreatedApiKey,
+  fetchComplianceActivities,
+  fetchComplianceSessions,
+  getOrgTimezone,
+  normalizeComplianceActivity,
+  normalizeComplianceSession,
+  planComplianceFeedPull,
+  resolveComplianceKey,
+  type ComplianceAlertCandidate,
+  type ComplianceSessionKind,
+  type ComplianceWatermarkState,
+  type NormalizedComplianceActivity,
+  type NormalizedComplianceSession,
+} from "./anthropic-compliance";
+import {
+  CLAUDE_ENTERPRISE_PROVIDER,
+  CLAUDE_ENTERPRISE_SUMMARY_DIMENSION,
+  enterpriseUserToDailyStats,
+  getEnterpriseSummaries,
+  getEnterpriseUserCostReport,
+  getEnterpriseUserUsageReport,
+  getEnterpriseUsersForDay,
+  isClaudeEnterpriseConfigured,
+  mergeEnterpriseDailyStats,
+  parseEnterpriseCostRow,
+  parseEnterpriseSummary,
+  parseEnterpriseUsageRow,
+  type EnterpriseCostRow,
+  type EnterpriseUsageRow,
+} from "./claude-enterprise-analytics";
 import {
   assistantActorName,
   assistantDay,
@@ -144,7 +185,6 @@ import {
   parseProviderKeySystemMap,
   type SystemResolver,
 } from "./system-attribution";
-import { notifyDatadog } from "./datadog-client";
 import {
   advanceWatermark,
   SYNC_PROVIDER_LABELS,
@@ -163,6 +203,12 @@ type SyncSummary = {
   projectsUpserted: number;
   actorsUpserted: number;
   apiUsageLogsCreated: number;
+  /** Anthropic Compliance feed only: ComplianceActivity rows written this run. */
+  complianceActivitiesUpserted?: number;
+  /** Anthropic Compliance feed only: ComplianceSession rows written this run. */
+  complianceSessionsUpserted?: number;
+  /** Governance alerts raised by this run (compliance feed). */
+  alertsCreated?: number;
 };
 
 export type SyncResult =
@@ -489,7 +535,9 @@ async function finishSyncRun(args: {
         args.summary.usageBucketsUpserted +
         args.summary.costBucketsUpserted +
         args.summary.projectsUpserted +
-        args.summary.actorsUpserted,
+        args.summary.actorsUpserted +
+        (args.summary.complianceActivitiesUpserted ?? 0) +
+        (args.summary.complianceSessionsUpserted ?? 0),
       metadata: toJsonValue(metadata),
     },
   });
@@ -525,6 +573,15 @@ async function finishSyncRun(args: {
   return truncated;
 }
 
+// ─── ProviderSyncWatermark (feed cursor) ─────────────────
+// finishSyncRun owns `watermark` / `earliest`; feed-style providers also read
+// the upstream `cursor` a page-capped backfill left behind.
+async function loadWatermark(provider: SyncProvider): Promise<ComplianceWatermarkState | null> {
+  const row = await prisma.providerSyncWatermark.findUnique({ where: { provider } });
+  if (!row) return null;
+  return { watermark: row.watermark, earliest: row.earliest, cursor: row.cursor };
+}
+
 async function storeSnapshot(syncRunId: string, provider: string, resourceType: string, payload: unknown) {
   await prisma.providerRawSnapshot.create({
     data: {
@@ -539,12 +596,12 @@ async function storeSnapshot(syncRunId: string, provider: string, resourceType: 
 // One AssistantDailyStat row per (provider, day, actor). Columns come from
 // the mappers in ./assistant-daily-stats; this only owns the upsert.
 async function upsertAssistantDailyStat(syncRunId: string, values: AssistantDailyStatValues) {
-  const { provider, day, actorExternalId, metadata, ...columns } = values;
+  const { provider, day, actorExternalId, product, metadata, ...columns } = values;
   const data = { ...columns, metadata: toJsonValue(metadata), syncRunId };
   await prisma.assistantDailyStat.upsert({
-    where: { provider_day_actorExternalId: { provider, day, actorExternalId } },
+    where: { provider_day_actorExternalId_product: { provider, day, actorExternalId, product } },
     update: data,
-    create: { provider, day, actorExternalId, ...data },
+    create: { provider, day, actorExternalId, product, ...data },
   });
 }
 
@@ -3609,10 +3666,11 @@ async function raiseComplianceAlert(input: {
 async function accumulateAssistantDailyStat(syncRunId: string, values: AssistantDailyStatValues) {
   const existing = await prisma.assistantDailyStat.findUnique({
     where: {
-      provider_day_actorExternalId: {
+      provider_day_actorExternalId_product: {
         provider: values.provider,
         day: values.day,
         actorExternalId: values.actorExternalId,
+        product: values.product,
       },
     },
     select: {
@@ -3991,5 +4049,783 @@ export async function syncChatGPTEnterprise(triggeredByUserId: string, window: S
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "chatgpt_enterprise", success: false, error: errorMessage };
+  }
+}
+
+// ─── Anthropic Compliance API (activity feed + session metadata) ────────────
+// Newest-first feed. The job layer hands each run a `{ from, to }` window
+// (watermark minus the overlap, floored at PROVIDER_MAX_LOOKBACK_DAYS); the
+// run reads everything the feed created inside it (upserts by upstream id make
+// the overlap free) and, when the first pull hit the page cap, resumes that
+// backfill from the `last_id` cursor kept in ProviderSyncWatermark.cursor down
+// to the lookback floor. Governance rules run over the activities that are new
+// to the database. Session metadata (Enterprise, Compliance Access Key only)
+// is upserted as ComplianceSession — never transcripts.
+
+const COMPLIANCE_ALERT_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function loadComplianceAlertBaseline(): Promise<{
+  knownActorEmails: Set<string>;
+  knownComplianceKeyIds: Set<string>;
+  knownLoginCountries: Map<string, Set<string>>;
+}> {
+  const [users, actors, feedActors, keyRows, countryRows] = await Promise.all([
+    prisma.user.findMany({ select: { email: true } }),
+    prisma.providerActor.findMany({
+      where: { provider: { in: ["anthropic", CLAUDE_ENTERPRISE_PROVIDER, "claude_code"] }, email: { not: null } },
+      select: { email: true },
+      distinct: ["email"],
+    }),
+    prisma.complianceActivity.findMany({
+      where: { provider: COMPLIANCE_RECORD_PROVIDER, actorEmail: { not: null } },
+      select: { actorEmail: true },
+      distinct: ["actorEmail"],
+    }),
+    prisma.complianceActivity.findMany({
+      where: { provider: COMPLIANCE_RECORD_PROVIDER, actorApiKeyId: { not: null } },
+      select: { type: true, actorApiKeyId: true },
+      distinct: ["type", "actorApiKeyId"],
+    }),
+    prisma.complianceActivity.findMany({
+      where: { provider: COMPLIANCE_RECORD_PROVIDER, actorEmail: { not: null }, ipCountry: { not: null } },
+      select: { type: true, actorEmail: true, ipCountry: true },
+      distinct: ["type", "actorEmail", "ipCountry"],
+    }),
+  ]);
+
+  const knownActorEmails = new Set<string>();
+  for (const u of users) if (u.email) knownActorEmails.add(u.email.toLowerCase());
+  for (const a of actors) if (a.email) knownActorEmails.add(a.email.toLowerCase());
+  for (const a of feedActors) if (a.actorEmail) knownActorEmails.add(a.actorEmail.toLowerCase());
+
+  const knownComplianceKeyIds = new Set<string>();
+  for (const row of keyRows) {
+    if (row.actorApiKeyId && classifyComplianceActivity(row.type) === "compliance_api_accessed") {
+      knownComplianceKeyIds.add(row.actorApiKeyId);
+    }
+  }
+
+  const knownLoginCountries = new Map<string, Set<string>>();
+  for (const row of countryRows) {
+    if (!row.actorEmail || !row.ipCountry || classifyComplianceActivity(row.type) !== "login") continue;
+    const email = row.actorEmail.toLowerCase();
+    const set = knownLoginCountries.get(email) ?? new Set<string>();
+    set.add(row.ipCountry);
+    knownLoginCountries.set(email, set);
+  }
+
+  return { knownActorEmails, knownComplianceKeyIds, knownLoginCountries };
+}
+
+async function createComplianceAlerts(candidates: ComplianceAlertCandidate[]): Promise<number> {
+  let created = 0;
+  for (const candidate of candidates) {
+    // Activity ids are unique upstream, so an existing alert that names the
+    // same activity is the same finding (a re-pull inside the overlap).
+    const duplicate = await prisma.alert.findFirst({
+      where: {
+        source: COMPLIANCE_ALERT_SOURCE,
+        description: { contains: `Activity ${candidate.activityId} ` },
+        createdAt: { gte: new Date(Date.now() - COMPLIANCE_ALERT_DEDUPE_MS) },
+      },
+      select: { id: true },
+    });
+    if (duplicate) continue;
+
+    await prisma.alert.create({
+      data: {
+        title: candidate.title,
+        description: `${candidate.description} Rule: ${candidate.rule}.`,
+        severity: candidate.severity,
+        source: COMPLIANCE_ALERT_SOURCE,
+      },
+    });
+    created++;
+
+    await notifyDatadog({
+      title: `[UrNammu] ${candidate.title}`,
+      text: candidate.description,
+      tags: [
+        "source:urnammu",
+        `alert_source:${COMPLIANCE_ALERT_SOURCE}`,
+        `severity:${candidate.severity.toLowerCase()}`,
+        `rule:${candidate.rule}`,
+      ],
+      alertType: candidate.severity === "HIGH" || candidate.severity === "CRITICAL" ? "error" : "warning",
+      aggregationKey: `urnammu:${COMPLIANCE_ALERT_SOURCE}:${candidate.rule}:${candidate.activityId}`,
+    });
+  }
+  return created;
+}
+
+async function pullComplianceFeed(
+  key: string,
+  params: { afterId: string | null; createdAtGte: Date; createdAtLt?: Date | null; maxPages: number },
+): Promise<{ activities: NormalizedComplianceActivity[]; pages: number; truncated: boolean; lastId: string | null; skipped: number }> {
+  const activities: NormalizedComplianceActivity[] = [];
+  let afterId = params.afterId;
+  let pages = 0;
+  let hasMore = true;
+  let lastId: string | null = afterId;
+  let skipped = 0;
+  while (hasMore && pages < params.maxPages) {
+    const page = await fetchComplianceActivities(key, {
+      afterId,
+      createdAtGte: params.createdAtGte,
+      createdAtLt: params.createdAtLt ?? null,
+    });
+    pages++;
+    for (const item of page.items) {
+      const normalized = normalizeComplianceActivity(item);
+      if (normalized) activities.push(normalized);
+      else skipped++;
+    }
+    hasMore = page.hasMore && page.items.length > 0;
+    lastId = page.lastId ?? lastId;
+    afterId = page.lastId;
+    if (!afterId) break;
+  }
+  return { activities, pages, truncated: hasMore, lastId, skipped };
+}
+
+async function pullComplianceSessions(
+  key: string,
+  kind: ComplianceSessionKind,
+  updatedAtGte: Date,
+): Promise<{ sessions: NormalizedComplianceSession[]; pages: number; truncated: boolean }> {
+  const sessions: NormalizedComplianceSession[] = [];
+  let page: string | null = null;
+  let pages = 0;
+  do {
+    const result = await fetchComplianceSessions(key, kind, { page, updatedAtGte });
+    pages++;
+    for (const item of result.items) {
+      const normalized = normalizeComplianceSession(item, kind);
+      if (normalized) sessions.push(normalized);
+    }
+    page = result.nextPage;
+  } while (page && pages < COMPLIANCE_SESSIONS_MAX_PAGES);
+  return { sessions, pages, truncated: !!page };
+}
+
+export async function syncAnthropicCompliance(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
+  const resolved = await resolveComplianceKey();
+  if (!resolved) {
+    return {
+      provider: ANTHROPIC_COMPLIANCE_PROVIDER,
+      success: false,
+      skipped: true,
+      error: "Neither an Anthropic Compliance Access Key nor an Admin API key is configured",
+    };
+  }
+
+  const syncRun = await createSyncRun(ANTHROPIC_COMPLIANCE_PROVIDER, triggeredByUserId);
+
+  try {
+    const now = new Date();
+    const lookbackRaw = await getSetting(ANTHROPIC_COMPLIANCE_SETTINGS.LOOKBACK_DAYS);
+    const lookbackParsed = Number.parseInt(lookbackRaw ?? "", 10);
+    const lookbackDays = Number.isFinite(lookbackParsed) && lookbackParsed > 0 ? lookbackParsed : COMPLIANCE_FEED_DEFAULT_LOOKBACK_DAYS;
+    const previous = await loadWatermark(ANTHROPIC_COMPLIANCE_PROVIDER);
+    // `firstRun` (no watermark yet → baseline-learning) and the resumable
+    // backfill (stored cursor down to the lookback floor) come from the plan;
+    // the incremental read itself is bounded by the scheduled window.
+    const plan = planComplianceFeedPull({ state: previous, now, lookbackDays });
+
+    // Baseline for the governance rules, read before this run's rows land.
+    const baseline = await loadComplianceAlertBaseline();
+    const timeZone = await getOrgTimezone();
+
+    // 1. Incremental: everything the feed created inside the window.
+    const incremental = await pullComplianceFeed(resolved.key, {
+      afterId: null,
+      createdAtGte: window.from,
+      createdAtLt: window.to,
+      maxPages: COMPLIANCE_FEED_MAX_PAGES,
+    });
+    // 2. Resume a backfill that was cut short earlier, with whatever page
+    //    budget the incremental pull left.
+    let backfill: Awaited<ReturnType<typeof pullComplianceFeed>> | null = null;
+    const budgetLeft = COMPLIANCE_FEED_MAX_PAGES - incremental.pages;
+    if (plan.backfill && budgetLeft > 0) {
+      backfill = await pullComplianceFeed(resolved.key, {
+        afterId: plan.backfill.afterId,
+        createdAtGte: plan.backfill.since,
+        maxPages: budgetLeft,
+      });
+    }
+
+    const byId = new Map<string, NormalizedComplianceActivity>();
+    for (const a of [...incremental.activities, ...(backfill?.activities ?? [])]) byId.set(a.id, a);
+    const activities = [...byId.values()];
+
+    // Which of these are new to the database? Only those feed the rules.
+    const existingIds = new Set(
+      activities.length
+        ? (
+            await prisma.complianceActivity.findMany({
+              where: { id: { in: activities.map((a) => a.id) } },
+              select: { id: true },
+            })
+          ).map((row) => row.id)
+        : [],
+    );
+    const fresh = activities.filter((a) => !existingIds.has(a.id));
+
+    let activitiesUpserted = 0;
+    for (const a of activities) {
+      const columns = {
+        provider: COMPLIANCE_RECORD_PROVIDER,
+        type: a.type,
+        occurredAt: a.occurredAt,
+        organizationId: a.organizationId,
+        actorType: a.actorType,
+        actorEmail: a.actorEmail,
+        actorUserId: a.actorUserId,
+        actorApiKeyId: a.actorApiKeyId,
+        ipAddress: a.ipAddress,
+        ipCountry: a.ipCountry,
+        userAgent: a.userAgent,
+        payload: toJsonValue(a.payload),
+      };
+      await prisma.complianceActivity.upsert({
+        where: { id: a.id },
+        update: columns,
+        create: { id: a.id, ...columns },
+      });
+      activitiesUpserted++;
+    }
+
+    // API-key lifecycle → ApiKeyProfile, so a key created via the Console is
+    // known to the key-usage rules before its first token moves.
+    let keyProfilesTouched = 0;
+    for (const a of fresh) {
+      if (classifyComplianceActivity(a.type) !== "api_key_created") continue;
+      const created = extractCreatedApiKey(a.payload);
+      if (!created.id) continue;
+      await prisma.apiKeyProfile.upsert({
+        where: { provider_externalId: { provider: "anthropic", externalId: created.id } },
+        create: {
+          provider: "anthropic",
+          externalId: created.id,
+          name: created.name,
+          firstSeenAt: a.occurredAt,
+          lastActiveAt: a.occurredAt,
+        },
+        update: created.name ? { name: created.name } : {},
+      });
+      keyProfilesTouched++;
+    }
+
+    // Governance rules over the new activities.
+    const candidates = evaluateComplianceAlerts(fresh, {
+      ...baseline,
+      timeZone,
+      firstRun: plan.firstRun,
+      now,
+    });
+    const alertsCreated = await createComplianceAlerts(candidates);
+
+    // 3. Session metadata (Enterprise; needs read:compliance_user_data).
+    let sessionsUpserted = 0;
+    const sessionNotes: Record<string, unknown> = {};
+    if (resolved.kind === "compliance") {
+      const sessionsSince = previous
+        ? window.from
+        : new Date(Math.min(window.from.getTime(), now.getTime() - lookbackDays * 24 * 60 * 60 * 1000));
+      for (const kind of ["local", "remote"] as ComplianceSessionKind[]) {
+        try {
+          const result = await pullComplianceSessions(resolved.key, kind, sessionsSince);
+          for (const session of result.sessions) {
+            const columns = {
+              provider: COMPLIANCE_RECORD_PROVIDER,
+              sessionKind: session.sessionKind,
+              productSurface: session.productSurface,
+              userEmail: session.userEmail,
+              userExternalId: session.userExternalId,
+              workspaceId: session.workspaceId,
+              startedAt: session.startedAt,
+              lastActivityAt: session.lastActivityAt,
+              status: session.status,
+              raw: toJsonValue(session.raw),
+            };
+            await prisma.complianceSession.upsert({
+              where: { id: session.id },
+              update: columns,
+              create: { id: session.id, ...columns },
+            });
+            sessionsUpserted++;
+          }
+          sessionNotes[kind] = { sessions: result.sessions.length, pages: result.pages, truncated: result.truncated };
+        } catch (error) {
+          // A 403 here means the key lacks read:compliance_user_data; the
+          // feed still succeeded, so record and move on.
+          sessionNotes[kind] = { error: error instanceof Error ? error.message : "Failed" };
+        }
+      }
+    } else {
+      sessionNotes.skipped = "Admin API key in use; session metadata needs a Compliance Access Key with read:compliance_user_data.";
+    }
+
+    // Feed cursor: keep the backfill cursor only while there is more to drain.
+    // A page-capped first pull becomes a backfill that later runs resume; a
+    // page-capped incremental pull on a later run is a real gap (the watermark
+    // still advances), so that case raises provider_sync_truncated below.
+    const remainingCursor = backfill
+      ? backfill.truncated
+        ? backfill.lastId
+        : null
+      : incremental.truncated && plan.firstRun
+        ? incremental.lastId
+        : previous?.cursor ?? null;
+    const resumable = (plan.firstRun && incremental.truncated) || (backfill?.truncated ?? false);
+    const capped = !plan.firstRun && incremental.truncated;
+    let oldestSeen: Date | null = null;
+    for (const a of activities) if (!oldestSeen || a.occurredAt < oldestSeen) oldestSeen = a.occurredAt;
+
+    // Snapshot is counts only — the payloads carry emails and IPs and already
+    // live in ComplianceActivity.
+    const typeCounts: Record<string, number> = {};
+    for (const a of activities) typeCounts[a.type] = (typeCounts[a.type] ?? 0) + 1;
+    await storeSnapshot(syncRun.id, ANTHROPIC_COMPLIANCE_PROVIDER, "activity_feed", {
+      fetched: activities.length,
+      new: fresh.length,
+      pages: incremental.pages + (backfill?.pages ?? 0),
+      type_counts: typeCounts,
+      key_kind: resolved.kind,
+    });
+
+    const summary = {
+      usageBucketsUpserted: 0,
+      costBucketsUpserted: 0,
+      rawSnapshotsStored: 1,
+      projectsUpserted: 0,
+      actorsUpserted: 0,
+      apiUsageLogsCreated: 0,
+      complianceActivitiesUpserted: activitiesUpserted,
+      complianceSessionsUpserted: sessionsUpserted,
+      alertsCreated,
+    };
+
+    await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: ANTHROPIC_COMPLIANCE_PROVIDER,
+      window,
+      summary,
+      pagination: {
+        incremental: { pages: incremental.pages, truncated: incremental.truncated },
+        backfill: backfill ? { pages: backfill.pages, truncated: backfill.truncated } : null,
+        resumable,
+        truncated: capped,
+      },
+      metadata: {
+        keyKind: resolved.kind,
+        firstRun: plan.firstRun,
+        activitiesFetched: activities.length,
+        activitiesNew: fresh.length,
+        unparseable: incremental.skipped + (backfill?.skipped ?? 0),
+        backfill: backfill
+          ? { pages: backfill.pages, activities: backfill.activities.length, truncated: backfill.truncated }
+          : plan.backfill
+            ? { deferred: true }
+            : null,
+        keyProfilesTouched,
+        alertCandidates: candidates.length,
+        alertsCreated,
+        sessions: sessionNotes,
+        cursor: remainingCursor,
+        timeZone,
+      },
+    });
+
+    // finishSyncRun advanced `watermark` / `earliest` from the window; the feed
+    // cursor rides alongside (the one column it leaves alone), and a backfill
+    // that reached further back than the window pulls `earliest` with it.
+    const current = await prisma.providerSyncWatermark.findUnique({
+      where: { provider: ANTHROPIC_COMPLIANCE_PROVIDER },
+      select: { earliest: true },
+    });
+    await prisma.providerSyncWatermark.update({
+      where: { provider: ANTHROPIC_COMPLIANCE_PROVIDER },
+      data: {
+        cursor: remainingCursor,
+        ...(current && oldestSeen && oldestSeen < current.earliest ? { earliest: startOfDayUtc(oldestSeen) } : {}),
+      },
+    });
+
+    const truncated = incremental.truncated || (backfill?.truncated ?? false);
+    return { provider: ANTHROPIC_COMPLIANCE_PROVIDER, success: true, syncRunId: syncRun.id, window, truncated, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: ANTHROPIC_COMPLIANCE_PROVIDER, success: false, error: errorMessage };
+  }
+}
+
+// ─── Claude Enterprise Analytics ─────────────────────────────────────────────
+// Per-user daily activity per product (AssistantDailyStat provider=
+// "claude_enterprise", one row per person × day × product), org-level
+// DAU/WAU/MAU + seats (UsageBucket `org_summary` rows), and the per-user
+// usage / cost reports (UsageBucket / CostBucket with actorExternalId =
+// email). Walks every UTC day of the scheduled window up to yesterday (today's
+// numbers are not final and the API lags about a day); the overlap days the
+// job layer adds re-pull the days the API still revises.
+
+/** UTC days ("YYYY-MM-DD") inside `[from, to)`, stopping at yesterday. */
+function enterpriseDaysInWindow(window: SyncWindow, now: Date): string[] {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const lastMs = Math.min(startOfDayUtc(window.to).getTime(), startOfDayUtc(now).getTime()) - dayMs;
+  const days: string[] = [];
+  for (let ms = startOfDayUtc(window.from).getTime(); ms <= lastMs; ms += dayMs) {
+    days.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+export async function syncClaudeEnterpriseAnalytics(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
+  if (!(await isClaudeEnterpriseConfigured())) {
+    return {
+      provider: CLAUDE_ENTERPRISE_PROVIDER,
+      success: false,
+      skipped: true,
+      error: "Claude Enterprise Analytics API key is not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun(CLAUDE_ENTERPRISE_PROVIDER, triggeredByUserId);
+
+  try {
+    const now = new Date();
+    const days = enterpriseDaysInWindow(window, now);
+
+    if (days.length === 0) {
+      const summary = {
+        usageBucketsUpserted: 0,
+        costBucketsUpserted: 0,
+        rawSnapshotsStored: 0,
+        projectsUpserted: 0,
+        actorsUpserted: 0,
+        apiUsageLogsCreated: 0,
+      };
+      const truncated = await finishSyncRun({
+        syncRunId: syncRun.id,
+        provider: CLAUDE_ENTERPRISE_PROVIDER,
+        window,
+        summary,
+        pagination: { pages: 0, truncated: false },
+        metadata: { days: [], note: "Nothing to pull: the window holds no completed UTC day." },
+      });
+      return { provider: CLAUDE_ENTERPRISE_PROVIDER, success: true, syncRunId: syncRun.id, window, truncated, ...summary };
+    }
+
+    const daySet = new Set(days);
+    const firstDay = days[0];
+    const lastDay = days[days.length - 1];
+    const rangeStart = `${firstDay}T00:00:00Z`;
+    const rangeEndExclusive = new Date(new Date(`${lastDay}T00:00:00Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+    // 1. Per-user activity per day.
+    const dayStats = [];
+    const dayNotes: Record<string, unknown> = {};
+    const actorsSeen = new Map<string, { email: string | null; name: string | null; userId: string | null; deleted: boolean; lastActivity: string | null }>();
+    for (const day of days) {
+      try {
+        const result = await getEnterpriseUsersForDay(day);
+        const dayDate = new Date(`${day}T00:00:00.000Z`);
+        let rows = 0;
+        for (const item of result.items) {
+          const stats = enterpriseUserToDailyStats(item, dayDate);
+          rows += stats.length;
+          dayStats.push(...stats);
+          for (const stat of stats) {
+            const meta = stat.metadata as { user_id?: string | null; deleted?: boolean; last_activity_date?: string | null };
+            const prev = actorsSeen.get(stat.actorExternalId);
+            actorsSeen.set(stat.actorExternalId, {
+              email: stat.actorExternalId.includes("@") ? stat.actorExternalId : null,
+              name: stat.actorName ?? prev?.name ?? null,
+              userId: meta.user_id ?? prev?.userId ?? null,
+              deleted: meta.deleted === true,
+              lastActivity: meta.last_activity_date ?? prev?.lastActivity ?? null,
+            });
+          }
+        }
+        dayNotes[day] = { users: result.items.length, statRows: rows, pages: result.pages, truncated: result.truncated };
+      } catch (error) {
+        dayNotes[day] = { error: error instanceof Error ? error.message : "Failed" };
+      }
+    }
+
+    // 2. Org summaries (DAU / WAU / MAU, seats).
+    let usageBucketsUpserted = 0;
+    let summariesUpserted = 0;
+    let summariesError: string | null = null;
+    try {
+      const result = await getEnterpriseSummaries(firstDay, lastDay);
+      for (const item of result.items) {
+        const summary = parseEnterpriseSummary(item);
+        if (!summary || !daySet.has(summary.date)) continue;
+        const bucketStart = new Date(`${summary.date}T00:00:00.000Z`);
+        const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+        const dimensionKey = `${CLAUDE_ENTERPRISE_SUMMARY_DIMENSION}|date=${summary.date}`;
+        const metadata = toJsonValue({
+          kind: CLAUDE_ENTERPRISE_SUMMARY_DIMENSION,
+          dau: summary.dau,
+          wau: summary.wau,
+          mau: summary.mau,
+          seats: summary.seats,
+          pendingInvites: summary.pendingInvites,
+          raw: summary.raw,
+        });
+        await prisma.usageBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: CLAUDE_ENTERPRISE_PROVIDER,
+              bucketStart,
+              bucketEnd,
+              granularity: "day",
+              dimensionKey,
+            },
+          },
+          update: { requestCount: summary.dau, metadata, syncRunId: syncRun.id },
+          create: {
+            provider: CLAUDE_ENTERPRISE_PROVIDER,
+            bucketStart,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+            requestCount: summary.dau,
+            metadata,
+            syncRunId: syncRun.id,
+          },
+        });
+        usageBucketsUpserted++;
+        summariesUpserted++;
+      }
+    } catch (error) {
+      summariesError = error instanceof Error ? error.message : "Failed";
+    }
+
+    // 3. Per-user usage report → UsageBucket per (day, person, product, model).
+    const usageRows: EnterpriseUsageRow[] = [];
+    let usageError: string | null = null;
+    let usageTruncated = false;
+    try {
+      const result = await getEnterpriseUserUsageReport(rangeStart, rangeEndExclusive);
+      usageTruncated = result.truncated;
+      for (const item of result.items) {
+        const row = parseEnterpriseUsageRow(item);
+        if (row && daySet.has(row.day.toISOString().slice(0, 10))) usageRows.push(row);
+      }
+    } catch (error) {
+      usageError = error instanceof Error ? error.message : "Failed";
+    }
+    // Sum across duplicate (day, actor, product, model) rows before writing.
+    const usageAgg = new Map<string, EnterpriseUsageRow>();
+    for (const row of usageRows) {
+      const key = `${row.day.toISOString()}|${row.actorExternalId}|${row.product}|${row.model ?? ""}`;
+      const existing = usageAgg.get(key);
+      if (existing) {
+        existing.inputTokens += row.inputTokens;
+        existing.outputTokens += row.outputTokens;
+        existing.cacheReadTokens += row.cacheReadTokens;
+        existing.cacheCreationTokens += row.cacheCreationTokens;
+        existing.requests = row.requests == null ? existing.requests : (existing.requests ?? 0) + row.requests;
+      } else {
+        usageAgg.set(key, { ...row });
+      }
+    }
+    for (const row of usageAgg.values()) {
+      const date = row.day.toISOString().slice(0, 10);
+      const bucketEnd = new Date(row.day.getTime() + 24 * 60 * 60 * 1000);
+      const dimensionKey = makeDimensionKey({ actor: row.actorExternalId, product: row.product, model: row.model, date });
+      const actorName = row.actor.name ?? (row.actor.email ? row.actor.email.split("@")[0] : row.actorExternalId);
+      const columns = {
+        model: row.model,
+        actorExternalId: row.actorExternalId,
+        actorName,
+        inputTokens: Math.round(row.inputTokens),
+        outputTokens: Math.round(row.outputTokens),
+        totalTokens: Math.round(row.inputTokens + row.outputTokens),
+        cacheReadTokens: Math.round(row.cacheReadTokens),
+        cacheCreationTokens: Math.round(row.cacheCreationTokens),
+        requestCount: row.requests,
+        metadata: toJsonValue({ product: row.product, user_id: row.actor.userId, deleted: row.actor.deleted }),
+        syncRunId: syncRun.id,
+      };
+      await prisma.usageBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: CLAUDE_ENTERPRISE_PROVIDER,
+            bucketStart: row.day,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: columns,
+        create: {
+          provider: CLAUDE_ENTERPRISE_PROVIDER,
+          bucketStart: row.day,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          ...columns,
+        },
+      });
+      usageBucketsUpserted++;
+    }
+
+    // 4. Per-user cost report → CostBucket per (day, person, product, model).
+    const costRows: EnterpriseCostRow[] = [];
+    let costError: string | null = null;
+    let costTruncated = false;
+    try {
+      const result = await getEnterpriseUserCostReport(rangeStart, rangeEndExclusive);
+      costTruncated = result.truncated;
+      for (const item of result.items) {
+        const row = parseEnterpriseCostRow(item);
+        if (row && daySet.has(row.day.toISOString().slice(0, 10))) costRows.push(row);
+      }
+    } catch (error) {
+      costError = error instanceof Error ? error.message : "Failed";
+    }
+    const costAgg = new Map<string, EnterpriseCostRow>();
+    for (const row of costRows) {
+      const key = `${row.day.toISOString()}|${row.actorExternalId}|${row.product}|${row.model ?? ""}`;
+      const existing = costAgg.get(key);
+      if (existing) existing.amountUsd += row.amountUsd;
+      else costAgg.set(key, { ...row });
+    }
+    let costBucketsUpserted = 0;
+    for (const row of costAgg.values()) {
+      const date = row.day.toISOString().slice(0, 10);
+      const bucketEnd = new Date(row.day.getTime() + 24 * 60 * 60 * 1000);
+      const dimensionKey = makeDimensionKey({ actor: row.actorExternalId, product: row.product, model: row.model, date });
+      const actorName = row.actor.name ?? (row.actor.email ? row.actor.email.split("@")[0] : row.actorExternalId);
+      const columns = {
+        amount: Math.round(row.amountUsd * 1_000_000) / 1_000_000,
+        currency: row.currency,
+        model: row.model,
+        actorExternalId: row.actorExternalId,
+        actorName,
+        lineItem: row.product,
+        metadata: toJsonValue({ product: row.product, user_id: row.actor.userId, deleted: row.actor.deleted }),
+        syncRunId: syncRun.id,
+      };
+      await prisma.costBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+            provider: CLAUDE_ENTERPRISE_PROVIDER,
+            bucketStart: row.day,
+            bucketEnd,
+            granularity: "day",
+            dimensionKey,
+          },
+        },
+        update: columns,
+        create: {
+          provider: CLAUDE_ENTERPRISE_PROVIDER,
+          bucketStart: row.day,
+          bucketEnd,
+          granularity: "day",
+          dimensionKey,
+          ...columns,
+        },
+      });
+      costBucketsUpserted++;
+    }
+
+    // 5. AssistantDailyStat rows: activity + tokens + cost per person × day × product.
+    const merged = mergeEnterpriseDailyStats(dayStats, [...usageAgg.values()], [...costAgg.values()]);
+    let assistantStatsUpserted = 0;
+    for (const stat of merged) {
+      await upsertAssistantDailyStat(syncRun.id, stat);
+      assistantStatsUpserted++;
+      if (!actorsSeen.has(stat.actorExternalId)) {
+        const meta = stat.metadata as { user_id?: string | null; deleted?: boolean };
+        actorsSeen.set(stat.actorExternalId, {
+          email: stat.actorExternalId.includes("@") ? stat.actorExternalId : null,
+          name: stat.actorName,
+          userId: meta.user_id ?? null,
+          deleted: meta.deleted === true,
+          lastActivity: null,
+        });
+      }
+    }
+
+    // 6. ProviderActor per seat seen.
+    let actorsUpserted = 0;
+    for (const [externalId, actor] of actorsSeen) {
+      const metadata = toJsonValue({ user_id: actor.userId, deleted: actor.deleted, last_activity_date: actor.lastActivity });
+      await prisma.providerActor.upsert({
+        where: { provider_externalId: { provider: CLAUDE_ENTERPRISE_PROVIDER, externalId } },
+        update: { email: actor.email, name: actor.name, role: actor.deleted ? "deleted" : "member", metadata, lastSeenAt: now, syncRunId: syncRun.id },
+        create: { provider: CLAUDE_ENTERPRISE_PROVIDER, externalId, email: actor.email, name: actor.name, role: actor.deleted ? "deleted" : "member", metadata, syncRunId: syncRun.id },
+      });
+      actorsUpserted++;
+    }
+
+    // 7. Do not advance the watermark past a day whose activity pull failed:
+    //    clamp the window finishSyncRun records so the next run retries it.
+    const failedDays = days.filter((day) => (dayNotes[day] as { error?: string } | undefined)?.error);
+    const coveredWindow: SyncWindow = failedDays.length
+      ? { from: window.from, to: new Date(`${failedDays[0]}T00:00:00.000Z`) }
+      : window;
+    const dayPagesTruncated = days.some((day) => (dayNotes[day] as { truncated?: boolean } | undefined)?.truncated === true);
+
+    await storeSnapshot(syncRun.id, CLAUDE_ENTERPRISE_PROVIDER, "analytics", {
+      days,
+      per_day: dayNotes,
+      summaries: summariesUpserted,
+      usage_rows: usageRows.length,
+      cost_rows: costRows.length,
+      stat_rows: merged.length,
+    });
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted,
+      rawSnapshotsStored: 1,
+      projectsUpserted: 0,
+      actorsUpserted,
+      apiUsageLogsCreated: 0,
+    };
+
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: CLAUDE_ENTERPRISE_PROVIDER,
+      window: coveredWindow,
+      summary,
+      pagination: {
+        users: { truncated: dayPagesTruncated },
+        usageReport: { truncated: usageTruncated },
+        costReport: { truncated: costTruncated },
+        truncated: dayPagesTruncated || usageTruncated || costTruncated,
+      },
+      metadata: {
+        days,
+        perDay: dayNotes,
+        failedDays,
+        summariesUpserted,
+        summariesError,
+        usageRows: usageRows.length,
+        usageError,
+        costRows: costRows.length,
+        costError,
+        assistantDailyStatsUpserted: assistantStatsUpserted,
+        uniqueUsers: actorsSeen.size,
+      },
+    });
+
+    return {
+      provider: CLAUDE_ENTERPRISE_PROVIDER,
+      success: true,
+      syncRunId: syncRun.id,
+      window: coveredWindow,
+      truncated,
+      ...summary,
+    };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: CLAUDE_ENTERPRISE_PROVIDER, success: false, error: errorMessage };
   }
 }

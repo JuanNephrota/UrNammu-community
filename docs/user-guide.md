@@ -785,14 +785,19 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 **Sidebar → Governance → AI Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, and investigation telemetry. The Governance group also carries a cross-surface **Usage by Person** view and dedicated **per-surface** dashboards — **Claude Platform / API**, **Claude Code**, **Cowork**, and **Cursor** — described below.
 
 ### How Provider Sync Works
-With Anthropic, OpenAI, or Cursor admin keys or a GitHub Copilot token configured in Settings → Provider Admin APIs, a ChatGPT Enterprise Admin key on the Integrations page, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
+
+With Anthropic, OpenAI, or Cursor admin keys or a GitHub Copilot token configured in Settings → Provider Admin APIs, a ChatGPT Enterprise Admin key and the Anthropic Compliance and Claude Enterprise Analytics keys on the Integrations page, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys, plus the same attribution columns as `UsageBucket` (API key, workspace, governed system) so cost can be rolled up by system and by key.
-- **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API, GitHub Copilot from the Copilot usage metrics reports) and for ChatGPT Enterprise (`chatgpt`: messages sent and conversations per day; `codex`: prompts, sessions, tool calls, tokens, cost): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code, Cursor, and GitHub Copilot dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
-- **`ComplianceActivity`** — immutable auth and admin-audit events from provider compliance feeds (ChatGPT Enterprise `AUTH_LOG` / `AUDIT_LOG`, provider `openai`), keyed by the upstream event id. Metadata only: actor, IP, user agent, action, and action data — never message content.
-- **`ProviderSyncWatermark`** — one row per provider or incremental stream (for example `cursor`, or `chatgpt_enterprise:AUTH_LOG`) recording the instant the provider or stream has been ingested through, so each scheduled run resumes where the last one stopped and Backfill knows how far back history already reaches.- **`ProviderProject`** / **`ProviderActor`** — discovered workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members.
+- **`AssistantDailyStat`** — one row per person per day (per product for Claude Enterprise) for the assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API, GitHub Copilot from the Copilot usage metrics reports, Claude Enterprise chat / Claude Code / Cowork / Design / Office from the Analytics API) and for ChatGPT Enterprise (`chatgpt`: messages sent and conversations per day; `codex`: prompts, sessions, tool calls, tokens, cost): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code, Cursor, and GitHub Copilot dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
+- **`ComplianceActivity`** — immutable auth, admin-audit, and API-key lifecycle events from provider compliance feeds (ChatGPT Enterprise `AUTH_LOG` / `AUDIT_LOG`, provider `openai`; the Anthropic Compliance API activity feed, provider `anthropic`), keyed by the upstream event id. Metadata only: actor, IP, user agent, action, and action data — never message content.
+- **`ComplianceSession`** — Claude app session metadata from the Anthropic Compliance API (product surface, person, workspace, timestamps) — never transcripts.
+- **`ProviderSyncWatermark`** — one row per provider or incremental stream (for example `cursor`, or `chatgpt_enterprise:AUTH_LOG`) recording the instant the provider or stream has been ingested through, so each scheduled run resumes where the last one stopped and Backfill knows how far back history already reaches; the Anthropic compliance feed also keeps its `after_id` cursor here while a page-capped first pull drains.
+- **`ProviderProject`** / **`ProviderActor`** — discovered workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
+- **`ComplianceActivity`** / **`ComplianceSession`** — the Anthropic Compliance API activity feed and Claude app session metadata (see below).
+- **`ProviderSyncWatermark`** — per provider, how far the incremental pull has reached and the earliest day ingested.
 
 Each provider is gated on its own credentials. **If a provider's admin key (or billing-export config, for Gemini) is not set, that provider is skipped** — no `ProviderSyncRun` row is created and no upstream API call is made. The manual-sync panel surfaces this explicitly as "Skipped (not configured): …" so it is clear which providers are active and which are simply not configured yet.
 
@@ -816,6 +821,8 @@ What each sync contributes:
 - **ChatGPT Enterprise Compliance API** — workspace users (`ProviderActor`, provider `chatgpt`, with role and status), auth and admin-audit events (`ComplianceActivity`), per-user daily ChatGPT message counts and Codex activity (`AssistantDailyStat` providers `chatgpt` and `codex`), and alerts for admin-role grants and new GPTs with custom actions. Log streams (`AUTH_LOG`, `AUDIT_LOG`, `CONVERSATION_MESSAGE`, `CODEX_LOG`, `CODEX_TURN`) each keep their own cursor; a stream the key is not scoped for is skipped and listed under `unauthorizedStreams` in the sync-run metadata. Conversation and prompt content is never read into UrNammu — only counts, identifiers, models, and token totals.- **Portkey** — one `UsageBucket` + `CostBucket` per day per model, and one `UsageBucket` per day per user (dimension key `partition=actor`). Portkey reports cost in cents; the sync converts to USD and stores a `reconciliation` block (graph total vs. summed per-model and per-user totals) in the sync-run metadata so the unit assumption can be checked against the Portkey console.
 - **Helicone, OpenRouter, LiteLLM** — gateway request and cost records normalized into the same buckets.
 - **Gemini / Vertex AI** — spend and best-effort project attribution from the BigQuery billing export.
+- **Anthropic Compliance API** — the organization's Activity Feed (API-key lifecycle, logins, Compliance API reads, SCIM syncs) as `ComplianceActivity` rows keyed by upstream id, and — with a Compliance Access Key holding `read:compliance_user_data` — Claude Code, Cowork, and Office add-in session metadata as `ComplianceSession` rows (product surface, person, workspace, timestamps; transcripts are never pulled). The feed is newest-first, so each run re-reads everything newer than its watermark with a 6-hour overlap and resumes any page-capped backfill from the stored cursor. Governance rules over new activities raise `anthropic_compliance` alerts: API key created by an actor UrNammu has never seen, API key created outside 07:00–19:00 in the organization timezone (`org_timezone`), Compliance API read from a key never seen before, and a login from a new country when the feed reports one. New keys are also registered as `ApiKeyProfile` rows for the key-usage rules. The Admin API key serves the feed on its own; the dedicated key adds sessions.
+- **Claude Enterprise Analytics API** — per-user daily activity per product (Claude.ai chat, Claude Code, Cowork, Design, Office add-ins) into `AssistantDailyStat` (`provider = "claude_enterprise"`, one row per person × day × product), DAU / WAU / MAU / seats / pending invites per day into `UsageBucket` (`dimensionKey "org_summary|…"`), and the per-user usage and cost reports into `UsageBucket` / `CostBucket` with the person's email as the actor (cost arrives in fractional cents and is stored in USD). Data lags about a day and cost is revised for up to 30 days, so each run re-pulls the 3 days behind its watermark up to yesterday.
 
 **Proxy traffic appears immediately.** Requests routed through the Anthropic or OpenAI proxy (Vercel fallback or Azure Functions) upsert hourly `UsageBucket` / `CostBucket` rows in real time, linked to a synthetic `ProviderSyncRun` with `syncType = "proxy_live"`. You do not need to wait for the admin-API sync interval to see proxy usage on the Oversight dashboard, spend budgets, or per-system Telemetry tab — it shows up on the next page refresh.
 
@@ -975,7 +982,7 @@ Create an investigation from an alert (preferred) or manually:
 
 ### Claude Platform / API
 
-**Governance → Claude Platform** is the organization-level view of direct Anthropic API usage, sourced from the **Anthropic Admin API sync** (normalized into `UsageBucket` / `CostBucket`, with discovered API keys and org members). It shows:
+**Governance → Claude Platform** has two tabs. **Console & API** is the organization-level view of direct Anthropic API usage, sourced from the **Anthropic Admin API sync** (normalized into `UsageBucket` / `CostBucket`, with discovered API keys and org members). It shows:
 
 - Stat cards: total cost, total tokens (with cache broken out), cache-hit rate, requests, active API keys, and org members.
 - Daily usage & cost trend (30 days).
@@ -985,6 +992,16 @@ Create an investigation from an alert (preferred) or manually:
 - **Usage by API key** — per-key token counts, requests, and active/inactive status.
 - **Organization members** list with roles.
 - A sync-health banner (last successful sync, fresh/stale, errors).
+
+The **Enterprise** tab (`/oversight/claude-platform?tab=enterprise`) covers the Claude Enterprise seats, from the Analytics and Compliance API syncs:
+
+- Stat cards: daily / weekly / monthly active users and the date they refer to, seats (with pending invites or the share of seats active this month), Enterprise cost and people with activity in the window, and open `anthropic_compliance` alerts (the tab label carries a count).
+- **Daily active users** — the last 14 days of DAU with WAU alongside.
+- **Active users by product** — 30-day and 7-day active users, messages, and cost for Claude.ai chat, Claude Code, Cowork, Design, and the Office add-ins.
+- **Top people by Enterprise cost** — with active days and the products they used; the full per-person picture is in Usage by Person.
+- **Claude app sessions** — sessions and people per product surface from the Compliance API session metadata (needs a Compliance Access Key with `read:compliance_user_data`).
+- **Activity feed** — count per activity type over the window and the newest activity time.
+- **Sync health** for both the analytics and the compliance syncs, including how far back history goes.
 
 ### Claude Code Oversight
 
@@ -1054,6 +1071,7 @@ The Cursor Admin API sync writes one `AssistantDailyStat` row per developer per 
 **Governance → Usage by Person** is the cross-surface answer to "who is using what, and what does it cost?" — one row per human, merged by lower-cased email, across:
 
 - **Claude Code** and **Cowork** — live OTel metrics. Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two columns never overlap. When a person has no OTel data in the window, the Anthropic Admin API analytics sync (`AssistantDailyStat`) fills in sessions, lines, commits, and an estimated cost (marked *est.*), so people whose machines are not instrumented still appear.
+- **Claude Enterprise** — the Claude Enterprise Analytics API sync (`AssistantDailyStat`, provider `claude_enterprise`): active days, messages, tokens, and cost across Claude.ai chat, Cowork, Design, and the Office add-ins (about a day behind). The Claude Code product is deliberately left out of this column because Claude Code already has its own; cost shows as *n/a* until the per-user cost report has landed for the window. The surface chip opens the Claude Platform Enterprise tab.
 - **Cursor** — the Cursor Admin API sync (`AssistantDailyStat`): requests, tokens, accepted lines, active days (only days Cursor marks the seat active), and per-user spend. When the usage-events feed returned nothing for the synced window, Cursor cost shows as *n/a* rather than zero.
 - **GitHub Copilot** — the Copilot usage metrics sync (`AssistantDailyStat`): interactions, CLI / Copilot-app tokens, accepted lines, and active days. Copilot is seat-licensed, so it never contributes to a person's cost. A person is matched by the seat's email when GitHub exposes one; seats keyed only by GitHub login stay in *unattributed* until an identity source maps the login to an email.
 - **API (proxy)** — Anthropic and OpenAI calls made through the governance proxy, attributed by the `x-user-email` header, plus a count of flagged requests.
@@ -1456,7 +1474,7 @@ Every background job has its own cron endpoint, guarded by `CRON_SECRET` and wir
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/api/cron/provider-sync/<provider>` | One entry each for `anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`. Syncs that provider's telemetry when its own interval has elapsed. The OpenAI job also discovers Assistants as agents. |
+| `/api/cron/provider-sync/<provider>` | One entry each for `anthropic`, `claude_code`, `cursor`, `github_copilot`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`, `anthropic_compliance`, `claude_enterprise`. Syncs that provider's telemetry when its own interval has elapsed. The OpenAI job also discovers Assistants as agents. |
 | `/api/cron/discovery-scan/<source>` | One entry each for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`. Fails scans of that source stuck in `running` for 10+ minutes, then scans when due. |
 | `/api/cron/governance-automation` | Governance automation (below). |
 | `/api/cron/key-usage-rules` | Key usage rule evaluation (see [Key Usage Rules](#key-usage-rules)); a failed evaluation is reported in the response rather than failing the cron. |

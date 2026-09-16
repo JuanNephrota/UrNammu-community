@@ -16,6 +16,13 @@ import { prisma } from "@/lib/prisma";
 //     (AssistantDailyStat provider="claude_code") fills in sessions / lines /
 //     commits / estimated cost so people whose machines are not instrumented
 //     still appear.
+//   • Claude Enterprise — Claude Enterprise Analytics API sync
+//     (AssistantDailyStat provider="claude_enterprise", one row per person per
+//     day per product). Chat, Cowork-as-reported-by-Anthropic, Design and
+//     Office roll into the Claude Enterprise column; the claude_code product
+//     is skipped because Claude Code already has its own column fed by OTel /
+//     the Admin API analytics report, and counting it twice would inflate the
+//     person's total.
 //   • Cursor — Cursor Admin API sync (AssistantDailyStat provider="cursor",
 //     one row per member per day). Per-user spend is the `estimatedCost`
 //     column, which syncCursorTelemetry fills from the usage-events feed and
@@ -83,6 +90,17 @@ export interface ClaudeCodeAdminUsage {
   lastActiveAt: Date | null;
 }
 
+export interface ClaudeEnterpriseUsage {
+  email: string | null;
+  activeDays: number;
+  messages: number;
+  tokens: number;
+  // null when no row in the window carried per-user cost
+  cost: number | null;
+  products: string[];
+  lastActiveAt: Date | null;
+}
+
 export interface CursorUsage {
   email: string | null;
   requests: number;
@@ -121,6 +139,7 @@ export interface PersonIdentity {
 export interface PeopleUsageInputs {
   otel: OtelSurfaceUsage[];
   claudeCodeAdmin: ClaudeCodeAdminUsage[];
+  claudeEnterprise?: ClaudeEnterpriseUsage[];
   cursor: CursorUsage[];
   copilot: CopilotUsage[];
   proxy: ProxyUsage[];
@@ -174,6 +193,11 @@ function emptyRow(email: string): PersonUsageRow {
     coworkSessions: 0,
     coworkTokens: 0,
     coworkCost: 0,
+    enterpriseActiveDays: 0,
+    enterpriseMessages: 0,
+    enterpriseTokens: 0,
+    enterpriseCost: null,
+    enterpriseProducts: [],
     cursorRequests: 0,
     cursorTokens: 0,
     cursorLinesAccepted: 0,
@@ -202,6 +226,7 @@ function emptyUnattributed(): UnattributedUsage {
     bySurface: {
       claude_code: { cost: 0, tokens: 0 },
       cowork: { cost: 0, tokens: 0 },
+      claude_enterprise: { cost: 0, tokens: 0 },
       cursor: { cost: 0, tokens: 0 },
       github_copilot: { cost: 0, tokens: 0 },
       proxy: { cost: 0, tokens: 0 },
@@ -284,6 +309,21 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
     r.lastActiveAt = later(r.lastActiveAt, a.lastActiveAt);
   }
 
+  for (const e of inputs.claudeEnterprise ?? []) {
+    const email = resolve(e.email);
+    if (!email) {
+      drop("claude_enterprise", n(e.cost), n(e.tokens));
+      continue;
+    }
+    const r = get(email);
+    r.enterpriseActiveDays += n(e.activeDays);
+    r.enterpriseMessages += n(e.messages);
+    r.enterpriseTokens += n(e.tokens);
+    if (e.cost != null) r.enterpriseCost = (r.enterpriseCost ?? 0) + n(e.cost);
+    for (const product of e.products) if (!r.enterpriseProducts.includes(product)) r.enterpriseProducts.push(product);
+    r.lastActiveAt = later(r.lastActiveAt, e.lastActiveAt);
+  }
+
   for (const c of inputs.cursor) {
     const email = resolve(c.email);
     if (!email) {
@@ -354,6 +394,9 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
       r.surfaces.push("claude_code");
     }
     if (r.coworkSessions > 0 || r.coworkTokens > 0 || r.coworkCost > 0) r.surfaces.push("cowork");
+    if (r.enterpriseActiveDays > 0 || r.enterpriseMessages > 0 || r.enterpriseTokens > 0 || (r.enterpriseCost ?? 0) > 0) {
+      r.surfaces.push("claude_enterprise");
+    }
     if (r.cursorRequests > 0 || r.cursorTokens > 0 || (r.cursorCost ?? 0) > 0 || r.cursorLinesAccepted > 0 || r.cursorActiveDays > 0) {
       r.surfaces.push("cursor");
     }
@@ -362,12 +405,17 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
     }
     if (r.proxyRequests > 0 || r.proxyTokens > 0 || r.proxyCost > 0) r.surfaces.push("proxy");
     r.surfaceCount = r.surfaces.length;
-    r.totalCost = round2(r.claudeCodeCost + r.coworkCost + (r.cursorCost ?? 0) + r.proxyCost);
-    r.totalTokens = r.claudeCodeTokens + r.coworkTokens + r.cursorTokens + r.copilotTokens + r.proxyTokens;
+    r.totalCost = round2(
+      r.claudeCodeCost + r.coworkCost + (r.enterpriseCost ?? 0) + (r.cursorCost ?? 0) + r.proxyCost,
+    );
+    r.totalTokens =
+      r.claudeCodeTokens + r.coworkTokens + r.enterpriseTokens + r.cursorTokens + r.copilotTokens + r.proxyTokens;
     r.claudeCodeCost = round2(r.claudeCodeCost);
     r.coworkCost = round2(r.coworkCost);
     r.proxyCost = round2(r.proxyCost);
     if (r.cursorCost != null) r.cursorCost = round2(r.cursorCost);
+    if (r.enterpriseCost != null) r.enterpriseCost = round2(r.enterpriseCost);
+    r.enterpriseProducts.sort();
   }
 
   unattributed.cost = round2(unattributed.cost);
@@ -394,6 +442,7 @@ export function summarizePeopleUsage(
     const cost = withSurface.reduce((acc, r) => {
       if (surface === "claude_code") return acc + r.claudeCodeCost;
       if (surface === "cowork") return acc + r.coworkCost;
+      if (surface === "claude_enterprise") return acc + (r.enterpriseCost ?? 0);
       if (surface === "cursor") return acc + (r.cursorCost ?? 0);
       if (surface === "github_copilot") return acc; // seat-licensed, no metered cost
       return acc + r.proxyCost;
@@ -401,6 +450,7 @@ export function summarizePeopleUsage(
     const tokens = withSurface.reduce((acc, r) => {
       if (surface === "claude_code") return acc + r.claudeCodeTokens;
       if (surface === "cowork") return acc + r.coworkTokens;
+      if (surface === "claude_enterprise") return acc + r.enterpriseTokens;
       if (surface === "cursor") return acc + r.cursorTokens;
       if (surface === "github_copilot") return acc + r.copilotTokens;
       return acc + r.proxyTokens;
@@ -492,6 +542,8 @@ export interface AssistantDailyStatRow {
   provider: string;
   day: Date;
   actorExternalId: string;
+  /** "" for single-surface providers; the product for claude_enterprise. */
+  product?: string;
   isActive: boolean | null;
   sessions: number | null;
   requests: number | null;
@@ -513,19 +565,45 @@ export interface AssistantDailyStatRow {
  *   - Cursor cost stays null until at least one day carried charged spend;
  *   - Cursor members with nothing to report in the window are dropped (the
  *     daily-usage feed lists every seat every day, active or not);
+ *   - Claude Enterprise rows roll up per person across products, except the
+ *     claude_code product (already covered by the Claude Code column); a day
+ *     counts as active once however many products were used; cost stays
+ *     null until at least one row carried the per-user cost report;
  *   - GitHub Copilot rows count `requests` as interactions and `isActive`
  *     days as active days; cost is never derived (seat-licensed).
  */
 export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
   claudeCodeAdmin: ClaudeCodeAdminUsage[];
   cursor: CursorUsage[];
+  claudeEnterprise: ClaudeEnterpriseUsage[];
   copilot: CopilotUsage[];
 } {
   const claudeCode = new Map<string, ClaudeCodeAdminUsage>();
   const cursor = new Map<string, CursorUsage>();
+  const enterprise = new Map<string, ClaudeEnterpriseUsage & { days: Set<string> }>();
   const copilot = new Map<string, CopilotUsage>();
   for (const row of rows) {
     const tokens = n(row.inputTokens) + n(row.outputTokens);
+    if (row.provider === "claude_enterprise") {
+      const product = row.product ?? "";
+      if (product === "claude_code") continue;
+      let agg = enterprise.get(row.actorExternalId);
+      if (!agg) {
+        agg = { email: row.actorExternalId, activeDays: 0, messages: 0, tokens: 0, cost: null, products: [], lastActiveAt: null, days: new Set() };
+        enterprise.set(row.actorExternalId, agg);
+      }
+      const day = row.day.toISOString().slice(0, 10);
+      if (row.isActive !== false && !agg.days.has(day)) {
+        agg.days.add(day);
+        agg.activeDays += 1;
+        agg.lastActiveAt = later(agg.lastActiveAt, row.day);
+      }
+      agg.messages += n(row.requests);
+      agg.tokens += tokens;
+      if (row.estimatedCost != null) agg.cost = (agg.cost ?? 0) + n(row.estimatedCost);
+      if (product && !agg.products.includes(product)) agg.products.push(product);
+      continue;
+    }
     if (row.provider === "claude_code") {
       let agg = claudeCode.get(row.actorExternalId);
       if (!agg) {
@@ -572,6 +650,17 @@ export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
     cursor: [...cursor.values()].filter(
       (c) => c.activeDays > 0 || c.requests > 0 || c.tokens > 0 || c.linesAccepted > 0 || (c.cost ?? 0) > 0,
     ),
+    claudeEnterprise: [...enterprise.values()]
+      .filter((e) => e.activeDays > 0 || e.messages > 0 || e.tokens > 0 || (e.cost ?? 0) > 0)
+      .map((e) => ({
+        email: e.email,
+        activeDays: e.activeDays,
+        messages: e.messages,
+        tokens: e.tokens,
+        cost: e.cost,
+        products: [...e.products].sort(),
+        lastActiveAt: e.lastActiveAt,
+      })),
     copilot: [...copilot.values()].filter(
       (c) => c.activeDays > 0 || c.interactions > 0 || c.tokens > 0 || c.linesAccepted > 0,
     ),
@@ -581,13 +670,14 @@ export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
 async function loadAssistantDailyStatRows(since: Date, until: Date): Promise<AssistantDailyStatRow[]> {
   return prisma.assistantDailyStat.findMany({
     where: {
-      provider: { in: ["claude_code", "cursor", "github_copilot"] },
+      provider: { in: ["claude_code", "cursor", "claude_enterprise", "github_copilot"] },
       day: { gte: since, lt: until },
     },
     select: {
       provider: true,
       day: true,
       actorExternalId: true,
+      product: true,
       isActive: true,
       sessions: true,
       requests: true,
@@ -715,10 +805,10 @@ export async function loadPeopleUsage(window: { since: Date; until: Date }): Pro
     loadAssistantDailyStatRows(since, until),
     loadProxyUsage(since, until),
   ]);
-  const { claudeCodeAdmin, cursor, copilot } = rollupAssistantDailyStats(assistantRows);
+  const { claudeCodeAdmin, cursor, claudeEnterprise, copilot } = rollupAssistantDailyStats(assistantRows);
 
   const observed = new Set<string>();
-  for (const s of [...otel, ...claudeCodeAdmin, ...cursor, ...copilot, ...proxy]) {
+  for (const s of [...otel, ...claudeCodeAdmin, ...claudeEnterprise, ...cursor, ...copilot, ...proxy]) {
     const e = normalizeEmail(s.email);
     if (e) observed.add(e);
   }
@@ -736,6 +826,7 @@ export async function loadPeopleUsage(window: { since: Date; until: Date }): Pro
   const { rows, unattributed } = mergePeopleUsage({
     otel,
     claudeCodeAdmin,
+    claudeEnterprise,
     cursor,
     copilot,
     proxy,
@@ -761,6 +852,7 @@ export async function loadPeopleUsageReportRows(
     ...r,
     claudeCodeSource: r.claudeCodeSource === "otel" ? "OTel" : r.claudeCodeSource === "admin_api" ? "Admin API" : null,
     surfaces: r.surfaces.map((s) => SURFACE_LABELS[s]).join(", "),
+    enterpriseProducts: r.enterpriseProducts.join(", "),
     lastActiveAt: r.lastActiveAt ? r.lastActiveAt.toISOString() : null,
   }));
 }

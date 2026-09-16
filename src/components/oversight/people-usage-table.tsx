@@ -9,6 +9,7 @@ import {
   GitBranch,
   MousePointer2,
   Network,
+  Sparkles,
   Terminal,
   UserX,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const usd = (v: number) => v.toLocaleString("en-US", { style: "currency", curren
 const SURFACE_LINKS: Record<PersonSurface, ((email: string) => string) | null> = {
   claude_code: (email) => `/oversight/claude-code?user=${encodeURIComponent(email)}`,
   cowork: (email) => `/oversight/cowork?user=${encodeURIComponent(email)}`,
+  claude_enterprise: () => "/oversight/claude-platform?tab=enterprise",
   cursor: (email) => `/oversight/cursor?user=${encodeURIComponent(email)}`,
   github_copilot: (email) => `/oversight/github-copilot?user=${encodeURIComponent(email)}`,
   proxy: null,
@@ -41,6 +43,7 @@ function SurfaceIcon({ surface }: { surface: PersonSurface }) {
   const cls = "h-3.5 w-3.5";
   if (surface === "claude_code") return <Terminal className={cls} />;
   if (surface === "cowork") return <Bot className={cls} />;
+  if (surface === "claude_enterprise") return <Sparkles className={cls} />;
   if (surface === "cursor") return <MousePointer2 className={cls} />;
   if (surface === "github_copilot") return <GitBranch className={cls} />;
   return <Network className={cls} />;
@@ -84,6 +87,11 @@ const CSV_COLUMNS: { key: keyof PersonUsageTableRow; label: string }[] = [
   { key: "coworkCost", label: "Cowork Cost (USD)" },
   { key: "coworkSessions", label: "Cowork Sessions" },
   { key: "coworkTokens", label: "Cowork Tokens" },
+  { key: "enterpriseCost", label: "Claude Enterprise Cost (USD)" },
+  { key: "enterpriseMessages", label: "Claude Enterprise Messages" },
+  { key: "enterpriseTokens", label: "Claude Enterprise Tokens" },
+  { key: "enterpriseActiveDays", label: "Claude Enterprise Active Days" },
+  { key: "enterpriseProducts", label: "Claude Enterprise Products" },
   { key: "cursorCost", label: "Cursor Cost (USD)" },
   { key: "cursorRequests", label: "Cursor Requests" },
   { key: "cursorTokens", label: "Cursor Tokens" },
@@ -102,7 +110,7 @@ const CSV_COLUMNS: { key: keyof PersonUsageTableRow; label: string }[] = [
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = Array.isArray(v) ? v.map((x) => SURFACE_LABELS[x as PersonSurface] ?? String(x)).join("; ") : String(v);
+  const s = Array.isArray(v) ? v.map((x) => (SURFACE_LABELS as Record<string, string>)[String(x)] ?? String(x)).join("; ") : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -206,6 +214,24 @@ const columns: ColumnDef<PersonUsageTableRow>[] = [
     cell: ({ row }) => (
       <div className="text-right">
         <Money value={row.original.coworkCost} />
+      </div>
+    ),
+  },
+  {
+    accessorKey: "enterpriseCost",
+    header: ({ column }) => <SortableHeader column={column} label="Claude Enterprise" align="right" />,
+    sortUndefined: "last",
+    cell: ({ row }) => (
+      <div className="text-right">
+        <Money value={row.original.enterpriseCost} />
+        {row.original.enterpriseActiveDays > 0 && (
+          <span
+            className="ml-1 text-[10px] text-[var(--text-faint)]"
+            title={`${row.original.enterpriseActiveDays} active day(s): ${row.original.enterpriseProducts.map((p) => p.replace(/_/g, " ")).join(", ") || "Claude Enterprise"}`}
+          >
+            {row.original.enterpriseActiveDays}d
+          </span>
+        )}
       </div>
     ),
   },

@@ -63,6 +63,14 @@ export async function getSetting(key: string): Promise<string | null> {
     governance_escalation_overdue_days:
       process.env.GOVERNANCE_ESCALATION_OVERDUE_DAYS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    // Anthropic Compliance API (Activity Feed + session metadata) and Claude
+    // Enterprise Analytics API. Keys end in `_key`, so they are encrypted at
+    // rest and masked in GET /api/settings automatically.
+    anthropic_compliance_key: process.env.ANTHROPIC_COMPLIANCE_KEY,
+    anthropic_analytics_key: process.env.ANTHROPIC_ANALYTICS_KEY,
+    anthropic_compliance_lookback_days: process.env.ANTHROPIC_COMPLIANCE_LOOKBACK_DAYS,
+    // IANA timezone for "outside business hours" governance alerts.
+    org_timezone: process.env.ORG_TIMEZONE,
     proxy_secret: process.env.PROXY_SECRET,
     azure_openai_endpoint: process.env.AZURE_OPENAI_ENDPOINT,
     azure_openai_deployments: process.env.AZURE_OPENAI_DEPLOYMENTS,
@@ -213,6 +221,19 @@ export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
   DATASET: "gemini_billing_dataset",
   TABLE: "gemini_billing_table",
   LOCATION: "gemini_billing_location",
+} as const;
+
+// Anthropic Compliance API + Claude Enterprise Analytics (Tier 3 §3.4). The
+// compliance key may be a Compliance Access Key (sk-ant-api01-…, scopes
+// read:compliance_activities + read:compliance_user_data) or, for the
+// activity feed only, the existing Admin API key. The analytics key needs
+// read:analytics. Definitions live with their clients; re-exported here so
+// settings pages have one import.
+export const ANTHROPIC_COMPLIANCE_SETTINGS_KEYS = {
+  COMPLIANCE_KEY: "anthropic_compliance_key",
+  ANALYTICS_KEY: "anthropic_analytics_key",
+  ORG_TIMEZONE: "org_timezone",
+  LOOKBACK_DAYS: "anthropic_compliance_lookback_days",
 } as const;
 
 // Global defaults for the per-provider sync crons. Each provider can override

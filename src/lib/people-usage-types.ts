@@ -23,17 +23,31 @@ export function resolvePeopleUsageWindow(
   return { since: new Date(now.getTime() - days * 24 * 60 * 60 * 1000), until: now };
 }
 
-export type PersonSurface = "claude_code" | "cowork" | "cursor" | "github_copilot" | "proxy";
+export type PersonSurface =
+  | "claude_code"
+  | "cowork"
+  | "claude_enterprise"
+  | "cursor"
+  | "github_copilot"
+  | "proxy";
 
 export const SURFACE_LABELS: Record<PersonSurface, string> = {
   claude_code: "Claude Code",
   cowork: "Cowork",
+  claude_enterprise: "Claude Enterprise",
   cursor: "Cursor",
   github_copilot: "GitHub Copilot",
   proxy: "API (proxy)",
 };
 
-export const SURFACE_ORDER: PersonSurface[] = ["claude_code", "cowork", "cursor", "github_copilot", "proxy"];
+export const SURFACE_ORDER: PersonSurface[] = [
+  "claude_code",
+  "cowork",
+  "claude_enterprise",
+  "cursor",
+  "github_copilot",
+  "proxy",
+];
 
 /**
  * Where the person stands in the synced identity-provider directory:
@@ -62,6 +76,17 @@ export interface PersonUsageRow {
   coworkSessions: number;
   coworkTokens: number;
   coworkCost: number;
+
+  // Claude Enterprise — Analytics API sync (AssistantDailyStat
+  // provider="claude_enterprise"), every product except Claude Code (which
+  // already has its own column). `enterpriseCost` is null until the per-user
+  // cost report has landed for at least one day in the window.
+  enterpriseActiveDays: number;
+  enterpriseMessages: number;
+  enterpriseTokens: number;
+  enterpriseCost: number | null;
+  /** Products with activity in the window: chat, cowork, design, office, … */
+  enterpriseProducts: string[];
 
   // Cursor — Admin API sync. `cursorCost` is null when no synced day in the
   // window carried per-user spend (older rows predate that field).

@@ -76,12 +76,16 @@ export function OrgDataPanel() {
         if ((result.portkeyUsageSynced as number) > 0) parts.push(`${result.portkeyUsageSynced} Portkey usage records`);
         if ((result.geminiUsageSynced as number) > 0) parts.push(`${result.geminiUsageSynced} Gemini usage records`);
         if ((result.claudeCodeUsageSynced as number) > 0) parts.push(`${result.claudeCodeUsageSynced} Claude Code usage records`);
+        if ((result.claudeEnterpriseUsageSynced as number) > 0) parts.push(`${result.claudeEnterpriseUsageSynced} Claude Enterprise usage records`);
+        if ((result.anthropicComplianceActivitiesSynced as number) > 0) parts.push(`${result.anthropicComplianceActivitiesSynced} compliance activities`);
+        if ((result.anthropicComplianceSessionsSynced as number) > 0) parts.push(`${result.anthropicComplianceSessionsSynced} Claude app sessions`);
         if ((result.anthropicCostBucketsSynced as number) > 0) parts.push(`${result.anthropicCostBucketsSynced} Anthropic cost buckets`);
         if ((result.openaiCostBucketsSynced as number) > 0) parts.push(`${result.openaiCostBucketsSynced} OpenAI cost buckets`);
         if ((result.openRouterCostBucketsSynced as number) > 0) parts.push(`${result.openRouterCostBucketsSynced} OpenRouter cost buckets`);
         if ((result.heliconeCostBucketsSynced as number) > 0) parts.push(`${result.heliconeCostBucketsSynced} Helicone cost buckets`);
         if ((result.portkeyCostBucketsSynced as number) > 0) parts.push(`${result.portkeyCostBucketsSynced} Portkey cost buckets`);
         if ((result.geminiCostBucketsSynced as number) > 0) parts.push(`${result.geminiCostBucketsSynced} Gemini cost buckets`);
+        if ((result.claudeEnterpriseCostBucketsSynced as number) > 0) parts.push(`${result.claudeEnterpriseCostBucketsSynced} Claude Enterprise cost buckets`);
         if ((result.claudeCodeCostsSynced as number) > 0) parts.push(`${result.claudeCodeCostsSynced} Claude Code cost buckets`);
         if ((result.agentsCreated as number) > 0) parts.push(`${result.agentsCreated} new agents`);
         if ((result.agentsUpdated as number) > 0) parts.push(`${result.agentsUpdated} agents updated`);

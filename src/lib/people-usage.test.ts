@@ -463,7 +463,58 @@ test("rollup ignores providers it does not know", () => {
   const out = rollupAssistantDailyStats([
     statRow({ provider: "windsurf", actorExternalId: "x@example.com", day: new Date(), sessions: 1 }),
   ]);
-  assert.deepEqual(out, { claudeCodeAdmin: [], cursor: [], copilot: [] });
+  assert.deepEqual(out, { claudeCodeAdmin: [], cursor: [], claudeEnterprise: [], copilot: [] });
+});
+
+test("rollupAssistantDailyStats rolls Claude Enterprise rows up per person, skipping the claude_code product", () => {
+  const day = (d: string) => new Date(`${d}T00:00:00.000Z`);
+  const base = { provider: "claude_enterprise", isActive: true, sessions: null, linesAdded: null, linesAccepted: null, commits: null };
+  const rows: AssistantDailyStatRow[] = [
+    { ...base, day: day("2026-09-14"), actorExternalId: "ada@example.com", product: "chat", requests: 10, estimatedCost: 1.5, inputTokens: 100, outputTokens: 20 },
+    { ...base, day: day("2026-09-14"), actorExternalId: "ada@example.com", product: "design", requests: 2, estimatedCost: null, inputTokens: 5, outputTokens: 5 },
+    { ...base, day: day("2026-09-15"), actorExternalId: "ada@example.com", product: "chat", requests: 3, estimatedCost: 0.5, inputTokens: 10, outputTokens: 10 },
+    // claude_code product is excluded (Claude Code has its own column)
+    { ...base, day: day("2026-09-15"), actorExternalId: "ada@example.com", product: "claude_code", requests: 99, estimatedCost: 40, inputTokens: 9999, outputTokens: 1 },
+    // report-only row with cost but no activity still counts
+    { ...base, day: day("2026-09-15"), actorExternalId: "bob@example.com", product: "office", requests: null, estimatedCost: 0.25, inputTokens: null, outputTokens: null },
+  ];
+  const { claudeEnterprise } = rollupAssistantDailyStats(rows);
+  const ada = claudeEnterprise.find((e) => e.email === "ada@example.com");
+  assert.ok(ada);
+  assert.equal(ada.activeDays, 2); // two days, not three product-rows
+  assert.equal(ada.messages, 15);
+  assert.equal(ada.tokens, 150);
+  assert.equal(ada.cost, 2);
+  assert.deepEqual(ada.products, ["chat", "design"]);
+  assert.equal(ada.lastActiveAt?.toISOString(), "2026-09-15T00:00:00.000Z");
+  const bob = claudeEnterprise.find((e) => e.email === "bob@example.com");
+  assert.equal(bob?.cost, 0.25);
+  assert.deepEqual(bob?.products, ["office"]);
+});
+
+test("mergePeopleUsage folds Claude Enterprise into the person row, totals, and surfaces", () => {
+  const { rows, unattributed } = mergePeopleUsage({
+    ...empty(),
+    claudeEnterprise: [
+      { email: "Ada@Example.com", activeDays: 3, messages: 40, tokens: 1000, cost: 2.5, products: ["chat", "design"], lastActiveAt: new Date("2026-09-15T00:00:00Z") },
+      { email: null, activeDays: 1, messages: 1, tokens: 50, cost: 0.1, products: ["chat"], lastActiveAt: null },
+    ],
+    cursor: [{ email: "ada@example.com", requests: 1, tokens: 10, linesAccepted: 0, activeDays: 1, cost: 1, lastActiveAt: null }],
+  });
+  assert.equal(rows.length, 1);
+  const ada = rows[0];
+  assert.equal(ada.enterpriseActiveDays, 3);
+  assert.equal(ada.enterpriseMessages, 40);
+  assert.equal(ada.enterpriseTokens, 1000);
+  assert.equal(ada.enterpriseCost, 2.5);
+  assert.deepEqual(ada.enterpriseProducts, ["chat", "design"]);
+  assert.deepEqual(ada.surfaces, ["claude_enterprise", "cursor"]);
+  assert.equal(ada.totalCost, 3.5);
+  assert.equal(ada.totalTokens, 1010);
+  assert.equal(unattributed.bySurface.claude_enterprise.cost, 0.1);
+  const summary = summarizePeopleUsage(rows, unattributed);
+  const surface = summary.bySurface.find((s) => s.surface === "claude_enterprise");
+  assert.deepEqual({ people: surface?.people, cost: surface?.cost, tokens: surface?.tokens }, { people: 1, cost: 2.5, tokens: 1000 });
 });
 
 test("GitHub Copilot rows merge by seat email, never add cost, and login-only rows stay unattributed", () => {

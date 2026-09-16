@@ -373,6 +373,7 @@ export function copilotUserRowToStat(
     provider: "github_copilot",
     day: copilotDay(row.day),
     actorExternalId: actor.externalId,
+    product: "",
     actorName: actor.name,
     isActive: copilotUserUsedAnything(row),
     sessions: totals.sessions,

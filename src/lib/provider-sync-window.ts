@@ -47,7 +47,9 @@ export const DEFAULT_OVERLAP_DAYS = 2;
  *   Cursor Admin API retains ~30 days; Anthropic/OpenAI usage and cost
  *   reports and the Gemini billing export go back much further; gateway
  *   request logs are treated as 30 days; GitHub Copilot usage reports are
- *   kept one year (the Copilot sync itself walks at most 28 days per run).
+ *   kept one year (the Copilot sync itself walks at most 28 days per run);
+ *   the Anthropic Compliance activity feed retains 30 days and the Claude
+ *   Enterprise analytics API caps one report range at 31 days.
  */
 export const PROVIDER_MAX_LOOKBACK_DAYS: Record<SyncProvider, number> = {
   anthropic: 90,
@@ -63,6 +65,10 @@ export const PROVIDER_MAX_LOOKBACK_DAYS: Record<SyncProvider, number> = {
   // Compliance API streams are cursor-based (per-stream watermarks inside the
   // sync); the date window only labels the run.
   chatgpt_enterprise: 30,
+  // Anthropic Compliance activity feed retains 30 days; the Claude Enterprise
+  // analytics API caps a report range at 31 days.
+  anthropic_compliance: 30,
+  claude_enterprise: 31,
 };
 
 /**

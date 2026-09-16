@@ -181,6 +181,8 @@ describe("resolveDiscoveryScanSchedule", () => {
 describe("id guards", () => {
   it("recognises every sync provider and rejects unknown ids", () => {
     for (const provider of SYNC_PROVIDERS) assert.equal(isSyncProvider(provider), true);
+    assert.equal(isSyncProvider("anthropic_compliance"), true);
+    assert.equal(isSyncProvider("claude_enterprise"), true);
     assert.equal(isSyncProvider("mistral"), false);
     assert.equal(isSyncProvider(""), false);
   });

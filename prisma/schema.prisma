@@ -592,7 +592,36 @@ model ProviderSyncWatermark {
   watermark  DateTime
   // Earliest day ever ingested — lets the UI say "history from X".
   earliest   DateTime
+  // Opaque upstream pagination cursor for feed-style providers whose backfill
+  // was cut short by the page cap (Anthropic Compliance `last_id`). Null once
+  // the backfill has drained; unused by day-window providers.
+  cursor     String?
   updatedAt  DateTime @updatedAt
+}
+
+// Session metadata from the Anthropic Compliance API (local: Claude Code,
+// Cowork, Science, Office add-ins; remote: cloud Cowork). Metadata only —
+// transcripts are never pulled. Gives per-person adoption of the Claude apps
+// for machines the OTel/MDM rollout missed.
+model ComplianceSession {
+  id             String    @id
+  provider       String
+  // local | remote (which Compliance endpoint listed it)
+  sessionKind    String
+  productSurface String?
+  userEmail      String?
+  userExternalId String?
+  workspaceId    String?
+  startedAt      DateTime?
+  lastActivityAt DateTime?
+  status         String?
+  raw            Json
+  ingestedAt     DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userEmail, lastActivityAt])
+  @@index([productSurface, lastActivityAt])
+  @@index([provider, lastActivityAt])
 }
 
 model ProviderRawSnapshot {
@@ -657,6 +686,10 @@ model UsageBucket {
 //   provider="cursor"      — Cursor Admin API daily-usage + usage-events
 //     (syncCursorTelemetry): requests, lines added/deleted/accepted, isActive,
 //     tokens and charged spend per developer.
+//   provider="claude_enterprise" — Claude Enterprise Analytics API
+//     (syncClaudeEnterpriseAnalytics): one row per person × day × product
+//     (chat, claude_code, cowork, design, office) with messages/sessions as
+//     `requests`, tokens and cost from the per-user usage/cost reports.
 // The same syncs still write the legacy UsageBucket rows (metadata JSON) for
 // one release; readers should use this table.
 model AssistantDailyStat {
@@ -667,6 +700,11 @@ model AssistantDailyStat {
   // Email when the provider reports one; otherwise the API key name
   // (Claude Code api_actor) or `user:<id>` (Cursor member without email).
   actorExternalId     String
+  // Product surface within the provider, for providers that report several
+  // per person per day (Claude Enterprise: chat, claude_code, cowork, design,
+  // office). Empty string for single-surface providers (Claude Code, Cursor)
+  // so the unique key stays total.
+  product             String          @default("")
   actorName           String?
   // Cursor reports whether the member used the editor that day. Null when
   // the provider does not report activity (Claude Code).
@@ -698,7 +736,7 @@ model AssistantDailyStat {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  @@unique([provider, day, actorExternalId])
+  @@unique([provider, day, actorExternalId, product])
   @@index([provider, day])
   @@index([actorExternalId, day])
   @@index([syncRunId])
@@ -712,18 +750,27 @@ model AssistantDailyStat {
 // written here; those streams are aggregated into AssistantDailyStat.
 model ComplianceActivity {
   id             String   @id
+  // "openai" for the ChatGPT Enterprise compliance logs, "anthropic" for the
+  // Anthropic Compliance API activity feed. Rows are keyed by the upstream id
+  // so re-pulls are idempotent.
   provider       String
   // Provider event category + action, e.g. `auth_log:login_success`,
-  // `audit_log:USER_ROLE_UPDATED`.
+  // `audit_log:USER_ROLE_UPDATED` (OpenAI) or the verbatim upstream type
+  // `api_key_created`, `user_logged_in`, `compliance_api_accessed` (Anthropic).
   type           String
   occurredAt     DateTime
   // Upstream workspace / organization id the event belongs to.
   organizationId String?
+  // Anthropic: user_actor | api_actor | admin_api_key_actor |
+  // unauthenticated_user_actor | scim_directory_sync_actor | unknown.
   actorType      String?
   actorEmail     String?
   actorUserId    String?
   actorApiKeyId  String?
   ipAddress      String?
+  // ISO 3166-1 alpha-2 when the upstream record carries a country; null when
+  // it is not derivable (UrNammu does not ship a GeoIP database).
+  ipCountry      String?
   userAgent      String?
   // Sanitized upstream event (envelope + action data), no message content.
   payload        Json

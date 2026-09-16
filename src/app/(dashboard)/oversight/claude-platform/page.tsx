@@ -6,8 +6,13 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { UsageChart } from "@/components/dashboard/usage-chart";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCompactNumber, formatDateTime } from "@/lib/utils";
 import { loadClaudePlatformDashboard } from "@/lib/claude-platform-dashboard";
+import { loadClaudeEnterpriseDashboard } from "@/lib/claude-enterprise-dashboard";
+import { ClaudeEnterprisePanel } from "./enterprise-panel";
+
+export const dynamic = "force-dynamic";
 
 // Human labels for the Anthropic cost-report `cost_type` line items.
 const LINE_ITEM_LABELS: Record<string, string> = {
@@ -22,8 +27,17 @@ function lineItemLabel(key: string): string {
   return LINE_ITEM_LABELS[key] ?? key.replace(/_/g, " ");
 }
 
-export default async function ClaudePlatformPage() {
-  const data = await loadClaudePlatformDashboard();
+export default async function ClaudePlatformPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const [{ tab }, data, enterprise] = await Promise.all([
+    searchParams,
+    loadClaudePlatformDashboard(),
+    loadClaudeEnterpriseDashboard(),
+  ]);
+  const initialTab = tab === "enterprise" ? "enterprise" : "console";
   const { summary, sync } = data;
   const syncFresh = sync?.fresh ?? false;
 
@@ -31,7 +45,7 @@ export default async function ClaudePlatformPage() {
     <div className="space-y-6">
       <PageHeader
         title="Claude Platform"
-        description="Anthropic Console / API usage, cost, and access — sourced from the Anthropic Admin API sync. Last 30 days."
+        description="Anthropic Console / API usage, cost, and access from the Admin API sync, plus Claude Enterprise adoption from the Analytics and Compliance APIs. Last 30 days."
       >
         <Link href="/oversight/usage?provider=anthropic">
           <Button variant="outline">
@@ -45,6 +59,24 @@ export default async function ClaudePlatformPage() {
         </Link>
       </PageHeader>
 
+      <Tabs defaultValue={initialTab}>
+        <TabsList>
+          <TabsTrigger value="console">Console &amp; API</TabsTrigger>
+          <TabsTrigger value="enterprise">
+            Enterprise
+            {enterprise.compliance.openAlerts > 0 && (
+              <span className="ml-2 rounded-full bg-[var(--warning)]/15 px-1.5 text-[10px] font-semibold text-[var(--warning)]">
+                {enterprise.compliance.openAlerts}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="enterprise">
+          <ClaudeEnterprisePanel data={enterprise} />
+        </TabsContent>
+
+        <TabsContent value="console" className="space-y-6">
       {!data.configured && (
         <Card>
           <CardContent className="py-10 text-center text-sm text-[var(--text-muted)]">
@@ -376,6 +408,8 @@ export default async function ClaudePlatformPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

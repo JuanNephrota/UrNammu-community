@@ -16,6 +16,8 @@ export const SYNC_PROVIDERS = [
   "portkey",
   "litellm",
   "chatgpt_enterprise",
+  "anthropic_compliance",
+  "claude_enterprise",
 ] as const;
 
 export type SyncProviderId = (typeof SYNC_PROVIDERS)[number];
@@ -32,6 +34,8 @@ export const SYNC_PROVIDER_LABELS: Record<SyncProviderId, string> = {
   portkey: "Portkey analytics",
   litellm: "LiteLLM spend logs",
   chatgpt_enterprise: "ChatGPT Enterprise compliance",
+  anthropic_compliance: "Anthropic Compliance API (activity feed + sessions)",
+  claude_enterprise: "Claude Enterprise analytics",
 };
 
 export function isSyncProvider(value: string): value is SyncProviderId {

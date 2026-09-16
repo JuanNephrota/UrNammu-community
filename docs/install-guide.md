@@ -274,6 +274,10 @@ Use these when traffic already flows through a gateway and you want its records 
 | `PORTKEY_WORKSPACE_SLUG` | Only needed for a non-default Portkey workspace. |
 | `LITELLM_API_KEY`, `LITELLM_API_BASE_URL` | LiteLLM proxy telemetry. |
 | `CHATGPT_ENTERPRISE_ADMIN_KEY`, `CHATGPT_WORKSPACE_ID` | ChatGPT Enterprise Compliance API: workspace-scoped Admin key (created by a workspace owner) and the workspace id. Usually set in the Integrations UI instead. |
+| `ANTHROPIC_COMPLIANCE_KEY` | Anthropic Compliance API. A Compliance Access Key (`sk-ant-api01-…`) with `read:compliance_activities`, plus `read:compliance_user_data` for Claude app session metadata. Optional: the Admin API key serves the activity feed on its own. |
+| `ANTHROPIC_ANALYTICS_KEY` | Claude Enterprise Analytics API key with `read:analytics` (per-user activity, DAU/WAU/MAU, seats, per-user cost). Enterprise plans only. |
+| `ORG_TIMEZONE` | IANA timezone for the "API key created outside 07:00–19:00" compliance alert. Default `UTC`. |
+| `ANTHROPIC_COMPLIANCE_LOOKBACK_DAYS` | How far a page-capped first compliance-feed pull keeps backfilling. Default 30. |
 
 ### 3.12 Developer-AI telemetry ingest
 
@@ -809,7 +813,7 @@ UrNammu schedules **one cron entry per background job**. Every route authenticat
 
 | Endpoint | Entries | Purpose |
 |----------|---------|---------|
-| `/api/cron/provider-sync/<provider>` | 10 (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`) | Pulls that provider's admin telemetry when its own interval has elapsed since its last successful sync. |
+| `/api/cron/provider-sync/<provider>` | 13 (`anthropic`, `claude_code`, `cursor`, `github_copilot`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`, `anthropic_compliance`, `claude_enterprise`) | Pulls that provider's admin telemetry when its own interval has elapsed since its last successful sync. |
 | `/api/cron/discovery-scan/<source>` | 4 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. |
 | `/api/cron/governance-automation` | 1 | Review-renewal, exception-renewal, and ownership-escalation alerts. |
 | `/api/cron/key-usage-rules` | 1 | Key usage rule evaluation. |
@@ -848,6 +852,8 @@ All of the above are already configured in `vercel.json` (26 entries, staggered 
     { "path": "/api/cron/provider-sync/litellm", "schedule": "24 * * * *" },
     { "path": "/api/cron/provider-sync/chatgpt_enterprise", "schedule": "27 * * * *" },
     { "path": "/api/cron/provider-sync/github_copilot", "schedule": "33 * * * *" },
+    { "path": "/api/cron/provider-sync/anthropic_compliance", "schedule": "36 * * * *" },
+    { "path": "/api/cron/provider-sync/claude_enterprise", "schedule": "57 * * * *" },
     { "path": "/api/cron/discovery-scan/google_workspace", "schedule": "30 * * * *" },
     { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },

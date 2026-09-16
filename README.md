@@ -10,7 +10,7 @@ UrNammu is an AI governance and compliance platform for admin and compliance tea
 - A seeded framework control catalog (NIST AI RMF, ISO/IEC 42001, EU AI Act, SOC 2) with cross-framework crosswalk and per-system coverage
 - EU AI Act classification wizard that derives a system's risk tier, pre-creates its article obligations, and gates approval
 - Vendor governance with contract, residency, subprocessors, and approved use-case tracking
-- Oversight telemetry from provider admin APIs, AI gateways (Helicone / OpenRouter / Portkey / LiteLLM), Google Gemini / Vertex AI billing export, and proxy-based prompt-risk detection
+- Oversight telemetry from provider admin APIs, the Anthropic Compliance API activity feed and Claude Enterprise Analytics API, AI gateways (Helicone / OpenRouter / Portkey / LiteLLM), Google Gemini / Vertex AI billing export, and proxy-based prompt-risk detection
 - Per-surface developer-AI dashboards for Claude Platform/API, Claude Code, Cowork, and Cursor (OpenTelemetry pipeline)
 - A custom reporting suite (templates, builder, PDF/CSV/JSON export, scheduled email delivery) and a live Proxy Health board
 
@@ -112,6 +112,14 @@ PORTKEY_API_BASE_URL=
 PORTKEY_WORKSPACE_SLUG=
 LITELLM_API_KEY=
 LITELLM_API_BASE_URL=
+
+# Optional Anthropic Compliance API + Claude Enterprise Analytics fallbacks
+# (Settings values win). Compliance: sk-ant-api01-… Compliance Access Key with
+# read:compliance_activities (+ read:compliance_user_data for sessions); the
+# Admin key serves the feed alone. Analytics: key with read:analytics.
+ANTHROPIC_COMPLIANCE_KEY=
+ANTHROPIC_ANALYTICS_KEY=
+ORG_TIMEZONE=UTC
 
 # Optional Hexnode UEM shadow-AI discovery fallbacks
 HEXNODE_API_KEY=
@@ -364,7 +372,7 @@ Background work runs as **one Vercel Cron entry per job**, all guarded by `Autho
 
 | Route | Schedule | What it does |
 |---|---|---|
-| `/api/cron/provider-sync/<provider>` | hourly, one entry per provider (`anthropic`, `claude_code`, `cursor`, `github_copilot`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry into `UsageBucket` / `CostBucket`. The OpenAI entry also refreshes the Assistants inventory. |
+| `/api/cron/provider-sync/<provider>` | hourly, one entry per provider (`anthropic`, `claude_code`, `cursor`, `github_copilot`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`, `anthropic_compliance`, `claude_enterprise`) | Pulls that provider's admin telemetry into `UsageBucket` / `CostBucket` (Claude Enterprise, GitHub Copilot, and ChatGPT Enterprise also into `AssistantDailyStat`; the Anthropic and ChatGPT Enterprise compliance feeds into `ComplianceActivity`, Anthropic session metadata into `ComplianceSession`). The OpenAI entry also refreshes the Assistants inventory. |
 | `/api/cron/discovery-scan/<source>` | hourly, one entry per source (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan and fails any scan of the same source stuck in `running` for 10+ minutes. |
 | `/api/cron/governance-automation` | hourly | Review-renewal, exception-renewal, ownership-escalation, and usage-after-deactivation alerts. |
 | `/api/cron/directory-sync/<source>` | daily, one entry per source (`google_workspace` 04:10 UTC, `microsoft_365` 04:20 UTC) | Full people-directory sync into `DirectoryPerson` when that source's `directory_sync_<source>_enabled` is on (default off) and its interval (default 24 h) has elapsed; fails runs stuck in `RUNNING` for 30+ minutes. |
