@@ -311,16 +311,26 @@ Detect AI tools in use in your organization that are not yet in the Registry.
 Four scanning sources, each independently configurable:
 
 - **Google Workspace** — scans OAuth activity logs for AI apps that users have connected.
-- **Microsoft 365** — scans delegated app permissions in your tenant against a known-AI-tools registry.
+- **Microsoft 365** — scans delegated app permissions in your tenant against a known-AI-tools registry. Resolving who granted each permission to an email address needs \`User.Read.All\` on the scanning app; without it the tool is still discovered but its user list stays empty.
 - **Hexnode UEM** — reads the app inventory from managed devices, catching desktop and mobile apps that never touch an OAuth flow.
 - **CrowdStrike Falcon** — endpoint discovery, for AI tools observed running on protected hosts.
 
 Plus two import paths that need no live connection:
 
-- **DNS / proxy logs** — CSV or TXT upload, or JSON API ingestion, of network-observed AI domains. Hostnames are normalized before matching, so \`api.openai.com\`, \`openai.com.\`, and mixed-case variants resolve to the same tool.
+- **DNS / proxy logs** — CSV or TXT upload, or JSON API ingestion, of network-observed AI domains. The importer reads native gateway exports: pick the vendor (Cisco Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS, or generic) and it maps that vendor's domain, user, department, count, and timestamp columns. Hostnames are normalized before matching, so \`api.openai.com\`, \`openai.com.\`, and mixed-case variants resolve to the same tool.
 - **Netskope** — a dedicated import for Netskope's cloud log shipper.
 
 The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and must be caught by device inventory or network logs — which is why the sources are complementary rather than redundant.
+
+## Observation details
+
+Each discovered tool records what the scans actually observed, shown under the tool name:
+
+- **First seen / Last seen** — the earliest and latest observation across every scan. Log imports use the export's own timestamp column when it has one (\`timestamp\`, \`@timestamp\`, \`time\`, \`date\`, and similar; ISO or epoch); otherwise the import time is used.
+- **Users** — the email addresses seen using the tool, as chips. Only real email addresses are kept; device names or bare usernames from network logs count toward the user total but are not listed.
+- **OAuth scopes** — the permissions granted to the app, for identity-provider sources.
+
+The **user count** follows one rule: a rescan from the **same** source replaces the count, so it can go down when access is revoked or devices are retired; a **different** source only ever raises it, so two partial views combine as a maximum rather than overwriting each other.
 
 ## Confidence scoring
 
@@ -362,7 +372,7 @@ Provider-level usage, cost, anomaly, vendor, and investigation telemetry.
 
 ## How provider sync works
 
-With an Anthropic admin key, an OpenAI admin key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs**, the maintenance cron pulls data on each provider's own interval and writes into:
+With an Anthropic admin key, an OpenAI admin key, a Cursor Admin API key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (plus any AI gateway keys under **Settings → Integrations**), the maintenance cron pulls data on the shared provider sync interval and writes into:
 
 - \`UsageBucket\` — tokens / requests per provider / model / project / actor / time bucket.
 - \`CostBucket\` — amount and line-item cost.
@@ -370,6 +380,14 @@ With an Anthropic admin key, an OpenAI admin key, and/or Google Gemini billing e
 - \`ProviderSyncRun\` — a record of each sync attempt.
 
 **If a provider's admin key is not configured, that provider is skipped cleanly** — no sync-run row, no upstream call. The manual-sync panel reports this as "Skipped (not configured): …" so it is clear which providers are actually active.
+
+What each sync records, beyond the shared bucket shape:
+
+- **Anthropic** — organization usage and cost per model and API key, plus the Claude Code analytics feed (sessions, lines, commits, estimated cost per developer) that backs Usage by Person when a machine is not instrumented with OTel.
+- **OpenAI** — usage per model and project, including prompt-cache hits as \`cacheReadTokens\`, and request counts. Usage and cost results are paginated; if the page cap is hit the sync-run metadata records \`truncated: true\` so a partial day is never mistaken for a quiet one.
+- **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. This is where Cursor tokens and cost come from; the Cursor OTel hook carries neither.
+- **Portkey** — one usage and cost bucket per day per model, and one usage bucket per day per user. Portkey reports cost in cents; the sync divides by 100 and records a \`reconciliation\` block in the sync-run metadata comparing the org-level graph total with the summed per-model and per-user totals so the unit assumption is auditable.
+- **Gemini** — spend and best-effort project attribution from the BigQuery billing export.
 
 ## Pages
 
@@ -387,7 +405,7 @@ One page per AI surface, because the telemetry each one emits is different:
 - **Claude Platform** — Anthropic Console / API usage, cost, and access, from the Anthropic Admin API sync. Includes active API keys and organization members. Last 30 days.
 - **Claude Code** — per-user developer productivity and usage from live OpenTelemetry data. Last 7 days. Has two drilldowns: an **Audit Log** of per-event records, and **Session Traces** (below).
 - **Cowork** — productivity, cost, and governance metrics for Claude Cowork (Claude Desktop VM) sessions, from OTel. Last 7 days.
-- **Cursor** — developer activity from Cursor via OTel spans. Last 7 days. **Cursor's hook carries no token or cost data**, so these are activity metrics only — do not read the absence of spend here as zero spend.
+- **Cursor** — developer activity from Cursor via OTel spans. Last 7 days. **Cursor's OTel hook carries no token or cost data**; tokens and spend on this page come from the Cursor Admin API sync when it is configured. Without that sync these are activity metrics only — do not read the absence of spend here as zero spend.
 
 ## Usage by Person
 
@@ -416,6 +434,16 @@ When traffic flows through the proxy, prompts are scanned for 5 risk categories:
 ## Proxy attribution
 
 Proxy traffic is attributed via optional headers: \`x-user-email\` (per-user cost tracking), \`x-department\` (cost center), \`x-ai-system-id\` (link to registry), and \`x-agent-id\` (link to a registered agent, which also enables MCP tool governance). Configure these in **Settings → Proxy Setup**.
+
+## Proxy token accounting
+
+Every proxy path (Vercel and Azure, Anthropic and OpenAI) records the same four token buckets, so proxy rows and admin-sync rows add up the same way:
+
+- \`inputTokens\` is **all** input the provider processed: uncached + cache read + cache creation. \`cacheReadTokens\` and \`cacheCreationTokens\` are the breakdown, not extra tokens on top.
+- Cost is uncached × input price + cache read × cache-read price + cache creation × cache-write price + output × output price, from one pricing table matched by exact model id first, then model family.
+- A model missing from the pricing table is **never charged a default**. Its cost is stored as 0 and the usage row's metadata carries \`pricingMatched: false\`, so unpriced models are visible rather than silently mispriced.
+- OpenAI streaming responses now record usage too (the proxy asks OpenAI for the trailing usage chunk when the client did not) and run response DLP like non-streaming calls.
+- Anthropic \`count_tokens\` and \`batches\` calls pass through the proxy without producing usage rows.
 
 ## MCP Activity
 
@@ -612,7 +640,7 @@ Each tile shows whether the service is connected, and each group header shows a 
 ## Categories
 
 - **AI Models** — the internal AI provider used for in-app features (risk suggestion, compliance gap analysis, agent risk review, summarization).
-- **Provider Telemetry** — Anthropic Admin API, OpenAI Admin API, and Google Cloud Billing (Gemini). These feed Oversight usage and cost.
+- **Provider Telemetry** — Anthropic Admin API (organization usage plus the Claude Code analytics feed), OpenAI Admin API, and Google Cloud Billing (Gemini). These feed Oversight usage and cost. The **Cursor Admin API** is the fourth provider sync — it supplies Cursor tokens, requests, and per-user spend — and is configured under **Settings → Provider Admin APIs** rather than as a tile here.
 - **AI Gateways** — OpenRouter Activity, Helicone Requests, Portkey Analytics, and LiteLLM Proxy. Use these when traffic already flows through a gateway and you want its records without re-routing through the UrNammu proxy.
 - **Identity** — Google Sign-In and Microsoft 365 Sign-In, for authenticating users into UrNammu.
 - **Directory Discovery** — Google Workspace and Microsoft 365 Tenant Apps, for Shadow AI scanning of connected third-party apps.
@@ -653,6 +681,8 @@ This is the half of the picture the heartbeat tiles cannot see: invocations that
 The ten most recent usage logs, with **Time**, **Status**, **User**, **Dept**, **Tokens**, and **Cost**. Rows are labeled **Flagged** or **Blocked** where they apply, and failures are distinguished as **Proxy error** or **Upstream error** — the former is yours to fix, the latter is the provider's.
 
 Use this table to confirm attribution headers are populated. Rows with no user or department mean \`x-user-email\` and \`x-department\` are not being sent; configure them in **Settings → Proxy Setup**.
+
+**Tokens** counts all input tokens (uncached plus cache read and cache creation) and output. A row with tokens but a **Cost** of $0 on a real model usually means the model is not in the pricing table — the row's metadata will carry \`pricingMatched: false\`. Unknown models are never charged a default price.
 
 ## Sync errors
 
@@ -708,7 +738,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 
 - **Overview** — jump-off page to every settings area.
 - **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization). The global **policy enforcement mode** for the proxy — Off / Dry run / Enforce — is also set here.
-- **Provider Admin APIs** — admin keys for org telemetry: Anthropic, OpenAI, Google Gemini billing export. Each has its own enable toggle and sync interval. Anomaly thresholds, governance-automation notice days, and attribution tuning live here too.
+- **Provider Admin APIs** — admin keys for org telemetry: Anthropic (which also feeds Claude Code analytics), OpenAI, Google Gemini billing export, and the Cursor Admin API. One global sync toggle and interval covers every provider (per-provider settings are planned). Anomaly thresholds, governance-automation notice days, and attribution tuning live here too.
 - **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`. For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile.
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts.
 - **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary.

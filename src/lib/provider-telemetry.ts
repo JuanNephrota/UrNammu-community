@@ -10,10 +10,11 @@ import {
 } from "./anthropic-admin";
 import {
   fetchOpenAIOrgData,
-  getCosts,
-  getUsage,
+  getAllCosts,
+  getAllUsage,
   isOpenAIAdminConfigured,
   listAssistants,
+  OPENAI_DEFAULT_MAX_PAGES,
 } from "./openai-admin";
 import {
   getOpenRouterActivity,
@@ -31,13 +32,19 @@ import {
   queryLiteLLMSpendLogs,
 } from "./litellm-admin";
 import {
+  buildPortkeyDayWindows,
   getPortkeyCostGraph,
   getPortkeyModelGroups,
   getPortkeyTokensGraph,
   getPortkeyUserGroups,
   isPortkeyConfigured,
   normalizePortkeyGraphPoints,
-  normalizePortkeyGroupedRows,
+  PORTKEY_COST_DIVISOR,
+  PORTKEY_DEFAULT_MAX_PAGES,
+  PORTKEY_DEFAULT_PAGE_SIZE,
+  portkeyCostToUsd,
+  readPortkeyGroupedPages,
+  type PortkeyGroupedRow,
 } from "./portkey-admin";
 import {
   getGeminiBillingOverview,
@@ -1212,20 +1219,23 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
     const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
     const now = Math.floor(Date.now() / 1000);
 
+    // Both endpoints paginate with `has_more` / `next_page`; follow the cursor
+    // (page-capped) so a busy org is not silently cut off at the first page.
     const [usage, costs, assistants] = await Promise.all([
-      getUsage({
+      getAllUsage({
         start_time: sevenDaysAgo,
         end_time: now,
         group_by: ["model", "project_id", "user_id", "api_key_id"],
         bucket_width: "1d",
       }),
-      getCosts({
+      getAllCosts({
         start_time: sevenDaysAgo,
         end_time: now,
         bucket_width: "1d",
       }).catch(() => null),
       listAssistants({ limit: 100, order: "desc" }).catch(() => null),
     ]);
+    const truncated = usage.truncated || (costs?.truncated ?? false);
 
     let rawSnapshotsStored = 0;
     for (const [resourceType, payload] of Object.entries({
@@ -1260,7 +1270,15 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
         const inputTokens = asNumber(result.input_tokens);
         const outputTokens = asNumber(result.output_tokens);
         const totalTokens = asNumber(result.total_tokens) || inputTokens + outputTokens;
-        const requestCount = asNumber(result.num_requests || result.request_count) || null;
+        // OpenAI reports prompt-cache hits as `input_cached_tokens`. Unlike
+        // Anthropic's cache_read_input_tokens, this is a SUBSET of
+        // `input_tokens` (already counted in totalTokens), so it is recorded
+        // for visibility and is not added to the total.
+        const cacheReadTokens = asNumber(result.input_cached_tokens);
+        // The completions usage API's request counter is `num_model_requests`;
+        // keep the legacy aliases as fallbacks.
+        const requestCount =
+          asNumber(result.num_model_requests || result.num_requests || result.request_count) || null;
         const dimensionKey = makeDimensionKey({
           model,
           projectExternalId,
@@ -1290,8 +1308,9 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             inputTokens,
             outputTokens,
             totalTokens,
+            cacheReadTokens,
             requestCount,
-            metadata: toJsonValue(result),
+            metadata: toJsonValue({ ...result, cachedTokensIncludedInInput: true }),
             syncRunId: syncRun.id,
           },
           create: {
@@ -1310,8 +1329,9 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             inputTokens,
             outputTokens,
             totalTokens,
+            cacheReadTokens,
             requestCount,
-            metadata: toJsonValue(result),
+            metadata: toJsonValue({ ...result, cachedTokensIncludedInInput: true }),
             syncRunId: syncRun.id,
           },
         });
@@ -1372,6 +1392,7 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             syncRunId: syncRun.id,
             dimensionKey,
             provider: "openai",
+            cacheReadTokens,
           },
         });
         if (created) apiUsageLogsCreated++;
@@ -1444,6 +1465,14 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
 
     await completeSyncRun(syncRun.id, summary, {
       assistantsCount: asArray(asRecord(assistants).data).length,
+      pagination: {
+        pageCap: OPENAI_DEFAULT_MAX_PAGES,
+        usagePages: usage.pages,
+        usageTruncated: usage.truncated,
+        costsPages: costs?.pages ?? 0,
+        costsTruncated: costs?.truncated ?? false,
+      },
+      truncated,
     });
 
     return { provider: "openai", success: true, syncRunId: syncRun.id, ...summary };
@@ -1659,6 +1688,208 @@ export async function syncOpenRouterTelemetry(triggeredByUserId: string): Promis
   }
 }
 
+export type PortkeyPlannedUsageBucket = {
+  partition: "model" | "actor";
+  dimensionKey: string;
+  model: string | null;
+  actorExternalId: string | null;
+  actorName: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number | null;
+  costUsd: number;
+  metadata: Record<string, unknown>;
+};
+
+export type PortkeyPlannedCostBucket = {
+  dimensionKey: string;
+  model: string;
+  amount: number;
+  metadata: Record<string, unknown>;
+};
+
+export type PortkeyPlannedActor = {
+  externalId: string;
+  name: string;
+  email: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type PortkeyDayPlan = {
+  date: string;
+  usageBuckets: PortkeyPlannedUsageBucket[];
+  costBuckets: PortkeyPlannedCostBucket[];
+  actors: PortkeyPlannedActor[];
+  totals: {
+    modelTokens: number;
+    modelRequests: number;
+    modelCostUsd: number;
+    actorTokens: number;
+    actorRequests: number;
+    actorCostUsd: number;
+  };
+};
+
+/**
+ * Pure planner for one UTC day of Portkey analytics. Portkey's grouped
+ * endpoints partition the SAME traffic two different ways (by model and by
+ * user), so the two partitions must not both be summed into provider totals:
+ *
+ * - `partition=model` rows (dimensionKey `date=<YYYY-MM-DD>|model=<model>`) are
+ *   the canonical partition. They carry tokens, requests and a matching
+ *   `CostBucket` with the same dimensionKey so the oversight cost lookup
+ *   attaches spend to the model bucket.
+ * - `partition=actor` rows (dimensionKey
+ *   `actorExternalId=<user>|date=<YYYY-MM-DD>|partition=actor`) exist for
+ *   per-person reporting. They carry the same tokens/requests re-cut by user
+ *   and keep the user's cost in `metadata.costCents` / `metadata.costUsd`
+ *   (the Cursor pattern) instead of a second CostBucket, so cost totals are
+ *   never double counted. Token-total consumers should exclude
+ *   `dimensionKey LIKE '%partition=actor%'` for provider="portkey".
+ *
+ * Portkey does not always return a prompt/completion split for grouped rows.
+ * `UsageBucket.inputTokens`/`outputTokens` are NOT NULL columns, so when the
+ * split is missing they are written as 0 with `metadata.tokenSplitAvailable =
+ * false` rather than fabricating a split from the total.
+ */
+export function planPortkeyDayBuckets(args: {
+  date: string;
+  modelRows: PortkeyGroupedRow[];
+  userRows: PortkeyGroupedRow[];
+}): PortkeyDayPlan {
+  const { date } = args;
+  const usageBuckets: PortkeyPlannedUsageBucket[] = [];
+  const costBuckets: PortkeyPlannedCostBucket[] = [];
+  const actors: PortkeyPlannedActor[] = [];
+  const totals = {
+    modelTokens: 0,
+    modelRequests: 0,
+    modelCostUsd: 0,
+    actorTokens: 0,
+    actorRequests: 0,
+    actorCostUsd: 0,
+  };
+
+  // Merge duplicate labels defensively (a label should only appear once per
+  // window, but paginated responses have no ordering guarantee).
+  function mergeRows(rows: PortkeyGroupedRow[]): PortkeyGroupedRow[] {
+    const merged = new Map<string, PortkeyGroupedRow>();
+    for (const row of rows) {
+      if (!row.label) continue;
+      const existing = merged.get(row.label);
+      if (!existing) {
+        merged.set(row.label, { ...row });
+        continue;
+      }
+      existing.requests += row.requests;
+      existing.cost += row.cost;
+      existing.totalTokens += row.totalTokens;
+      existing.promptTokens += row.promptTokens;
+      existing.completionTokens += row.completionTokens;
+      existing.hasTokenSplit = existing.hasTokenSplit && row.hasTokenSplit;
+      if (row.lastSeenAt && (!existing.lastSeenAt || row.lastSeenAt > existing.lastSeenAt)) {
+        existing.lastSeenAt = row.lastSeenAt;
+      }
+    }
+    return [...merged.values()];
+  }
+
+  for (const row of mergeRows(args.modelRows)) {
+    const model = row.label as string;
+    const costUsd = portkeyCostToUsd(row.cost);
+    const dimensionKey = makeDimensionKey({ date, model });
+    const inputTokens = row.hasTokenSplit ? row.promptTokens : 0;
+    const outputTokens = row.hasTokenSplit ? row.completionTokens : 0;
+    const totalTokens = Math.max(0, Math.round(row.totalTokens));
+    const requestCount = row.requests > 0 ? Math.round(row.requests) : null;
+
+    usageBuckets.push({
+      partition: "model",
+      dimensionKey,
+      model,
+      actorExternalId: null,
+      actorName: null,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      requestCount,
+      costUsd,
+      metadata: {
+        source: "portkey_analytics_api",
+        partition: "model",
+        tokenSplitAvailable: row.hasTokenSplit,
+        costCents: row.cost,
+        costUsd,
+        lastSeenAt: row.lastSeenAt,
+        raw: row.raw,
+      },
+    });
+    if (costUsd > 0) {
+      costBuckets.push({
+        dimensionKey,
+        model,
+        amount: costUsd,
+        metadata: {
+          source: "portkey_analytics_api",
+          partition: "model",
+          costCents: row.cost,
+          requests: row.requests,
+        },
+      });
+    }
+    totals.modelTokens += totalTokens;
+    totals.modelRequests += requestCount ?? 0;
+    totals.modelCostUsd += costUsd;
+  }
+
+  for (const row of mergeRows(args.userRows)) {
+    const actorExternalId = row.label as string;
+    const costUsd = portkeyCostToUsd(row.cost);
+    const dimensionKey = makeDimensionKey({ date, actorExternalId, partition: "actor" });
+    const inputTokens = row.hasTokenSplit ? row.promptTokens : 0;
+    const outputTokens = row.hasTokenSplit ? row.completionTokens : 0;
+    const totalTokens = Math.max(0, Math.round(row.totalTokens));
+    const requestCount = row.requests > 0 ? Math.round(row.requests) : null;
+
+    usageBuckets.push({
+      partition: "actor",
+      dimensionKey,
+      model: null,
+      actorExternalId,
+      actorName: actorExternalId,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      requestCount,
+      costUsd,
+      metadata: {
+        source: "portkey_analytics_api",
+        partition: "actor",
+        tokenSplitAvailable: row.hasTokenSplit,
+        costCents: row.cost,
+        costUsd,
+        lastSeenAt: row.lastSeenAt,
+        raw: row.raw,
+      },
+    });
+    actors.push({
+      externalId: actorExternalId,
+      name: actorExternalId,
+      email: actorExternalId.includes("@") ? actorExternalId : null,
+      metadata: {
+        source: "portkey_analytics_api",
+        lastSeenAt: row.lastSeenAt,
+      },
+    });
+    totals.actorTokens += totalTokens;
+    totals.actorRequests += requestCount ?? 0;
+    totals.actorCostUsd += costUsd;
+  }
+
+  return { date, usageBuckets, costBuckets, actors, totals };
+}
+
 export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<SyncResult> {
   if (!(await isPortkeyConfigured())) {
     return {
@@ -1674,43 +1905,222 @@ export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<S
   try {
     const end = new Date();
     const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const startTime = start.toISOString();
+    // One grouped call per UTC day keeps Portkey buckets at day granularity
+    // (Portkey's grouped endpoints otherwise aggregate the whole window).
+    const windows = buildPortkeyDayWindows(start, end);
+    const startTime = windows[0]?.bucketStart.toISOString() ?? start.toISOString();
     const endTime = end.toISOString();
-    const pageSize = 100;
+    const pageSize = PORTKEY_DEFAULT_PAGE_SIZE;
+    const maxPages = PORTKEY_DEFAULT_MAX_PAGES;
 
-    async function readGroupedPages(
-      fetchPage: (args: { startTime: string; endTime: string; currentPage: number; pageSize: number }) => Promise<Record<string, unknown>>,
-      labelKeys: string[],
-    ) {
-      const rows = [];
-      for (let currentPage = 0; currentPage < 20; currentPage++) {
-        const payload = await fetchPage({
-          startTime,
-          endTime,
-          currentPage,
-          pageSize,
-        });
-        const normalized = normalizePortkeyGroupedRows(payload, labelKeys);
-        rows.push(...normalized);
-        if (normalized.length < pageSize) break;
-      }
-      return rows;
-    }
-
-    const [modelRows, userRows, tokenPoints, costPoints] = await Promise.all([
-      readGroupedPages(getPortkeyModelGroups, ["ai_model", "model"]),
-      readGroupedPages(getPortkeyUserGroups, ["user", "metadata_value"]),
+    // Org-level graphs are fetched once for the whole window. They are no
+    // longer written as `scope=all` buckets (that would double count the
+    // per-model partition); they are stored as snapshots and used to
+    // reconcile the grouped totals in the sync-run metadata.
+    const [tokenPoints, costPoints] = await Promise.all([
       getPortkeyTokensGraph({ startTime, endTime }).then(normalizePortkeyGraphPoints),
       getPortkeyCostGraph({ startTime, endTime }).then(normalizePortkeyGraphPoints),
     ]);
 
+    // Portkey models are no longer written as ProviderProject rows; the
+    // per-model partition lives in UsageBucket/CostBucket instead.
+    const projectsUpserted = 0;
+    let actorsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    let costBucketsUpserted = 0;
+    let apiUsageLogsCreated = 0;
+
+    const pagination = {
+      pageSize,
+      pageCap: maxPages,
+      modelPages: 0,
+      userPages: 0,
+      truncated: false,
+      truncatedWindows: [] as { date: string; endpoint: string }[],
+    };
+    const coverage = { modelRows: 0, userRows: 0, tokenPoints: tokenPoints.length, costPoints: costPoints.length };
+    const grouped = {
+      modelTokens: 0,
+      modelRequests: 0,
+      modelCostUsd: 0,
+      actorTokens: 0,
+      actorRequests: 0,
+      actorCostUsd: 0,
+    };
+    const modelSamples: PortkeyGroupedRow[] = [];
+    const userSamples: PortkeyGroupedRow[] = [];
+    const seenActors = new Set<string>();
+
+    for (const window of windows) {
+      const [modelPage, userPage] = await Promise.all([
+        readPortkeyGroupedPages(getPortkeyModelGroups, {
+          startTime: window.startTime,
+          endTime: window.endTime,
+          labelKeys: ["ai_model", "model"],
+          pageSize,
+          maxPages,
+        }),
+        readPortkeyGroupedPages(getPortkeyUserGroups, {
+          startTime: window.startTime,
+          endTime: window.endTime,
+          labelKeys: ["user", "metadata_value"],
+          pageSize,
+          maxPages,
+        }),
+      ]);
+
+      pagination.modelPages += modelPage.pages;
+      pagination.userPages += userPage.pages;
+      if (modelPage.truncated) {
+        pagination.truncated = true;
+        pagination.truncatedWindows.push({ date: window.date, endpoint: "ai-models" });
+      }
+      if (userPage.truncated) {
+        pagination.truncated = true;
+        pagination.truncatedWindows.push({ date: window.date, endpoint: "users" });
+      }
+      coverage.modelRows += modelPage.rows.length;
+      coverage.userRows += userPage.rows.length;
+      if (modelSamples.length < 10) modelSamples.push(...modelPage.rows.slice(0, 10 - modelSamples.length));
+      if (userSamples.length < 10) userSamples.push(...userPage.rows.slice(0, 10 - userSamples.length));
+
+      const plan = planPortkeyDayBuckets({
+        date: window.date,
+        modelRows: modelPage.rows,
+        userRows: userPage.rows,
+      });
+      grouped.modelTokens += plan.totals.modelTokens;
+      grouped.modelRequests += plan.totals.modelRequests;
+      grouped.modelCostUsd += plan.totals.modelCostUsd;
+      grouped.actorTokens += plan.totals.actorTokens;
+      grouped.actorRequests += plan.totals.actorRequests;
+      grouped.actorCostUsd += plan.totals.actorCostUsd;
+
+      for (const bucket of plan.usageBuckets) {
+        const data = {
+          model: bucket.model,
+          actorExternalId: bucket.actorExternalId,
+          actorName: bucket.actorName,
+          inputTokens: bucket.inputTokens,
+          outputTokens: bucket.outputTokens,
+          totalTokens: bucket.totalTokens,
+          requestCount: bucket.requestCount,
+          metadata: toJsonValue(bucket.metadata),
+          syncRunId: syncRun.id,
+        };
+        await prisma.usageBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: "portkey",
+              bucketStart: window.bucketStart,
+              bucketEnd: window.bucketEnd,
+              granularity: "day",
+              dimensionKey: bucket.dimensionKey,
+            },
+          },
+          update: data,
+          create: {
+            provider: "portkey",
+            bucketStart: window.bucketStart,
+            bucketEnd: window.bucketEnd,
+            granularity: "day",
+            dimensionKey: bucket.dimensionKey,
+            ...data,
+          },
+        });
+        usageBucketsUpserted++;
+
+        // Derived APIUsageLog rows come from the canonical model partition
+        // only, so they always carry a real model and never double count.
+        if (bucket.partition === "model" && bucket.model) {
+          const created = await upsertDerivedUsageLog({
+            provider: "portkey",
+            model: bucket.model,
+            bucketDate: window.bucketStart,
+            inputTokens: bucket.inputTokens,
+            outputTokens: bucket.outputTokens,
+            totalTokens: bucket.totalTokens,
+            cost: bucket.costUsd,
+            metadata: {
+              source: "portkey_analytics_api",
+              syncRunId: syncRun.id,
+              dimensionKey: bucket.dimensionKey,
+              provider: "portkey",
+              tokenSplitAvailable: bucket.metadata.tokenSplitAvailable,
+            },
+          });
+          if (created) apiUsageLogsCreated++;
+        }
+      }
+
+      for (const cost of plan.costBuckets) {
+        const data = {
+          amount: cost.amount,
+          currency: "usd",
+          model: cost.model,
+          lineItem: "proxy",
+          metadata: toJsonValue(cost.metadata),
+          syncRunId: syncRun.id,
+        };
+        await prisma.costBucket.upsert({
+          where: {
+            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+              provider: "portkey",
+              bucketStart: window.bucketStart,
+              bucketEnd: window.bucketEnd,
+              granularity: "day",
+              dimensionKey: cost.dimensionKey,
+            },
+          },
+          update: data,
+          create: {
+            provider: "portkey",
+            bucketStart: window.bucketStart,
+            bucketEnd: window.bucketEnd,
+            granularity: "day",
+            dimensionKey: cost.dimensionKey,
+            ...data,
+          },
+        });
+        costBucketsUpserted++;
+      }
+
+      for (const actor of plan.actors) {
+        if (seenActors.has(actor.externalId)) continue;
+        seenActors.add(actor.externalId);
+        await prisma.providerActor.upsert({
+          where: {
+            provider_externalId: { provider: "portkey", externalId: actor.externalId },
+          },
+          update: {
+            email: actor.email,
+            name: actor.name,
+            metadata: toJsonValue(actor.metadata),
+            lastSeenAt: new Date(),
+            syncRunId: syncRun.id,
+          },
+          create: {
+            provider: "portkey",
+            externalId: actor.externalId,
+            email: actor.email,
+            name: actor.name,
+            metadata: toJsonValue(actor.metadata),
+            syncRunId: syncRun.id,
+          },
+        });
+        actorsUpserted++;
+      }
+    }
+
     await storeSnapshot(syncRun.id, "portkey", "model_groups", {
-      rowCount: modelRows.length,
-      sample: modelRows.slice(0, 10),
+      rowCount: coverage.modelRows,
+      days: windows.length,
+      sample: modelSamples,
     });
     await storeSnapshot(syncRun.id, "portkey", "user_groups", {
-      rowCount: userRows.length,
-      sample: userRows.slice(0, 10),
+      rowCount: coverage.userRows,
+      days: windows.length,
+      sample: userSamples,
     });
     await storeSnapshot(syncRun.id, "portkey", "token_graph", {
       points: tokenPoints.slice(0, 31),
@@ -1718,203 +2128,7 @@ export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<S
     await storeSnapshot(syncRun.id, "portkey", "cost_graph", {
       points: costPoints.slice(0, 31),
     });
-
     const rawSnapshotsStored = 4;
-    let projectsUpserted = 0;
-    let actorsUpserted = 0;
-    let usageBucketsUpserted = 0;
-    let costBucketsUpserted = 0;
-    let apiUsageLogsCreated = 0;
-
-    for (const row of modelRows) {
-      if (!row.label) continue;
-      await prisma.providerProject.upsert({
-        where: {
-          provider_externalId: { provider: "portkey", externalId: row.label },
-        },
-        update: {
-          name: row.label,
-          status: "active",
-          metadata: toJsonValue({
-            source: "portkey_analytics_api",
-            requests: row.requests,
-            cost: row.cost,
-            totalTokens: row.totalTokens,
-            promptTokens: row.promptTokens,
-            completionTokens: row.completionTokens,
-            lastSeenAt: row.lastSeenAt,
-            raw: row.raw,
-          }),
-          lastSeenAt: new Date(),
-          syncRunId: syncRun.id,
-        },
-        create: {
-          provider: "portkey",
-          externalId: row.label,
-          name: row.label,
-          status: "active",
-          metadata: toJsonValue({
-            source: "portkey_analytics_api",
-            requests: row.requests,
-            cost: row.cost,
-            totalTokens: row.totalTokens,
-            promptTokens: row.promptTokens,
-            completionTokens: row.completionTokens,
-            lastSeenAt: row.lastSeenAt,
-            raw: row.raw,
-          }),
-          syncRunId: syncRun.id,
-        },
-      });
-      projectsUpserted++;
-    }
-
-    for (const row of userRows) {
-      if (!row.label) continue;
-      await prisma.providerActor.upsert({
-        where: {
-          provider_externalId: { provider: "portkey", externalId: row.label },
-        },
-        update: {
-          email: row.label.includes("@") ? row.label : null,
-          name: row.label,
-          metadata: toJsonValue({
-            source: "portkey_analytics_api",
-            requests: row.requests,
-            cost: row.cost,
-            totalTokens: row.totalTokens,
-            raw: row.raw,
-          }),
-          lastSeenAt: new Date(),
-          syncRunId: syncRun.id,
-        },
-        create: {
-          provider: "portkey",
-          externalId: row.label,
-          email: row.label.includes("@") ? row.label : null,
-          name: row.label,
-          metadata: toJsonValue({
-            source: "portkey_analytics_api",
-            requests: row.requests,
-            cost: row.cost,
-            totalTokens: row.totalTokens,
-            raw: row.raw,
-          }),
-          syncRunId: syncRun.id,
-        },
-      });
-      actorsUpserted++;
-    }
-
-    const costByTimestamp = new Map(costPoints.map((point) => [point.timestamp, point.total / 100]));
-
-    for (const point of tokenPoints) {
-      const bucketStart = new Date(point.timestamp);
-      if (Number.isNaN(bucketStart.getTime())) continue;
-      const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
-      const date = bucketStart.toISOString().split("T")[0] ?? bucketStart.toISOString();
-      const dimensionKey = makeDimensionKey({
-        date,
-        scope: "all",
-      });
-      const totalTokens = Math.max(0, Math.round(point.total));
-
-      await prisma.usageBucket.upsert({
-        where: {
-          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
-            provider: "portkey",
-            bucketStart,
-            bucketEnd,
-            granularity: "day",
-            dimensionKey,
-          },
-        },
-        update: {
-          totalTokens,
-          inputTokens: totalTokens,
-          outputTokens: 0,
-          requestCount: null,
-          metadata: toJsonValue({
-            source: "portkey_analytics_api",
-            avgTokens: point.avg,
-          }),
-          syncRunId: syncRun.id,
-        },
-        create: {
-          provider: "portkey",
-          bucketStart,
-          bucketEnd,
-          granularity: "day",
-          dimensionKey,
-          inputTokens: totalTokens,
-          outputTokens: 0,
-          totalTokens,
-          requestCount: null,
-          metadata: toJsonValue({
-            source: "portkey_analytics_api",
-            avgTokens: point.avg,
-          }),
-          syncRunId: syncRun.id,
-        },
-      });
-      usageBucketsUpserted++;
-
-      const amount = costByTimestamp.get(point.timestamp) ?? 0;
-      if (amount > 0) {
-        await prisma.costBucket.upsert({
-          where: {
-            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
-              provider: "portkey",
-              bucketStart,
-              bucketEnd,
-              granularity: "day",
-              dimensionKey,
-            },
-          },
-          update: {
-            amount,
-            currency: "usd",
-            lineItem: "proxy",
-            metadata: toJsonValue({
-              source: "portkey_analytics_api",
-            }),
-            syncRunId: syncRun.id,
-          },
-          create: {
-            provider: "portkey",
-            bucketStart,
-            bucketEnd,
-            granularity: "day",
-            dimensionKey,
-            amount,
-            currency: "usd",
-            lineItem: "proxy",
-            metadata: toJsonValue({
-              source: "portkey_analytics_api",
-            }),
-            syncRunId: syncRun.id,
-          },
-        });
-        costBucketsUpserted++;
-      }
-
-      const created = await upsertDerivedUsageLog({
-        provider: "portkey",
-        model: null,
-        bucketDate: bucketStart,
-        inputTokens: totalTokens,
-        outputTokens: 0,
-        totalTokens,
-        cost: amount,
-        metadata: {
-          source: "portkey_analytics_api",
-          syncRunId: syncRun.id,
-          dimensionKey,
-          provider: "portkey",
-        },
-      });
-      if (created) apiUsageLogsCreated++;
-    }
 
     const summary = {
       usageBucketsUpserted,
@@ -1925,12 +2139,30 @@ export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<S
       apiUsageLogsCreated,
     };
 
+    const graphTotalTokens = tokenPoints.reduce((sum, point) => sum + point.total, 0);
+    const graphCostUsd = portkeyCostToUsd(costPoints.reduce((sum, point) => sum + point.total, 0));
+
     await completeSyncRun(syncRun.id, summary, {
-      coverage: {
-        modelRows: modelRows.length,
-        userRows: userRows.length,
-        tokenPoints: tokenPoints.length,
-        costPoints: costPoints.length,
+      window: { start: startTime, end: endTime, days: windows.length },
+      coverage,
+      pagination,
+      truncated: pagination.truncated,
+      // Grouped totals should match the org-level graphs. A persistent
+      // 100x gap in cost means the grouped `cost` unit assumption is wrong.
+      reconciliation: {
+        graphTotalTokens,
+        graphCostUsd,
+        modelTotalTokens: grouped.modelTokens,
+        modelRequests: grouped.modelRequests,
+        modelCostUsd: grouped.modelCostUsd,
+        actorTotalTokens: grouped.actorTokens,
+        actorRequests: grouped.actorRequests,
+        actorCostUsd: grouped.actorCostUsd,
+      },
+      costUnit: { assumed: "cents", divisor: PORTKEY_COST_DIVISOR },
+      bucketShape: {
+        model: "date=<YYYY-MM-DD>|model=<model>",
+        actor: "actorExternalId=<user>|date=<YYYY-MM-DD>|partition=actor",
       },
     });
 

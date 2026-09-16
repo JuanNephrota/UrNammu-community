@@ -364,6 +364,17 @@ model DiscoveredAITool {
   externalAppId       String?
   externalAppProvider String?
 
+  // Observation detail captured by discovery scans. Previously these were
+  // stringified into `notes`; now they are queryable.
+  // userEmails: distinct users seen using the tool (from the most recent
+  //   scan of `detectionSource`). Empty when the source has no identity.
+  // scopes: OAuth scopes granted (identity-provider sources only).
+  // firstSeenAt / lastSeenAt: earliest and latest observation across scans.
+  userEmails  String[]  @default([])
+  scopes      String[]  @default([])
+  firstSeenAt DateTime?
+  lastSeenAt  DateTime?
+
   alerts Alert[]
 
   createdAt DateTime @default(now())
@@ -372,6 +383,7 @@ model DiscoveredAITool {
   @@unique([toolName, detectedDomain])
   @@index([status, matchConfidence])
   @@index([externalAppProvider, externalAppId])
+  @@index([lastSeenAt])
 }
 
 model DismissedCandidate {
@@ -1225,6 +1237,9 @@ model PromptRiskRule {
 // non-metric signals at the gateway).
 model ClaudeCodeMetric {
   id             String   @id @default(cuid())
+  // Content hash of the OTel record; lets `createMany({skipDuplicates})`
+  // drop re-sent batches when the collector retries a timed-out export.
+  dedupeKey      String?  @unique
   // OTel data-point timestamp (wall-clock from the client)
   timestamp      DateTime
   // When UrNammu accepted the payload (server clock — for latency/debug)
@@ -1271,6 +1286,9 @@ model ClaudeCodeMetric {
 // so this table never stores source code or prompt text.
 model ClaudeCodeEvent {
   id             String   @id @default(cuid())
+  // Content hash of the OTel record; lets `createMany({skipDuplicates})`
+  // drop re-sent batches when the collector retries a timed-out export.
+  dedupeKey      String?  @unique
   // OTel log-record timestamp (wall-clock from the client)
   timestamp      DateTime
   // When UrNammu accepted the payload (server clock)
@@ -1334,6 +1352,9 @@ model ClaudeCodeEvent {
 // token or cost data available from Cursor's hook.
 model CursorMetric {
   id          String   @id @default(cuid())
+  // Content hash of the OTel record; lets `createMany({skipDuplicates})`
+  // drop re-sent batches when the collector retries a timed-out export.
+  dedupeKey      String?  @unique
   // OTel data-point timestamp (wall-clock from the collector's connector)
   timestamp   DateTime
   // When UrNammu accepted the payload (server clock)
@@ -1372,6 +1393,9 @@ model CursorMetric {
 // prompt text.
 model CursorSpan {
   id            String   @id @default(cuid())
+  // Content hash of the OTel record; lets `createMany({skipDuplicates})`
+  // drop re-sent batches when the collector retries a timed-out export.
+  dedupeKey      String?  @unique
   // OTel span start timestamp (wall-clock from the client)
   timestamp     DateTime
   // When UrNammu accepted the payload (server clock)

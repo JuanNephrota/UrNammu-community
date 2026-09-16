@@ -4,12 +4,20 @@ import { matchDomain, matchDomainHeuristic } from "./ai-tools-registry";
 import { findMatchingGovernedSystem } from "./governed-system-match";
 import { logger } from "./observability";
 import { parseCsv } from "./csv";
+import {
+  dismissedDomainKey,
+  initialDiscoveryObservation,
+  mergeDiscoveryObservation,
+  pickEmails,
+} from "./discovery-merge";
 
 export type LogEntry = {
   domain: string;
   user?: string;
   department?: string;
   count?: number;
+  /** When the request/query happened (ISO 8601 or any Date-parseable string). */
+  timestamp?: string;
 };
 
 export type IngestResult = {
@@ -41,6 +49,7 @@ type CsvHeaderPreset = {
   actor: string[];
   department: string[];
   count: string[];
+  timestamp: string[];
 };
 
 const DEFAULT_HEADER_PRESET: CsvHeaderPreset = {
@@ -49,6 +58,19 @@ const DEFAULT_HEADER_PRESET: CsvHeaderPreset = {
   actor: ["device name", "device", "computername", "computer name", "client name", "host name"],
   department: ["department", "dept", "group", "team", "organizational unit"],
   count: ["count", "hits", "requests", "queries", "repeatcnt"],
+  timestamp: [
+    "timestamp",
+    "@timestamp",
+    "time",
+    "date",
+    "datetime",
+    "date time",
+    "event time",
+    "start time",
+    "receive time",
+    "last seen",
+    "first seen",
+  ],
 };
 
 const SOURCE_HEADER_PRESETS: Record<string, Partial<CsvHeaderPreset>> = {
@@ -157,7 +179,19 @@ function mergePreset(source: string): CsvHeaderPreset {
     actor: [...(specific.actor ?? []), ...DEFAULT_HEADER_PRESET.actor],
     department: [...(specific.department ?? []), ...DEFAULT_HEADER_PRESET.department],
     count: [...(specific.count ?? []), ...DEFAULT_HEADER_PRESET.count],
+    timestamp: [...(specific.timestamp ?? []), ...DEFAULT_HEADER_PRESET.timestamp],
   };
+}
+
+/** Parse a log timestamp; returns null for empty/unparseable values. */
+export function parseLogTimestamp(raw: string | undefined | null): Date | null {
+  const value = (raw ?? "").trim();
+  if (!value) return null;
+  // Epoch seconds / milliseconds (SIEM and firewall exports often emit these).
+  if (/^\d{10}$/.test(value)) return new Date(Number(value) * 1000);
+  if (/^\d{13}$/.test(value)) return new Date(Number(value));
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function parseCount(raw: string | undefined) {
@@ -185,6 +219,7 @@ export function parseEntriesFromCsv(text: string, source: string = "dns_proxy"):
     const actorIdx = findHeaderIndex(firstRow, preset.actor);
     const deptIdx = findHeaderIndex(firstRow, preset.department);
     const countIdx = findHeaderIndex(firstRow, preset.count);
+    const timestampIdx = findHeaderIndex(firstRow, preset.timestamp);
 
     for (const cols of rows.slice(1)) {
       const domain = domainIdx >= 0 ? normalizeDomain(cols[domainIdx] ?? "") : null;
@@ -192,12 +227,16 @@ export function parseEntriesFromCsv(text: string, source: string = "dns_proxy"):
 
       const userValue = userIdx >= 0 ? cols[userIdx]?.trim() || undefined : undefined;
       const actorValue = actorIdx >= 0 ? cols[actorIdx]?.trim() || undefined : undefined;
+      const timestamp = timestampIdx >= 0 ? cols[timestampIdx]?.trim() || undefined : undefined;
 
       entries.push({
         domain,
         user: userValue ?? actorValue,
         department: deptIdx >= 0 ? cols[deptIdx]?.trim() || undefined : undefined,
         count: countIdx >= 0 ? parseCount(cols[countIdx]) : 1,
+        // Only present when the export has a time column, so exports without
+        // one keep their existing shape.
+        ...(timestamp ? { timestamp } : {}),
       });
     }
     return entries;
@@ -228,6 +267,9 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       users: Set<string>;
       departments: Set<string>;
       totalHits: number;
+      /** Earliest/latest row timestamp, when the export carries one. */
+      firstSeen: Date | null;
+      lastSeen: Date | null;
       matchConfidence: "high" | "low";
       matchScore: number;
       matchReasons: string[];
@@ -235,6 +277,7 @@ async function runIngestion(source: string, entries: LogEntry[]) {
   >();
 
   let processed = 0;
+  const ingestedAt = new Date();
 
   for (const entry of entries) {
     // Normalize here (not just in the CSV parser) so JSON ingest and the
@@ -260,11 +303,16 @@ async function runIngestion(source: string, entries: LogEntry[]) {
 
     const key = `${toolName}::${domain}`;
     const existing = toolMap.get(key);
+    const seenAt = parseLogTimestamp(entry.timestamp);
 
     if (existing) {
       if (entry.user) existing.users.add(entry.user);
       if (entry.department) existing.departments.add(entry.department);
       existing.totalHits += entry.count ?? 1;
+      if (seenAt) {
+        if (!existing.firstSeen || seenAt < existing.firstSeen) existing.firstSeen = seenAt;
+        if (!existing.lastSeen || seenAt > existing.lastSeen) existing.lastSeen = seenAt;
+      }
       continue;
     }
 
@@ -275,6 +323,8 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       users: new Set(entry.user ? [entry.user] : []),
       departments: new Set(entry.department ? [entry.department] : []),
       totalHits: entry.count ?? 1,
+      firstSeen: seenAt,
+      lastSeen: seenAt,
       matchConfidence: registryMatch ? "high" : "low",
       matchScore: registryMatch ? 8 : heuristicMatch!.score,
       matchReasons: registryMatch
@@ -300,32 +350,54 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       where: {
         toolName_detectedDomain: {
           toolName: discovery.toolName,
-          detectedDomain: discovery.domain,
+          detectedDomain: dismissedDomainKey(discovery.domain),
         },
       },
     });
     if (dismissed) continue;
 
+    // Structured observation for this import. Identities that are not email
+    // shaped (device names, bare usernames) still count toward userCount but
+    // are kept out of userEmails. Timestamps come from the rows when the
+    // export has a time column, otherwise the import time stands in.
+    const observation = {
+      detectionSource: source,
+      userCount,
+      userEmails: pickEmails(discovery.users),
+      scopes: [] as string[],
+      firstSeenAt: discovery.firstSeen,
+      lastSeenAt: discovery.lastSeen,
+      observedAt: ingestedAt,
+    };
+
     const applyUpdate = async (existing: {
       id: string;
+      detectionSource: string;
       userCount: number;
+      firstSeenAt: Date | null;
+      lastSeenAt: Date | null;
       notes: string | null;
     }) => {
-      const newUserCount = Math.max(existing.userCount, userCount);
+      // Same-source re-import replaces the count (it may drop); a different
+      // source only raises it. See discovery-merge.ts.
+      const merged = mergeDiscoveryObservation(existing, observation);
+      const line = `DNS/proxy import (${source}): ${discovery.totalHits} hits, ${userCount} user(s).`;
       await prisma.discoveredAITool.update({
         where: { id: existing.id },
         data: {
-          userCount: newUserCount,
-          notes: existing.notes
-            ? `${existing.notes}\nDNS/proxy scan (${source}): ${discovery.totalHits} hits, ${userCount} users.`
-            : `DNS/proxy scan (${source}): ${discovery.totalHits} hits, ${userCount} users.`,
+          userCount: merged.userCount,
+          userEmails: merged.userEmails,
+          scopes: merged.scopes,
+          firstSeenAt: merged.firstSeenAt,
+          lastSeenAt: merged.lastSeenAt,
+          notes: existing.notes ? `${existing.notes}\n${line}` : line,
         },
       });
       updatedTools++;
       details.push({
         toolName: discovery.toolName,
         action: "updated",
-        userCount: newUserCount,
+        userCount: merged.userCount,
         hits: discovery.totalHits,
       });
     };
@@ -353,6 +425,8 @@ async function runIngestion(source: string, entries: LogEntry[]) {
         ? `Low-confidence heuristic match from DNS/proxy logs (${source}). ${discovery.totalHits} hits from ${userCount} user(s). Needs review.`
         : `Detected via DNS/proxy logs (${source}). ${discovery.totalHits} hits from ${userCount} user(s).`;
 
+    const initial = initialDiscoveryObservation(observation);
+
     let tool;
     try {
       tool = await prisma.discoveredAITool.create({
@@ -362,7 +436,11 @@ async function runIngestion(source: string, entries: LogEntry[]) {
           detectedDomain: discovery.domain,
           detectionSource: source,
           department,
-          userCount,
+          userCount: initial.userCount,
+          userEmails: initial.userEmails,
+          scopes: initial.scopes,
+          firstSeenAt: initial.firstSeenAt,
+          lastSeenAt: initial.lastSeenAt,
           status: governedMatch ? "REGISTERED" : "DISCOVERED",
           linkedSystemId: governedMatch?.id,
           matchConfidence: discovery.matchConfidence,

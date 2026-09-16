@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { isGoogleWorkspaceConfigured, runFullScan } from "./google-workspace";
+import {
+  isGoogleWorkspaceConfigured,
+  runFullScan,
+  type ScanDiscovery,
+} from "./google-workspace";
 import {
   isMicrosoft365Configured,
   runMicrosoft365Scan,
@@ -11,6 +15,11 @@ import {
   runCrowdStrikeScan,
 } from "./crowdstrike";
 import { findMatchingGovernedSystem } from "./governed-system-match";
+import {
+  dismissedDomainKey,
+  initialDiscoveryObservation,
+  mergeDiscoveryObservation,
+} from "./discovery-merge";
 
 export type ShadowAIScanProvider =
   | "google_workspace"
@@ -83,11 +92,57 @@ export async function executeScan(
 
     let newToolsAdded = 0;
     let updatedTools = 0;
+    const scannedAt = new Date();
+
+    /**
+     * Fold this scan's observation into an existing row. userEmails/scopes
+     * are replaced with what this scan saw; first/last seen widen; userCount
+     * follows the same-source-replaces / cross-source-max rule. Only a short
+     * line is appended to notes, and only when the count actually moved, so
+     * daily rescans do not grow notes unboundedly.
+     */
+    const observationUpdate = (
+      discovery: ScanDiscovery,
+      existing: {
+        detectionSource: string;
+        userCount: number;
+        firstSeenAt: Date | null;
+        lastSeenAt: Date | null;
+        notes: string | null;
+      }
+    ) => {
+      const merged = mergeDiscoveryObservation(existing, {
+        detectionSource: provider,
+        userCount: discovery.userCount,
+        userEmails: discovery.userEmails,
+        scopes: discovery.scopes,
+        firstSeenAt: discovery.firstSeenAt,
+        lastSeenAt: discovery.lastSeenAt,
+        observedAt: scannedAt,
+      });
+      const data: Prisma.DiscoveredAIToolUpdateInput = {
+        userCount: merged.userCount,
+        userEmails: merged.userEmails,
+        scopes: merged.scopes,
+        firstSeenAt: merged.firstSeenAt,
+        lastSeenAt: merged.lastSeenAt,
+      };
+      if (merged.userCountChanged) {
+        const line = `Rescan (${provider}): ${discovery.userCount} user(s) observed.`;
+        data.notes = existing.notes ? `${existing.notes}\n${line}` : line;
+      }
+      return data;
+    };
 
     for (const discovery of result.discoveries) {
       // Skip if this tool was previously dismissed from the low-confidence queue
       const dismissed = await prisma.dismissedCandidate.findUnique({
-        where: { toolName_detectedDomain: { toolName: discovery.toolName, detectedDomain: discovery.domain ?? "" } },
+        where: {
+          toolName_detectedDomain: {
+            toolName: discovery.toolName,
+            detectedDomain: dismissedDomainKey(discovery.domain),
+          },
+        },
       });
       if (dismissed) continue;
 
@@ -100,14 +155,10 @@ export async function executeScan(
       });
 
       if (existing) {
-        // Update user count if higher, and backfill confidence if missing
-        const updates: Record<string, unknown> = {};
-        if (discovery.userCount > existing.userCount) {
-          updates.userCount = discovery.userCount;
-          updates.notes = existing.notes
-            ? `${existing.notes}\nUpdated by scan: ${discovery.userCount} users detected.${discovery.notes ? ` ${discovery.notes}` : ""}`
-            : `Scan detected ${discovery.userCount} users.${discovery.notes ? ` ${discovery.notes}` : ""}`;
-        }
+        // Always refresh the observation columns (emails, scopes, seen window,
+        // count) — lastSeenAt must advance on every scan even when nothing
+        // else changed — and backfill confidence if missing.
+        const updates = observationUpdate(discovery, existing);
         if (!existing.matchConfidence && discovery.matchConfidence) {
           updates.matchConfidence = discovery.matchConfidence;
           updates.matchScore = discovery.matchScore ?? null;
@@ -119,13 +170,11 @@ export async function executeScan(
           updates.externalAppId = discovery.externalAppId;
           updates.externalAppProvider = discovery.externalAppProvider ?? null;
         }
-        if (Object.keys(updates).length > 0) {
-          await prisma.discoveredAITool.update({
-            where: { id: existing.id },
-            data: updates,
-          });
-          updatedTools++;
-        }
+        await prisma.discoveredAITool.update({
+          where: { id: existing.id },
+          data: updates,
+        });
+        updatedTools++;
       } else {
         // If this discovery already corresponds to a governed AISystem, link
         // and suppress it rather than surfacing as new shadow AI.
@@ -144,6 +193,16 @@ export async function executeScan(
                 ? `Auto-discovered via CrowdStrike endpoint scan. Detected on ${discovery.userCount} managed endpoint(s).${discovery.notes ? ` ${discovery.notes}` : ""}`
                 : `Auto-discovered via Microsoft 365 scan. ${discovery.userCount} user(s) have delegated access to this tool.${discovery.notes ? ` ${discovery.notes}` : ""}`;
 
+        const initial = initialDiscoveryObservation({
+          detectionSource: provider,
+          userCount: discovery.userCount,
+          userEmails: discovery.userEmails,
+          scopes: discovery.scopes,
+          firstSeenAt: discovery.firstSeenAt,
+          lastSeenAt: discovery.lastSeenAt,
+          observedAt: scannedAt,
+        });
+
         let tool;
         try {
           tool = await prisma.discoveredAITool.create({
@@ -152,7 +211,11 @@ export async function executeScan(
               vendor: discovery.vendor,
               detectedDomain: discovery.domain,
               detectionSource: provider,
-              userCount: discovery.userCount,
+              userCount: initial.userCount,
+              userEmails: initial.userEmails,
+              scopes: initial.scopes,
+              firstSeenAt: initial.firstSeenAt,
+              lastSeenAt: initial.lastSeenAt,
               status: governedMatch ? "REGISTERED" : "DISCOVERED",
               linkedSystemId: governedMatch?.id,
               matchConfidence: discovery.matchConfidence ?? null,
@@ -180,13 +243,11 @@ export async function executeScan(
               },
             });
             if (raced) {
-              if (discovery.userCount > raced.userCount) {
-                await prisma.discoveredAITool.update({
-                  where: { id: raced.id },
-                  data: { userCount: discovery.userCount },
-                });
-                updatedTools++;
-              }
+              await prisma.discoveredAITool.update({
+                where: { id: raced.id },
+                data: observationUpdate(discovery, raced),
+              });
+              updatedTools++;
               continue;
             }
           }

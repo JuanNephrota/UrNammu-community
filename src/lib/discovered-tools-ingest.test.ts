@@ -1,7 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeDomain, parseEntriesFromCsv } from "./discovered-tools-ingest";
+import { normalizeDomain, parseEntriesFromCsv, parseLogTimestamp } from "./discovered-tools-ingest";
 import { matchDomain } from "./ai-tools-registry";
+
+test("parseEntriesFromCsv captures a timestamp column when the export has one", () => {
+  const entries = parseEntriesFromCsv(
+    "timestamp,domain,user\n2026-09-01T10:00:00Z,chat.openai.com,alice@example.com\n2026-09-03T08:30:00Z,chat.openai.com,bob@example.com",
+    "dns_proxy"
+  );
+
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].timestamp, "2026-09-01T10:00:00Z");
+  assert.equal(entries[1].timestamp, "2026-09-03T08:30:00Z");
+  assert.equal(entries[0].user, "alice@example.com");
+});
+
+test("parseEntriesFromCsv omits the timestamp key when no time column exists", () => {
+  const entries = parseEntriesFromCsv("domain,user\nclaude.ai,ops@example.com", "dns_proxy");
+  assert.equal(entries.length, 1);
+  assert.equal("timestamp" in entries[0], false);
+});
+
+test("parseLogTimestamp handles ISO strings, epoch seconds/millis and junk", () => {
+  assert.equal(parseLogTimestamp("2026-09-01T10:00:00Z")?.toISOString(), "2026-09-01T10:00:00.000Z");
+  assert.equal(parseLogTimestamp("1756720800")?.toISOString(), "2025-09-01T10:00:00.000Z");
+  assert.equal(parseLogTimestamp("1756720800000")?.toISOString(), "2025-09-01T10:00:00.000Z");
+  assert.equal(parseLogTimestamp(""), null);
+  assert.equal(parseLogTimestamp(undefined), null);
+  assert.equal(parseLogTimestamp("not a time"), null);
+});
 
 test("parseEntriesFromCsv uses generic headers for dns proxy imports", () => {
   const entries = parseEntriesFromCsv(

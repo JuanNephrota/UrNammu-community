@@ -8,6 +8,7 @@ import {
   str,
   bool,
 } from "./otlp-shared";
+import { metricDedupeKey, spanDedupeKey } from "./otel-dedupe";
 
 // ─── Cursor telemetry (OTLP traces + derived metrics) ────
 //
@@ -95,6 +96,9 @@ const PROMPT_TEXT_KEYS = ["gen_ai.prompt", "prompt"] as const;
 const PROMPT_SUBMIT_EVENTS = new Set(["beforeSubmitPrompt", "submitPrompt"]);
 
 export interface FlattenedSpan {
+  // Idempotency key — derived from traceId+spanId when both are present,
+  // otherwise a content hash of the stripped span. See ./otel-dedupe.ts.
+  dedupeKey: string;
   timestamp: Date;
   traceId: string | null;
   spanId: string | null;
@@ -175,13 +179,29 @@ export function flattenOtlpSpans(
           }
         }
         for (const k of SENSITIVE_SPAN_KEYS) delete merged[k];
+        const timestamp = nanoToDate(sp.startTimeUnixNano, now);
+        const traceId = str(sp.traceId) ?? str(merged["langsmith.trace.id"]);
+        const spanId = str(sp.spanId) ?? str(merged["langsmith.span.id"]);
+        const parentSpanId =
+          str(sp.parentSpanId) ?? str(merged["langsmith.span.parent_id"]);
+        const spanName = sp.name ?? "unknown";
         rows.push({
-          timestamp: nanoToDate(sp.startTimeUnixNano, now),
-          traceId: str(sp.traceId) ?? str(merged["langsmith.trace.id"]),
-          spanId: str(sp.spanId) ?? str(merged["langsmith.span.id"]),
-          parentSpanId:
-            str(sp.parentSpanId) ?? str(merged["langsmith.span.parent_id"]),
-          spanName: sp.name ?? "unknown",
+          dedupeKey: spanDedupeKey({
+            traceId,
+            spanId,
+            startTimeUnixNano: sp.startTimeUnixNano,
+            endTimeUnixNano: sp.endTimeUnixNano,
+            timestamp,
+            spanName,
+            parentSpanId,
+            statusCode: sp.status?.code,
+            attributes: merged,
+          }),
+          timestamp,
+          traceId,
+          spanId,
+          parentSpanId,
+          spanName,
           spanKind: str(merged["langsmith.span.kind"]),
           hookEvent,
           sessionId: str(merged["langsmith.trace.session_id"]),
@@ -256,6 +276,8 @@ export type OtlpCursorMetricsPayload = z.infer<
 >;
 
 export interface FlattenedCursorMetric {
+  // Content hash of the data point (same composition as Claude Code metrics).
+  dedupeKey: string;
   timestamp: Date;
   serviceName: string | null;
   sessionId: string | null;
@@ -303,8 +325,18 @@ export function flattenCursorMetrics(
             ...resourceAttrs,
             ...attributesToMap(dp.attributes),
           };
+          const timestamp = nanoToDate(dp.timeUnixNano, now);
+          const unit = m.unit ?? null;
           rows.push({
-            timestamp: nanoToDate(dp.timeUnixNano, now),
+            dedupeKey: metricDedupeKey({
+              timeUnixNano: dp.timeUnixNano,
+              timestamp,
+              metricName: m.name,
+              value,
+              unit,
+              attributes: merged,
+            }),
+            timestamp,
             serviceName: str(merged["service.name"]),
             sessionId: str(merged["langsmith.trace.session_id"]),
             userId: str(merged["user.id"]),
@@ -312,7 +344,7 @@ export function flattenCursorMetrics(
             appVersion: str(merged["langsmith.metadata.cursor_version"]),
             metricName: m.name,
             value,
-            unit: m.unit ?? null,
+            unit,
             // spanmetrics emits the span name under `span.name`.
             spanName: str(merged["span.name"] ?? merged["operation"]),
             spanKind: str(merged["langsmith.span.kind"] ?? merged["span.kind"]),

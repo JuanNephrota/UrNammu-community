@@ -289,6 +289,8 @@ export async function runHexnodeScan(): Promise<FullScanResult> {
         domain: entry.domain,
         userEmails: Array.from(entry.users),
         userCount,
+        // Hexnode's app inventory carries no per-install timestamps; the
+        // executor falls back to the scan time for first/last seen.
         matchConfidence: entry.matchConfidence,
         matchScore: entry.matchScore,
         matchReasons: entry.matchReasons,

@@ -1,5 +1,13 @@
 import { Readable } from "stream";
-import { calculateCost } from "./pricing";
+import {
+  accountTokens,
+  calculateCost,
+  EMPTY_USAGE,
+  mergeAnthropicStreamUsage,
+  mergeOpenAIStreamUsage,
+  usageMetadata,
+  type TokenUsage,
+} from "./pricing";
 import { logUsage } from "./db";
 import { scanResponseForSensitiveInfo } from "./sensitive-detect";
 import {
@@ -27,11 +35,14 @@ interface StreamContext {
   declaredServers?: DeclaredMcpServer[];
   /** Passthrough summary, so streaming rows carry the same mcp metadata as non-streaming. */
   mcp?: { servers: number; forwardedHeaders: string[] } | null;
+  /** OpenAI only: true when the proxy added `stream_options.include_usage` itself. */
+  usageInjected?: boolean;
 }
 
 /**
- * Parse an Anthropic SSE stream to extract usage from
- * message_start (input_tokens) and message_delta (output_tokens) events.
+ * Parse an Anthropic SSE stream to extract usage from message_start (input,
+ * cache_read, cache_creation tokens) and message_delta (output tokens) events.
+ * Token accounting convention: see ./pricing.ts.
  */
 export async function extractAnthropicStreamUsage(
   stream: Readable,
@@ -39,8 +50,7 @@ export async function extractAnthropicStreamUsage(
 ): Promise<void> {
   try {
     let buffer = "";
-    let inputTokens = 0;
-    let outputTokens = 0;
+    let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
 
@@ -61,12 +71,7 @@ export async function extractAnthropicStreamUsage(
           const toolUse = extractAnthropicStreamToolUse(event);
           if (toolUse) toolUses.push(toolUse);
 
-          if (event.type === "message_start" && event.message?.usage) {
-            inputTokens = event.message.usage.input_tokens ?? 0;
-          }
-          if (event.type === "message_delta" && event.usage) {
-            outputTokens = event.usage.output_tokens ?? 0;
-          }
+          usage = mergeAnthropicStreamUsage(usage, event);
           if (
             event.type === "content_block_delta" &&
             event.delta?.type === "text_delta" &&
@@ -91,18 +96,20 @@ export async function extractAnthropicStreamUsage(
           })
         : null;
 
-    const totalTokens = inputTokens + outputTokens;
-    if (totalTokens > 0) {
-      const cost = calculateCost("claude", ctx.model, inputTokens, outputTokens);
+    const accounted = accountTokens(usage);
+    if (accounted.totalTokens > 0) {
+      const pricing = calculateCost("anthropic", ctx.model, usage);
       await logUsage({
         provider: "claude",
         model: ctx.model,
         department: ctx.department,
         userEmail: ctx.userEmail,
-        promptTokens: inputTokens,
-        completionTokens: outputTokens,
-        totalTokens,
-        cost,
+        promptTokens: accounted.promptTokens,
+        completionTokens: accounted.completionTokens,
+        totalTokens: accounted.totalTokens,
+        cacheReadTokens: accounted.cacheReadTokens,
+        cacheCreationTokens: accounted.cacheCreationTokens,
+        cost: pricing.cost ?? 0,
         flagged: !!dlp?.flagged,
         flagCategory: dlp?.flagged ? "sensitive_response" : null,
         flagReason: dlp?.flagged ? dlp.summary : null,
@@ -112,6 +119,7 @@ export async function extractAnthropicStreamUsage(
           streaming: true,
           aiSystemId: ctx.aiSystemId,
           agentId: ctx.agent?.id ?? null,
+          ...usageMetadata(usage, pricing),
           mcp:
             ctx.mcp || (ctx.declaredServers?.length ?? 0) > 0 || toolUses.length > 0
               ? { ...(ctx.mcp ?? {}), ...summarizeMcpForMetadata(ctx.declaredServers ?? [], toolUses) }
@@ -138,8 +146,10 @@ export async function extractAnthropicStreamUsage(
 
 /**
  * Parse an OpenAI SSE stream to extract usage from the final chunk.
- * OpenAI includes usage in the last `data:` event when `stream_options.include_usage` is set,
- * or we count from `choices[].delta.content` length as a fallback.
+ * OpenAI only includes usage (prompt, completion, cached tokens) in the last
+ * `data:` event when `stream_options.include_usage` is set — the function
+ * injects that option when the client omits it (see openai-proxy.ts). With
+ * no usage chunk nothing is logged.
  */
 export async function extractOpenAIStreamUsage(
   stream: Readable,
@@ -147,8 +157,7 @@ export async function extractOpenAIStreamUsage(
 ): Promise<void> {
   try {
     let buffer = "";
-    let inputTokens = 0;
-    let outputTokens = 0;
+    let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
 
@@ -166,10 +175,7 @@ export async function extractOpenAIStreamUsage(
         try {
           const event = JSON.parse(data);
           toolUses.push(...extractOpenAIStreamToolUses(event));
-          if (event.usage) {
-            inputTokens = event.usage.prompt_tokens ?? 0;
-            outputTokens = event.usage.completion_tokens ?? 0;
-          }
+          usage = mergeOpenAIStreamUsage(usage, event);
           const delta = event.choices?.[0]?.delta?.content;
           if (typeof delta === "string") responseTextParts.push(delta);
         } catch {
@@ -189,18 +195,20 @@ export async function extractOpenAIStreamUsage(
           })
         : null;
 
-    const totalTokens = inputTokens + outputTokens;
-    if (totalTokens > 0) {
-      const cost = calculateCost("chatgpt", ctx.model, inputTokens, outputTokens);
+    const accounted = accountTokens(usage);
+    if (accounted.totalTokens > 0) {
+      const pricing = calculateCost("openai", ctx.model, usage);
       await logUsage({
         provider: "chatgpt",
         model: ctx.model,
         department: ctx.department,
         userEmail: ctx.userEmail,
-        promptTokens: inputTokens,
-        completionTokens: outputTokens,
-        totalTokens,
-        cost,
+        promptTokens: accounted.promptTokens,
+        completionTokens: accounted.completionTokens,
+        totalTokens: accounted.totalTokens,
+        cacheReadTokens: accounted.cacheReadTokens,
+        cacheCreationTokens: accounted.cacheCreationTokens,
+        cost: pricing.cost ?? 0,
         flagged: !!dlp?.flagged,
         flagCategory: dlp?.flagged ? "sensitive_response" : null,
         flagReason: dlp?.flagged ? dlp.summary : null,
@@ -208,11 +216,17 @@ export async function extractOpenAIStreamUsage(
         metadata: {
           latencyMs: ctx.latencyMs,
           streaming: true,
+          usageInjected: ctx.usageInjected ?? false,
           aiSystemId: ctx.aiSystemId,
           agentId: ctx.agent?.id ?? null,
+          ...usageMetadata(usage, pricing),
           mcp: summarizeMcpForMetadata(ctx.declaredServers ?? [], toolUses),
         },
       });
+    } else {
+      console.warn(
+        `OpenAI stream for ${ctx.model} ended without a usage chunk (requestId=${ctx.requestId ?? "n/a"}); nothing logged.`
+      );
     }
 
     await recordToolActivity({

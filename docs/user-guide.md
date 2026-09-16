@@ -585,39 +585,54 @@ Incidents track notable events (misuse, data exposure, outage). Create from the 
 ### Discovery Sources
 
 1. **Google Workspace** — scans OAuth activity for AI apps that users have connected.
-2. **Microsoft 365** — scans delegated app permissions against known AI tools.
+2. **Microsoft 365** — scans delegated app permissions against known AI tools. Resolving the granting principals to email addresses (via Graph `/users/{id}`) requires `User.Read.All` in addition to the audit/directory/application read permissions; without it, discoveries are still created but their user emails stay empty.
 3. **Hexnode UEM/MDM** — scans the app inventory of enrolled/managed devices and cross-references installed apps against known AI tools.
 4. **CrowdStrike Falcon** — endpoint discovery for AI tools observed running on Falcon-protected hosts.
-5. **DNS / proxy logs** — CSV upload or JSON API ingestion of network-observed AI domains.
+5. **DNS / proxy logs** — CSV upload of native gateway exports (with vendor presets) or JSON API ingestion of network-observed AI domains.
 6. **Netskope** — real-time log-shipper ingestion of Netskope event JSON (no manual upload needed).
 
 The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and can only be caught by device inventory or network logs — the sources are complementary, not redundant.
 
 Discovered entries are deduplicated by `toolName + domain`. Each finding becomes a `DiscoveredAITool` record.
 
+**Observation details.** Every record stores what the scans observed — `userEmails`, OAuth `scopes`, `firstSeenAt`, and `lastSeenAt` — as queryable fields (they used to live only in the notes text). The Shadow AI page shows first/last seen, a chip per user email, and the granted scopes under each tool. The user count follows one rule: a rescan from the **same** detection source replaces the count (so it can go down when access is revoked or devices retire), while a **different** source only raises it — two partial views combine as a maximum. Only values that look like email addresses land in `userEmails`; device names or bare usernames from network logs still count toward `userCount`.
+
 ### Running a Scan
 
-- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/4)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `success` / `failed`). Sources that aren't configured are skipped.
+- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/4)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `completed` / `failed`). Sources that aren't configured are skipped.
 - **Automatic**: configured in Settings → Shadow AI per source. A cron job at `/api/scheduler/maintenance` triggers scans on each source's configured interval (default 24 hours).
 
 ### Importing DNS / Proxy Logs
 
-Two routes to `POST /api/discovered-tools/ingest`:
+The importer takes raw DNS or web-proxy log exports — you do not pre-classify tools; UrNammu matches the observed hostnames against its AI tools registry (plus AI-keyword heuristics for low-confidence candidates).
 
-- **CSV upload** — file with columns `tool_name, vendor, detected_domain, department, user_count`.
-- **JSON body**:
+**CSV / TXT upload** — **Shadow AI → Import CSV** (or `POST /api/discovered-tools/import` as multipart `file` + `source`). Pick the export's vendor so the right column names are recognized: `umbrella` (Cisco Umbrella), `cloudflare_gateway`, `zscaler`, `netskope`, `prisma_access`, `dnsfilter`, `nextdns`, or the generic `dns_proxy` / `firewall` / `siem` / `other`. The header row is matched case-insensitively against each preset's aliases; the generic preset understands:
+
+| Field | Header aliases (generic preset) |
+|-------|-------------------------------|
+| domain (required) | `domain`, `host`, `hostname`, `destination`, `destination fqdn`, `url`, `query`, `fqdn` |
+| user | `user`, `email`, `username`, `source_user`, `identity`, `user email` |
+| device (fallback identity) | `device name`, `device`, `computername`, `computer name`, `client name`, `host name` |
+| department | `department`, `dept`, `group`, `team`, `organizational unit` |
+| count | `count`, `hits`, `requests`, `queries`, `repeatcnt` |
+| timestamp | `timestamp`, `@timestamp`, `time`, `date`, `datetime`, `event time`, `start time`, `receive time`, `last seen`, `first seen` |
+
+Vendor presets add that product's own names (for example Umbrella's `most granular identity`, Zscaler's `destination host`, Prisma Access's `srcuser` / `repeatcnt`). URLs are reduced to a bare lowercase hostname before matching. A file with no header row is treated as one domain per line. Timestamps may be ISO 8601 or epoch seconds/milliseconds and drive each tool's **first seen / last seen**; without a timestamp column the import time is used.
+
+**JSON body** — `POST /api/discovered-tools/ingest`:
   ```json
   {
-    "source": "corp-proxy",
+    "source": "zscaler",
     "entries": [
-      { "toolName": "Perplexity", "vendor": "Perplexity AI", "detectedDomain": "perplexity.ai", "department": "Marketing", "userCount": 12 }
+      { "domain": "perplexity.ai", "user": "jane@example.com", "department": "Marketing", "count": 12, "timestamp": "2026-09-15T14:02:11Z" }
     ]
   }
   ```
+  Or the shorthand `{ "domains": ["perplexity.ai", "api.openai.com"] }` when you only have hostnames.
 
 Each ingestion run is recorded as an `IngestionRun` with processed / matched / new / updated counts.
 
-**Netskope log shipper.** Instead of manual CSV uploads, a Netskope tenant can stream events straight in by POSTing native Netskope event JSON (page / application / alert events) to `/api/discovered-tools/ingest/netskope`. The endpoint is secured with the shared proxy secret as a Bearer token and auto-extracts domain, user, department, and hit count from the Netskope event fields. Configure the webhook in **Settings → Shadow AI → Netskope**.
+**Netskope log shipper.** Instead of manual CSV uploads, a Netskope tenant can stream events straight in by POSTing native Netskope event JSON (page / application / alert events) to `/api/discovered-tools/ingest/netskope`. The endpoint is secured with the shared proxy secret as a Bearer token and auto-extracts domain, user, department, hit count, and the event `timestamp` (epoch seconds or ISO) from the Netskope event fields. Configure the webhook in **Settings → Shadow AI → Netskope**.
 
 ### Automatic Suppression of Governed Tools
 
@@ -723,7 +738,7 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 
 ### How Provider Sync Works
 
-With Anthropic or OpenAI admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings, the `/api/scheduler/maintenance` cron pulls oversight data on the configured sync interval and normalizes it into:
+With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys in Settings → Integrations, the `/api/scheduler/maintenance` cron pulls oversight data on the configured sync interval and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys.
@@ -732,7 +747,18 @@ With Anthropic or OpenAI admin keys configured in Settings → Provider Admin AP
 
 Each provider is gated on its own credentials. **If a provider's admin key (or billing-export config, for Gemini) is not set, that provider is skipped** — no `ProviderSyncRun` row is created and no upstream API call is made. The manual-sync panel surfaces this explicitly as "Skipped (not configured): …" so it is clear which providers are active and which are simply not configured yet.
 
+What each sync contributes:
+
+- **Anthropic Admin API** — organization usage and cost per model and API key, plus the **Claude Code analytics** feed (per-developer sessions, lines, commits, estimated cost) used by Usage by Person when a machine has no OTel data.
+- **OpenAI Admin API** — usage per model / project with prompt-cache hits recorded as `cacheReadTokens` (OpenAI's `input_cached_tokens`), request counts (`num_model_requests`), and cost. Both the usage and cost endpoints are paginated; the sync follows the cursor up to a page cap and records `truncated: true` in the sync-run metadata if the cap was hit.
+- **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. Cursor's OTel hook does not carry tokens or cost; this sync is where they come from.
+- **Portkey** — one `UsageBucket` + `CostBucket` per day per model, and one `UsageBucket` per day per user (dimension key `partition=actor`). Portkey reports cost in cents; the sync converts to USD and stores a `reconciliation` block (graph total vs. summed per-model and per-user totals) in the sync-run metadata so the unit assumption can be checked against the Portkey console.
+- **Helicone, OpenRouter, LiteLLM** — gateway request and cost records normalized into the same buckets.
+- **Gemini / Vertex AI** — spend and best-effort project attribution from the BigQuery billing export.
+
 **Proxy traffic appears immediately.** Requests routed through the Anthropic or OpenAI proxy (Vercel fallback or Azure Functions) upsert hourly `UsageBucket` / `CostBucket` rows in real time, linked to a synthetic `ProviderSyncRun` with `syncType = "proxy_live"`. You do not need to wait for the admin-API sync interval to see proxy usage on the Oversight dashboard, spend budgets, or per-system Telemetry tab — it shows up on the next page refresh.
+
+**Proxy token accounting.** All four proxy paths (Vercel Anthropic, Vercel OpenAI, Azure Anthropic, Azure OpenAI) record prompt-cache tokens with one convention: `inputTokens` / `promptTokens` is **all** input (uncached + cache read + cache creation) and `cacheReadTokens` / `cacheCreationTokens` are the breakdown. Cost = uncached × input price + cache read × cache-read price + cache creation × cache-write price + output × output price, from a single pricing table (exact model id first, then model family). A model missing from the table is **not** charged a default: cost is stored as `0` and the usage row's metadata carries `pricingMatched: false`, so an unpriced model shows up as a $0 row you can spot rather than a wrong number. OpenAI **streaming** calls through the proxy now record usage and run response DLP (the proxy requests OpenAI's trailing usage chunk when the client did not ask for it, and strips it again before it reaches the client). Proxy rows also carry the provider `requestId` and the attributed `aiSystemId`, which session traces join on. Anthropic `/v1/messages/count_tokens` and `/v1/messages/batches` pass through without producing usage rows.
 
 If traffic also flows through the built-in OpenAI or Anthropic proxy, Oversight can attach prompt-risk findings to recent activity and alerts using redacted excerpts and category labels.
 
@@ -934,7 +960,7 @@ Two caveats worth knowing before you use durations as evidence:
 
 ### Cursor Oversight
 
-**Governance → Cursor** shows Cursor telemetry from the Cursor OTel hook (spans + metrics), plus spend and "lines produced" data from the **Cursor Admin API** when configured. It shows:
+**Governance → Cursor** shows Cursor telemetry from the Cursor OTel hook (spans + metrics), plus tokens, requests, spend, and "lines produced" data from the **Cursor Admin API** when configured. The OTel hook itself carries no token or cost data, so without the Admin API sync this page is activity-only. It shows:
 
 - Stat cards: live spans (60m), active sessions/users (7d), tool calls, risk flags, and spend (7d).
 - Top tools, activity by hook event, and most-active users (clickable to filter).
@@ -1265,10 +1291,19 @@ The dedicated **Integrations** settings area (also surfaced as the top-level **I
 1. In the OpenAI dashboard → Organization → Admin Keys, create a key.
 2. Paste it into **Settings → Provider Admin APIs → OpenAI** and enable sync.
 
+The sync records cached input tokens and request counts per model, and pages through the usage and cost endpoints (a hit page cap is flagged as `truncated` in the sync-run metadata).
+
+### Cursor Admin API Key
+
+1. In the Cursor dashboard, create a **team admin** API key (user-level keys return 401).
+2. Paste it into **Settings → Provider Admin APIs → Cursor** and enable sync.
+
+Provides per-user tokens, requests, accepted lines, and charged spend for the Cursor dashboard and Usage by Person — the Cursor OTel hook carries none of these.
+
 ### DNS / Proxy Ingestion
 
-- **CSV**: upload via **Settings → Shadow AI → DNS / proxy import**, or `POST` the file to `/api/discovered-tools/ingest`.
-- **JSON**: `POST /api/discovered-tools/ingest` with the body shape shown in [section 9](#9-shadow-ai-discovery).
+- **CSV**: upload a native gateway export via **Shadow AI → Import CSV** (choose the vendor preset), or `POST` it as multipart `file` + `source` to `/api/discovered-tools/import`.
+- **JSON**: `POST /api/discovered-tools/ingest` with `entries` (`domain`, optional `user`, `department`, `count`, `timestamp`) or a bare `domains` list — see [section 9](#9-shadow-ai-discovery).
 
 ### Hexnode UEM/MDM (shadow AI discovery)
 
@@ -1280,11 +1315,11 @@ Hexnode MDM scripts can also be used to roll out the Claude Code / Cursor OTel h
 
 ### Netskope (shadow AI discovery)
 
-- Point a Netskope log-shipper / webhook at `/api/discovered-tools/ingest/netskope`, authenticated with the proxy secret as a Bearer token. UrNammu parses native Netskope page/application/alert event JSON and creates discoveries automatically.
+- Point a Netskope log-shipper / webhook at `/api/discovered-tools/ingest/netskope`, authenticated with the proxy secret as a Bearer token. UrNammu parses native Netskope page/application/alert event JSON (domain, user, department, count, and the event `timestamp` for first/last seen) and creates discoveries automatically.
 
 ### AI Gateways (Helicone, OpenRouter, Portkey, LiteLLM)
 
-- In **Settings → Integrations**, add the relevant API key (and base URL for LiteLLM), enable, and **Test Connection**. Activity/cost is normalized into Oversight alongside direct-provider telemetry.
+- In **Settings → Integrations**, add the relevant API key (and base URL for LiteLLM) and **Test Connection**. Activity/cost is normalized into Oversight alongside direct-provider telemetry. Gateways run on the single global provider sync toggle and interval (Settings → Provider Admin APIs); there are no per-gateway schedules yet. Portkey writes per-day per-model usage and cost buckets plus per-day per-user usage buckets, converting Portkey's cent-denominated costs to USD and recording a `reconciliation` block in each sync run.
 
 ### Datadog & Azure Monitor (observability)
 

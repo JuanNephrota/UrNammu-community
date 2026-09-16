@@ -15,6 +15,14 @@ type WriteParams = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * Prompt-cache breakdown. `promptTokens` already INCLUDES these (it is the
+   * total input the provider processed); they are stored separately so the
+   * dashboards can show cache hit rates. See `model-pricing.ts` for the
+   * convention.
+   */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   cost: number;
   aiSystemId?: string | null;
   at?: Date;
@@ -91,6 +99,8 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
         inputTokens: { increment: params.promptTokens },
         outputTokens: { increment: params.completionTokens },
         totalTokens: { increment: params.totalTokens },
+        cacheReadTokens: { increment: params.cacheReadTokens ?? 0 },
+        cacheCreationTokens: { increment: params.cacheCreationTokens ?? 0 },
         requestCount: { increment: 1 },
         // Ensure actor fields are populated even if the first request in
         // this hourly window was anonymous — a later identified request
@@ -113,6 +123,8 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
         inputTokens: params.promptTokens,
         outputTokens: params.completionTokens,
         totalTokens: params.totalTokens,
+        cacheReadTokens: params.cacheReadTokens ?? 0,
+        cacheCreationTokens: params.cacheCreationTokens ?? 0,
         requestCount: 1,
         syncRunId,
         aiSystemId: params.aiSystemId ?? undefined,

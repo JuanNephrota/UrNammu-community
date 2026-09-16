@@ -57,6 +57,20 @@ Vercel Postgres  (ClaudeCodeMetric)
 - **Two tokens.** `INGEST_BEARER_TOKEN` faces developers; rotate freely.
   `FORWARD_BEARER_TOKEN` is the collector-to-UrNammu server-to-server
   token; it must match UrNammu's `claude_code_telemetry_secret` setting.
+- **Idempotent ingest.** The exporters run with `retry_on_failure` +
+  `sending_queue`, so a batch whose HTTP call timed out after UrNammu had
+  already written some rows is re-sent verbatim. Every ingest route
+  (`claude-code`, `claude-code-events`, `cursor`, `cursor-traces`) derives a
+  content hash per record (`dedupeKey`, unique column — metrics: timestamp +
+  name + value + unit + sorted attributes; events: timestamp + event name +
+  session/prompt/sequence + sorted stripped attributes; spans: `traceId` +
+  `spanId`) and inserts with `skipDuplicates`, so retries are a no-op. The
+  202 body reports `accepted` (rows actually inserted) and `duplicates`
+  (rows skipped), which is the number to watch if retries look noisy. Each
+  route also rejects a body that flattens to more than 5000 rows with 413
+  (`TELEMETRY_MAX_ROWS` to override) — the collector's batch processor
+  flushes at 1000, so a 413 means something other than the collector is
+  posting.
 
 ## Deploy
 

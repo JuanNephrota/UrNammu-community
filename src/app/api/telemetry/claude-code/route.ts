@@ -8,9 +8,13 @@ import {
 } from "@/lib/validations/claude-code-telemetry";
 
 // OTLP payloads can be chunky when a client reconnects and flushes a backlog.
-// Keep a ceiling to protect the DB; the Collector's batch processor is set
-// to 1000 data points per flush which fits comfortably under this.
+// The Collector's batch processor is set to 1000 data points per flush, which
+// fits comfortably under the row ceiling below.
 export const maxDuration = 60;
+
+// Ceiling on flattened rows per request, to protect the DB from a runaway or
+// hostile batch. Override with TELEMETRY_MAX_ROWS.
+const MAX_ROWS = Number(process.env.TELEMETRY_MAX_ROWS) || 5000;
 
 async function authorize(req: NextRequest): Promise<boolean> {
   const header = req.headers.get("authorization") ?? "";
@@ -53,13 +57,26 @@ export async function POST(req: NextRequest) {
   const rows = flattenOtlpMetrics(parsed.data);
   if (rows.length === 0) {
     // Benign: either non-claude_code metrics got through, or it was a heartbeat.
-    return NextResponse.json({ accepted: 0 }, { status: 202 });
+    return NextResponse.json({ accepted: 0, duplicates: 0 }, { status: 202 });
+  }
+  if (rows.length > MAX_ROWS) {
+    console.warn(
+      `[telemetry/claude-code] rejected batch of ${rows.length} rows (ceiling ${MAX_ROWS})`,
+    );
+    return NextResponse.json(
+      { error: "Payload too large", rows: rows.length, max: MAX_ROWS },
+      { status: 413 },
+    );
   }
 
-  // Prisma's createMany doesn't return rows, which is fine — we're a sink.
-  // skipDuplicates isn't meaningful here (cuid ids), left off for clarity.
-  await prisma.claudeCodeMetric.createMany({
+  // The collector retries a batch whose HTTP call timed out after a partial
+  // write, so each row carries a content-derived `dedupeKey` (unique column)
+  // and `skipDuplicates` turns the re-send into a no-op. `count` is the
+  // number actually inserted; the gap is reported as `duplicates`.
+  const { count } = await prisma.claudeCodeMetric.createMany({
+    skipDuplicates: true,
     data: rows.map((r) => ({
+      dedupeKey: r.dedupeKey,
       timestamp: r.timestamp,
       userId: r.userId,
       userEmail: r.userEmail,
@@ -83,5 +100,8 @@ export async function POST(req: NextRequest) {
     })),
   });
 
-  return NextResponse.json({ accepted: rows.length }, { status: 202 });
+  return NextResponse.json(
+    { accepted: count, duplicates: rows.length - count },
+    { status: 202 },
+  );
 }

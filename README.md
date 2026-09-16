@@ -209,6 +209,10 @@ The current admin sync route still backfills derived `APIUsageLog` rows for comp
 
 Proxy traffic writes to both surfaces. Every request through the Anthropic or OpenAI proxy (Vercel fallback or Azure Functions) synchronously creates an `APIUsageLog` row and idempotently upserts an hourly `UsageBucket` (and matching `CostBucket` when cost is known), linked to a per-hour synthetic `ProviderSyncRun` with `syncType = "proxy_live"`. This makes proxy usage visible on the main Oversight dashboard on the next page load, without waiting for the admin-sync interval.
 
+All four proxy paths account tokens the same way: `inputTokens` / `promptTokens` is all input (uncached + cache read + cache creation), with `cacheReadTokens` / `cacheCreationTokens` as the breakdown, and cost = uncached × input + cacheRead × cacheReadPrice + cacheCreation × cacheWritePrice + output × outputPrice. Prices come from one table (`src/lib/model-pricing.ts`, mirrored to `ai-proxy/src/lib/pricing.ts`) matched by exact model id, then family prefix; an unknown model is stored at cost `0` with `pricingMatched: false` in the row metadata rather than billed a default. OpenAI streaming calls record usage and run response DLP (the proxy injects `stream_options.include_usage` when the client omits it and strips the extra trailing chunk). Rows carry `requestId` and `aiSystemId` for session-trace joins; Anthropic `count_tokens` and `batches` calls pass through without usage rows.
+
+Provider sync runs on one global switch and cadence — `provider_sync_enabled` / `provider_sync_interval_hours` in **Settings > Provider Admin APIs** — covering Anthropic, OpenAI, Claude Code analytics, Cursor, Gemini, and every AI gateway. Per-provider settings are planned in [docs/plans/data-collection-tier2.md](docs/plans/data-collection-tier2.md).
+
 When traffic flows through the built-in proxy, Oversight can also raise dangerous-prompt alerts from redacted prompt-risk signals without storing full prompt bodies by default.
 
 ## Admin Integrations
@@ -296,7 +300,7 @@ Recent improvements:
 
 ### AI Gateways (Helicone, OpenRouter, Portkey, LiteLLM)
 
-Third-party LLM gateways can be connected so their activity/cost is normalized into the same `UsageBucket` / `CostBucket` pipeline as direct-provider telemetry. Configure keys (and base URL for self-hosted LiteLLM) in `Settings > Integrations`, each with its own enable toggle and connection test.
+Third-party LLM gateways can be connected so their activity/cost is normalized into the same `UsageBucket` / `CostBucket` pipeline as direct-provider telemetry. Configure keys (and base URL for self-hosted LiteLLM) in `Settings > Integrations`, each with its own connection test. Syncs run on the single global `provider_sync_enabled` / `provider_sync_interval_hours`; per-gateway schedules are planned ([Tier 2 plan](docs/plans/data-collection-tier2.md)). Portkey writes per-day per-model usage and cost buckets plus per-day per-user usage buckets, treating Portkey's cent-denominated costs as cents and recording a `reconciliation` block (graph total vs. summed grouped totals) in each sync run's metadata.
 
 ### Hexnode UEM (shadow AI device discovery)
 
@@ -304,7 +308,7 @@ Scans the app inventory of Hexnode-managed devices and cross-references installe
 
 ### Netskope (shadow AI log shipping)
 
-Accepts native Netskope event JSON (page / application / alert events) at `POST /api/discovered-tools/ingest/netskope`, authenticated with the proxy secret as a Bearer token. Domain, user, department, and hit count are extracted automatically — no CSV upload needed.
+Accepts native Netskope event JSON (page / application / alert events) at `POST /api/discovered-tools/ingest/netskope`, authenticated with the proxy secret as a Bearer token. Domain, user, department, hit count, and the event `timestamp` (for first/last seen) are extracted automatically — no CSV upload needed.
 
 ### Claude Code / Cursor OpenTelemetry
 
@@ -315,9 +319,11 @@ Claude Code and Cursor send OTLP/HTTP signals (metrics, logs, spans) from MDM-de
 
 Prompt and code text are stripped at ingest; routes run the dangerous-prompt rule engine on prompt text in memory and persist only metadata, decisions, and verdicts into `ClaudeCodeMetric` / `ClaudeCodeEvent` and `CursorMetric` / `CursorSpan`. Per-user attribution comes from OTel `user.id` / `user.email` resource attributes set by the hooks. These power the **Claude Code**, **Cowork** (local-agent surface), and **Cursor** oversight dashboards. Retention is enforced by prune crons (`CLAUDE_CODE_TELEMETRY_RETENTION_DAYS`, default 30).
 
+Ingest is idempotent: each row carries a content-hash `dedupeKey` (unique column) and inserts use `skipDuplicates`, so a collector retrying a timed-out batch is a no-op. The `202` body reports `accepted` and `duplicates`. Bodies over 5000 flattened rows (`TELEMETRY_MAX_ROWS`) are rejected with `413`.
+
 ### Cursor Admin API
 
-Adds Cursor spend (`provider="cursor"`) and per-user "lines produced" metrics to the Cursor dashboard. Requires a team-admin Cursor API key (configured in `Settings > Integrations`).
+Adds Cursor tokens, requests, spend (`provider="cursor"`), and per-user "lines produced" metrics to the Cursor dashboard and Usage by Person. The Cursor OTel hook carries no token or cost data, so this sync is the source for both. Requires a team-admin Cursor API key (configured in `Settings > Provider Admin APIs`).
 
 ### Azure Monitor (proxy health)
 
@@ -351,9 +357,9 @@ Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRE
 
 Cadence is controlled in Settings:
 
-- `Settings > Provider Admin APIs`: provider sync enable/interval
+- `Settings > Provider Admin APIs`: the single global provider sync enable/interval (covers admin APIs, Cursor, Gemini, and AI gateways)
 - `Settings > Shadow AI`: Google Workspace, Microsoft 365, and Hexnode auto-scan enable/interval
-- `Settings > Integrations`: AI gateway and Azure Monitor sync enable/interval
+- `Settings > Integrations`: AI gateway credentials and Azure Monitor sync enable/interval
 - `Settings > Reporting`: telemetry retention windows and report email delivery
 
 For Vercel deployments, [vercel.json](/Users/pmarsh/scripts/AI-gov/vercel.json) is configured to call the maintenance endpoint hourly. The route itself checks each job’s saved interval before running, so one hourly cron can safely drive multiple background jobs.
@@ -415,6 +421,8 @@ npm run db:reset
 - **Custom reporting suite**: nine data sources (including the computed Usage by Person rollup) and ten starter templates, detail/grouped output, PDF/CSV/JSON export, and scheduled email delivery via Resend.
 - **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync.
 - **Shadow AI** gained a single "Scan All Sources" action, Hexnode UEM device discovery, Netskope log-shipper ingestion, and an Unblock action for blocked tools.
+- **Shadow AI observation detail**: `DiscoveredAITool` stores `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` as queryable columns (previously notes text), shown as first/last seen, user chips, and OAuth scopes on the page. A rescan from the same source replaces the user count (it can go down); a different source keeps the max. DNS/proxy imports and the Netskope webhook read a timestamp column/field (ISO or epoch) for first/last seen; the CSV importer maps vendor-native headers via presets (Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS). Microsoft 365 scans need `User.Read.All` to resolve principals to emails. GitHub Copilot detection now keys on the hostnames its IDE extensions actually resolve.
+- **Data collection Tier 1**: cache read/creation tokens captured on every proxy path with one accounting convention and one pricing module (unknown models cost `0` with `pricingMatched: false`); OpenAI streaming usage + response DLP through the proxy; Portkey per-day per-model and per-user buckets with a cost `reconciliation` block; OpenAI sync pagination, cached-token capture, and a request-count fix (`num_model_requests`); idempotent OTel ingest via `dedupeKey`. Requires migration `20260916120000_collection_tier1`. Next tier: [docs/plans/data-collection-tier2.md](docs/plans/data-collection-tier2.md).
 - **Proxy Health** live-ops board combines Azure Monitor heartbeat metrics with real-time DB counters (usage, flagged, policy denials).
 - **Framework control catalog** (`FrameworkControl` / `ControlCrosswalk`): 96 seeded controls — 19 NIST AI RMF categories, 38 ISO/IEC 42001 Annex A controls, 19 EU AI Act articles, 20 SOC 2 criteria — with a 107-link crosswalk. Systems are assessed control by control on the Compliance tab; a `COMPLIANT` control satisfies its crosswalked peers as *Inherited*, and coverage rolls up per framework at Compliance → Framework Coverage. The previously unused `/api/ai/summarize` endpoint now powers an advisory AI gap analysis per framework.
 - **EU AI Act classification** (`EuAiActClassification`): a stepped wizard (role, Art. 5 prohibited practices, Annex I, Annex III, Art. 6(3) derogation, Art. 50 transparency, GPAI, Art. 27 FRIA) derives the tier server-side, stores the answers and rationale, pre-creates `NOT_ASSESSED` mappings for every applicable article, raises `eu_ai_act` alerts for high-risk/prohibited outcomes, hard-blocks approval for prohibited systems, and feeds an "EU AI Act Classified" board metric on the Executive dashboard.

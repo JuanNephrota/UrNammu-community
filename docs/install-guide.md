@@ -277,6 +277,7 @@ Shared secrets for the OpenTelemetry ingest routes that feed the Claude Code, Co
 | `CLAUDE_CODE_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/claude-code`. |
 | `CURSOR_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/cursor`. |
 | `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` | Retention window enforced by the prune cron. |
+| `TELEMETRY_MAX_ROWS` | Ceiling on flattened rows per ingest request (default `5000`); larger bodies get `413`. |
 
 ### 3.13 Scheduled report delivery
 
@@ -303,7 +304,7 @@ All optional; the Settings UI is the normal place to change these.
 
 | Variable | Purpose |
 |----------|---------|
-| `PROVIDER_SYNC_ENABLED`, `PROVIDER_SYNC_INTERVAL_HOURS` | Provider telemetry sync toggle and cadence. |
+| `PROVIDER_SYNC_ENABLED`, `PROVIDER_SYNC_INTERVAL_HOURS` | Provider telemetry sync toggle and cadence. One global switch covers every provider and gateway sync; per-provider schedules are planned ([Tier 2 plan](./plans/data-collection-tier2.md)). |
 | `PROVIDER_SECURITY_SCAN_ENABLED`, `PROVIDER_SECURITY_SCAN_INTERVAL_HOURS` | Provider secure-use / privacy scan toggle and cadence. |
 | `ANOMALY_RECENT_WINDOW_DAYS`, `ANOMALY_BASELINE_WINDOW_DAYS` | Comparison windows for cost / usage anomaly detection. |
 | `ANOMALY_MIN_RECENT_TOKENS`, `ANOMALY_MIN_RECENT_COST` | Floors that suppress anomaly alerts on trivial volume. |
@@ -501,6 +502,8 @@ Edit `ai-proxy/local.settings.json` for local runs, or set in Azure Function App
 | `PROXY_SECRET` | Shared secret — must match `PROXY_SECRET` in the main app. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Provider credentials the proxy uses when clients route through it. |
 
+Model prices live in `ai-proxy/src/lib/pricing.ts`, a byte-for-byte mirror of the app's `src/lib/model-pricing.ts`. When you add a model, edit both and redeploy the proxy; a model missing from the table is logged with cost `0` and `pricingMatched: false` rather than a guessed price.
+
 When proxying traffic, UrNammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default.
 
 ### 7.4 Run locally
@@ -555,6 +558,8 @@ the Anthropic proxy additionally forwards every `mcp-*` header and the client's 
 
 If you want dangerous-prompt monitoring, make sure the relevant OpenAI or Anthropic traffic is routed through this proxy or the app's built-in `/api/proxy/*` routes.
 
+**Usage accounting.** Both the Azure functions and the Vercel fallback routes record the same four token buckets: `inputTokens` / `promptTokens` is all input (uncached + cache read + cache creation) and `cacheReadTokens` / `cacheCreationTokens` are the breakdown; cost is uncached × input + cache read × cache-read + cache creation × cache-write + output × output price. OpenAI streaming calls are accounted too — the proxy adds `stream_options.include_usage` when the client did not, reads the trailing usage chunk, and strips it before it reaches the client — and response DLP runs on streamed output. Anthropic `/v1/messages/count_tokens` and `/v1/messages/batches` pass through without usage rows. Every row stores the provider `requestId` and the attributed `aiSystemId` so session traces can join on them.
+
 ---
 
 ## 8. Integration Setup
@@ -600,6 +605,7 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
    - `AuditLog.Read.All`
    - `Directory.Read.All`
    - `Application.Read.All`
+   - `User.Read.All` — resolves the principals who granted each app to email addresses (Graph `/users/{id}`). Without it the scan still finds tools but their user emails stay empty.
 3. **Grant admin consent** for the tenant.
 4. **Certificates & secrets** → create a client secret.
 5. **Settings → Shadow AI → Microsoft 365**: paste tenant ID, client ID, secret; enable auto-scan; set interval.
@@ -616,6 +622,13 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 1. [OpenAI Platform](https://platform.openai.com/) → your org → Admin Keys → create one.
 2. **Settings → Provider Admin APIs → OpenAI**: paste the admin key; enable sync; set interval.
 3. **Test Connection**.
+
+### 8.6a Cursor Admin API (telemetry)
+
+1. In the Cursor dashboard, create a **team admin** API key — user-level keys return `401`.
+2. Paste it into **Settings → Provider Admin APIs → Cursor** and enable sync.
+
+Supplies per-user, per-day tokens, requests, accepted lines, and charged spend to the Cursor dashboard and Usage by Person.
 
 ### 8.7 Google Gemini / Vertex AI oversight
 
@@ -637,7 +650,7 @@ This integration currently provides normalized spend oversight and best-effort a
 
 No setup beyond the main app; ingest at any time via:
 
-- **Settings → Shadow AI → DNS/Proxy import** — upload a CSV.
+- **Shadow AI → Import CSV** — upload a native DNS / web-proxy export and pick its vendor preset (Cisco Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS, or generic). The importer maps that vendor's domain, user, department, count, and timestamp columns; timestamps (ISO or epoch) set each tool's first/last seen.
 - `POST /api/discovered-tools/ingest` with a JSON body (format in the [User Guide §9](./user-guide.md#9-shadow-ai-discovery)).
 
 ### 8.9 AI provider for in-app features
@@ -671,13 +684,13 @@ A dedicated import path for Netskope's cloud log shipper, separate from generic 
 - Configure in **Settings → Shadow AI → Netskope**.
 - Or post directly to `POST /api/discovered-tools/ingest/netskope`.
 
-Hostnames are normalized before matching, so casing and trailing-dot variants will not create duplicate tools.
+Hostnames are normalized before matching, so casing and trailing-dot variants will not create duplicate tools. The event `timestamp` (epoch seconds, or ISO) is read for each tool's first/last seen.
 
 ### 8.13 AI gateways (telemetry without re-routing)
 
 If your traffic already flows through a gateway, UrNammu can read its records instead of sitting in the request path. Supported: **OpenRouter**, **Helicone**, **Portkey**, **LiteLLM**.
 
-Add credentials per gateway in **Settings → Provider Admin APIs** (or via the env vars in §3.11), then confirm the tile reads as connected on the **Integrations** page.
+Add credentials per gateway in **Settings → Integrations** (or via the env vars in §3.11), then confirm the tile reads as connected on the **Integrations** page. Gateways run on the global `provider_sync_enabled` / `provider_sync_interval_hours` (Settings → Provider Admin APIs); there are no per-gateway schedules yet.
 
 ### 8.14 Shadow-AI block enforcement
 
@@ -704,7 +717,9 @@ These dashboards are fed by an OpenTelemetry pipeline posting to UrNammu, not by
 2. Configure your OTel collector to forward to `POST /api/telemetry/claude-code` or `POST /api/telemetry/cursor` with that secret as a Bearer token.
 3. Set `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` and make sure the prune crons from §9.2 are scheduled.
 
-All of this is metadata only — no prompt text and no code content is transmitted or stored. Note that the Cursor hook carries no token or cost data, so its dashboard shows activity metrics only.
+All of this is metadata only — no prompt text and no code content is transmitted or stored. Note that the Cursor OTel hook carries no token or cost data; Cursor tokens and spend come from the Cursor Admin API sync (§8.6a), without which the Cursor dashboard shows activity metrics only.
+
+Ingest is idempotent. Each row is stored with a content-hash `dedupeKey`, so a collector that retries a timed-out batch (the shipped config uses `retry_on_failure` + `sending_queue`) does not double-write; the `202` response reports `accepted` (rows inserted) and `duplicates` (rows skipped). Bodies that flatten to more than 5000 rows are rejected with `413` — raise `TELEMETRY_MAX_ROWS` only if you have deliberately increased the collector's batch size (default flush is 1000).
 
 ### 8.16 Scheduled report email (Resend)
 
@@ -811,6 +826,8 @@ git pull
 npm install          # re-runs prisma generate
 npm run db:migrate   # applies any new migrations
 ```
+
+Merging or deploying a release does **not** migrate the database — run `npx prisma migrate deploy` against production yourself after each deploy that ships a migration. The data-collection Tier 1 release adds `20260916120000_collection_tier1`, which adds the `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` columns to `DiscoveredAITool` and a unique `dedupeKey` column to `ClaudeCodeMetric`, `ClaudeCodeEvent`, `CursorMetric`, and `CursorSpan`. Until it is applied, Shadow AI scans and OTel ingest will fail on the missing columns. Redeploy the Azure proxy in the same release so its pricing table matches the app's.
 
 ### 10.2 Major version upgrades
 

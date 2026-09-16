@@ -31,6 +31,8 @@ type NetskopeEvent = {
   organization_unit?: string;
   // Hit count for this event record
   count?: number;
+  // Event time — Netskope emits epoch seconds; ISO strings are accepted too.
+  timestamp?: number | string;
 };
 
 function parseNetskopeBody(body: unknown): NetskopeEvent[] {
@@ -75,6 +77,9 @@ function toLogEntries(events: NetskopeEvent[]): LogEntry[] {
       user: event.user?.trim() || event.userkey?.trim() || undefined,
       department: event.organization_unit?.trim() || undefined,
       count: typeof event.count === "number" && event.count > 0 ? event.count : 1,
+      ...(event.timestamp !== undefined && event.timestamp !== null
+        ? { timestamp: String(event.timestamp) }
+        : {}),
     });
   }
 

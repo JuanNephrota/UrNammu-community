@@ -7,16 +7,26 @@ Detect AI tools in use in your organization that are not yet in the Registry.
 Four scanning sources, each independently configurable:
 
 - **Google Workspace** — scans OAuth activity logs for AI apps that users have connected.
-- **Microsoft 365** — scans delegated app permissions in your tenant against a known-AI-tools registry.
+- **Microsoft 365** — scans delegated app permissions in your tenant against a known-AI-tools registry. Resolving who granted each permission to an email address needs `User.Read.All` on the scanning app; without it the tool is still discovered but its user list stays empty.
 - **Hexnode UEM** — reads the app inventory from managed devices, catching desktop and mobile apps that never touch an OAuth flow.
 - **CrowdStrike Falcon** — endpoint discovery, for AI tools observed running on protected hosts.
 
 Plus two import paths that need no live connection:
 
-- **DNS / proxy logs** — CSV or TXT upload, or JSON API ingestion, of network-observed AI domains. Hostnames are normalized before matching, so `api.openai.com`, `openai.com.`, and mixed-case variants resolve to the same tool.
+- **DNS / proxy logs** — CSV or TXT upload, or JSON API ingestion, of network-observed AI domains. The importer reads native gateway exports: pick the vendor (Cisco Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS, or generic) and it maps that vendor's domain, user, department, count, and timestamp columns. Hostnames are normalized before matching, so `api.openai.com`, `openai.com.`, and mixed-case variants resolve to the same tool.
 - **Netskope** — a dedicated import for Netskope's cloud log shipper.
 
 The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and must be caught by device inventory or network logs — which is why the sources are complementary rather than redundant.
+
+## Observation details
+
+Each discovered tool records what the scans actually observed, shown under the tool name:
+
+- **First seen / Last seen** — the earliest and latest observation across every scan. Log imports use the export's own timestamp column when it has one (`timestamp`, `@timestamp`, `time`, `date`, and similar; ISO or epoch); otherwise the import time is used.
+- **Users** — the email addresses seen using the tool, as chips. Only real email addresses are kept; device names or bare usernames from network logs count toward the user total but are not listed.
+- **OAuth scopes** — the permissions granted to the app, for identity-provider sources.
+
+The **user count** follows one rule: a rescan from the **same** source replaces the count, so it can go down when access is revoked or devices are retired; a **different** source only ever raises it, so two partial views combine as a maximum rather than overwriting each other.
 
 ## Confidence scoring
 

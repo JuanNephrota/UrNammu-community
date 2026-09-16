@@ -31,14 +31,27 @@ export async function isOpenAIAdminConfigured(): Promise<boolean> {
   return !!(await getSetting(OPENAI_ADMIN_SETTINGS.ADMIN_KEY));
 }
 
-/** Get usage data — completions usage grouped by model, project, etc. */
-export async function getUsage(params: {
+export type OpenAIUsageParams = {
   start_time: number; // unix timestamp
   end_time?: number;
   group_by?: string[]; // model, project_id, api_key_id, user_id
   bucket_width?: string; // 1m, 1h, 1d
   limit?: number;
-}) {
+  /** Cursor from a previous response's `next_page`. */
+  page?: string;
+};
+
+export type OpenAICostsParams = {
+  start_time: number;
+  end_time?: number;
+  bucket_width?: string;
+  limit?: number;
+  /** Cursor from a previous response's `next_page`. */
+  page?: string;
+};
+
+/** Get one page of usage data — completions usage grouped by model, project, etc. */
+export async function getUsage(params: OpenAIUsageParams) {
   const query = new URLSearchParams();
   query.set("start_time", String(params.start_time));
   if (params.end_time) query.set("end_time", String(params.end_time));
@@ -47,22 +60,83 @@ export async function getUsage(params: {
   }
   if (params.bucket_width) query.set("bucket_width", params.bucket_width);
   if (params.limit) query.set("limit", String(params.limit));
+  if (params.page) query.set("page", params.page);
   return adminFetch(`/v1/organization/usage/completions?${query}`);
 }
 
-/** Get cost data */
-export async function getCosts(params: {
-  start_time: number;
-  end_time?: number;
-  bucket_width?: string;
-  limit?: number;
-}) {
+/** Get one page of cost data */
+export async function getCosts(params: OpenAICostsParams) {
   const query = new URLSearchParams();
   query.set("start_time", String(params.start_time));
   if (params.end_time) query.set("end_time", String(params.end_time));
   if (params.bucket_width) query.set("bucket_width", params.bucket_width ?? "1d");
   if (params.limit) query.set("limit", String(params.limit));
+  if (params.page) query.set("page", params.page);
   return adminFetch(`/v1/organization/costs?${query}`);
+}
+
+export const OPENAI_DEFAULT_MAX_PAGES = 20;
+
+export type OpenAIPagedResult = {
+  /** Concatenated `data` arrays (time buckets) from every fetched page. */
+  data: Record<string, unknown>[];
+  /** Number of pages actually fetched. */
+  pages: number;
+  /** True when `maxPages` was reached while the API still reported `has_more`. */
+  truncated: boolean;
+};
+
+/**
+ * Follow OpenAI's `has_more` / `next_page` cursor pagination. `fetchPage`
+ * receives the cursor (undefined for the first page) and must return the raw
+ * page envelope `{ object: "page", data: [...], has_more, next_page }`.
+ * Pure apart from the injected fetcher, so it is unit-testable offline.
+ */
+export async function paginateOpenAI(
+  fetchPage: (page: string | undefined) => Promise<Record<string, unknown>>,
+  options: { maxPages?: number } = {},
+): Promise<OpenAIPagedResult> {
+  const maxPages = options.maxPages ?? OPENAI_DEFAULT_MAX_PAGES;
+  const data: Record<string, unknown>[] = [];
+  let page: string | undefined;
+  let pages = 0;
+  let truncated = false;
+
+  while (pages < maxPages) {
+    const envelope = await fetchPage(page);
+    pages++;
+    const buckets = Array.isArray(envelope.data) ? (envelope.data as Record<string, unknown>[]) : [];
+    data.push(...buckets);
+
+    const hasMore = envelope.has_more === true;
+    const nextPage = typeof envelope.next_page === "string" && envelope.next_page.length > 0
+      ? envelope.next_page
+      : undefined;
+    if (!hasMore || !nextPage) break;
+    if (pages >= maxPages) {
+      truncated = true;
+      break;
+    }
+    page = nextPage;
+  }
+
+  return { data, pages, truncated };
+}
+
+/** Fetch every page of completions usage for the window (page-capped). */
+export async function getAllUsage(
+  params: Omit<OpenAIUsageParams, "page">,
+  options: { maxPages?: number } = {},
+): Promise<OpenAIPagedResult> {
+  return paginateOpenAI((page) => getUsage({ ...params, page }), options);
+}
+
+/** Fetch every page of costs for the window (page-capped). */
+export async function getAllCosts(
+  params: Omit<OpenAICostsParams, "page">,
+  options: { maxPages?: number } = {},
+): Promise<OpenAIPagedResult> {
+  return paginateOpenAI((page) => getCosts({ ...params, page }), options);
 }
 
 /** List assistants (project-scoped) */

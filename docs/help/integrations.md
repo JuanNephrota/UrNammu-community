@@ -7,7 +7,7 @@ Each tile shows whether the service is connected, and each group header shows a 
 ## Categories
 
 - **AI Models** — the internal AI provider used for in-app features (risk suggestion, compliance gap analysis, agent risk review, summarization).
-- **Provider Telemetry** — Anthropic Admin API, OpenAI Admin API, and Google Cloud Billing (Gemini). These feed Oversight usage and cost.
+- **Provider Telemetry** — Anthropic Admin API (organization usage plus the Claude Code analytics feed), OpenAI Admin API, and Google Cloud Billing (Gemini). These feed Oversight usage and cost. The **Cursor Admin API** is the fourth provider sync — it supplies Cursor tokens, requests, and per-user spend — and is configured under **Settings → Provider Admin APIs** rather than as a tile here.
 - **AI Gateways** — OpenRouter Activity, Helicone Requests, Portkey Analytics, and LiteLLM Proxy. Use these when traffic already flows through a gateway and you want its records without re-routing through the UrNammu proxy.
 - **Identity** — Google Sign-In and Microsoft 365 Sign-In, for authenticating users into UrNammu.
 - **Directory Discovery** — Google Workspace and Microsoft 365 Tenant Apps, for Shadow AI scanning of connected third-party apps.

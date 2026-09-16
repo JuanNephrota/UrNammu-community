@@ -14,30 +14,45 @@ type BucketIdentity = Pick<
  *
  * Proxy rows are identified by granularity="1h" AND dimensionKey containing
  * "source=proxy". They are still queryable directly for real-time views.
+ *
+ * The filter also drops *secondary partitions*: some syncs (Portkey) cut the
+ * same traffic two ways — by model (canonical) and by user — and tag the
+ * second cut with "partition=actor" in the dimensionKey. Those rows exist for
+ * per-person attribution only and must never be summed into totals.
  */
 export const EXCLUDE_PROXY_DUPLICATES: Prisma.UsageBucketWhereInput = {
-  NOT: {
-    AND: [
-      { granularity: "1h" },
-      { dimensionKey: { contains: "source=proxy" } },
-    ],
-  },
+  AND: [
+    {
+      NOT: {
+        AND: [
+          { granularity: "1h" },
+          { dimensionKey: { contains: "source=proxy" } },
+        ],
+      },
+    },
+    { NOT: { dimensionKey: { contains: "partition=actor" } } },
+  ],
 };
 
 export const EXCLUDE_PROXY_DUPLICATES_COST: Prisma.CostBucketWhereInput = {
-  NOT: {
-    AND: [
-      { granularity: "1h" },
-      { dimensionKey: { contains: "source=proxy" } },
-    ],
-  },
+  AND: [
+    {
+      NOT: {
+        AND: [
+          { granularity: "1h" },
+          { dimensionKey: { contains: "source=proxy" } },
+        ],
+      },
+    },
+    { NOT: { dimensionKey: { contains: "partition=actor" } } },
+  ],
 };
 
 /**
  * Raw-SQL equivalent of EXCLUDE_PROXY_DUPLICATES. Interpolate into a
  * tagged `prisma.$queryRaw` template using `${EXCLUDE_PROXY_DUPLICATES_SQL}`.
  */
-export const EXCLUDE_PROXY_DUPLICATES_SQL = Prisma.sql`NOT (granularity = '1h' AND "dimensionKey" LIKE '%source=proxy%')`;
+export const EXCLUDE_PROXY_DUPLICATES_SQL = Prisma.sql`NOT (granularity = '1h' AND "dimensionKey" LIKE '%source=proxy%') AND "dimensionKey" NOT LIKE '%partition=actor%'`;
 
 export type TelemetryActivityRow = {
   id: string;

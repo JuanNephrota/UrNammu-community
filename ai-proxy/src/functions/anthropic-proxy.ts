@@ -1,6 +1,6 @@
 import { app, HttpRequest, HttpResponseInit } from "@azure/functions";
 import { Readable, PassThrough } from "stream";
-import { calculateCost } from "../lib/pricing";
+import { accountTokens, calculateCost, usageFromAnthropic, usageMetadata } from "../lib/pricing";
 import { logPolicyDenial, logUsage } from "../lib/db";
 import { extractAnthropicStreamUsage } from "../lib/stream-parser";
 import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
@@ -24,6 +24,7 @@ import {
 } from "../lib/mcp-tool-governance";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
+const MESSAGES_ENDPOINT = "/v1/messages";
 
 /**
  * The provider's own id for this request, read from the response headers.
@@ -85,8 +86,8 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
 
   // Build target URL from route params
   const url = new URL(req.url);
-  const subpath = url.pathname.replace(/^\/api\/proxy\/anthropic/, "");
-  const targetUrl = `${ANTHROPIC_BASE}${subpath || "/v1/messages"}`;
+  const subpath = url.pathname.replace(/^\/api\/proxy\/anthropic/, "") || MESSAGES_ENDPOINT;
+  const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
 
   // Read body first — MCP passthrough needs it.
   let bodyText: string | null = null;
@@ -282,8 +283,10 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const requestId = upstreamRequestId(anthropicRes);
   const latencyMs = Date.now() - startTime;
 
-  // Non-messages endpoints: pass through
-  if (!subpath.includes("/messages")) {
+  // Only the Messages endpoint itself produces usage. /v1/messages/count_tokens,
+  // /v1/messages/batches* etc. pass through untouched — logging them wrote
+  // 0-token rows.
+  if (subpath !== MESSAGES_ENDPOINT) {
     const body = await anthropicRes.text();
     return {
       status: anthropicRes.status,
@@ -347,6 +350,8 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
     };
     content?: Array<{ type?: string; text?: string }>;
     error?: {
@@ -354,11 +359,11 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     };
   };
 
-  const usage = responseBody.usage ?? {};
-  const promptTokens = usage.input_tokens ?? 0;
-  const completionTokens = usage.output_tokens ?? 0;
-  const totalTokens = promptTokens + completionTokens;
-  const cost = calculateCost("claude", model, promptTokens, completionTokens);
+  // input_tokens excludes cached tokens — usageFromAnthropic/accountTokens
+  // fold cache_read + cache_creation into promptTokens (see ../lib/pricing.ts).
+  const tokenUsage = usageFromAnthropic(responseBody.usage);
+  const accounted = accountTokens(tokenUsage);
+  const pricing = calculateCost("anthropic", model, tokenUsage);
   const toolUses = anthropicRes.ok ? extractAnthropicToolUses(responseBody.content) : [];
 
   let flagged = false;
@@ -395,10 +400,12 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     model,
     department,
     userEmail,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cost,
+    promptTokens: accounted.promptTokens,
+    completionTokens: accounted.completionTokens,
+    totalTokens: accounted.totalTokens,
+    cacheReadTokens: accounted.cacheReadTokens,
+    cacheCreationTokens: accounted.cacheCreationTokens,
+    cost: pricing.cost ?? 0,
     flagged,
     flagCategory,
     flagReason,
@@ -408,6 +415,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       agentId: agent?.id ?? null,
       latencyMs,
       status: anthropicRes.status,
+      ...usageMetadata(tokenUsage, pricing),
       mcp:
         mcpResult.detected || declaredServers.length > 0 || toolUses.length > 0
           ? {

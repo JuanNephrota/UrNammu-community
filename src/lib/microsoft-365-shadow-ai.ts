@@ -268,6 +268,46 @@ function extractCandidateDomains(
   return Array.from(domains);
 }
 
+// Cap per-app principal lookups so a tenant-wide app with thousands of
+// consenting users cannot turn one scan into thousands of Graph calls.
+const MAX_PRINCIPAL_LOOKUPS_PER_APP = 50;
+
+type MicrosoftUser = {
+  id?: string;
+  userPrincipalName?: string;
+  mail?: string;
+};
+
+/**
+ * Resolve Entra principal object ids to email addresses. Principals that are
+ * groups/service principals (or that the app lacks permission to read) resolve
+ * to null and are skipped. Requires User.Read.All on the scanning app.
+ */
+async function resolvePrincipalEmails(
+  principalIds: string[],
+  accessToken: string,
+  cache: Map<string, string | null>
+): Promise<string[]> {
+  const emails = new Set<string>();
+  for (const principalId of principalIds.slice(0, MAX_PRINCIPAL_LOOKUPS_PER_APP)) {
+    if (!cache.has(principalId)) {
+      try {
+        const user = await graphGet<MicrosoftUser>(
+          `/users/${principalId}?$select=id,userPrincipalName,mail`,
+          accessToken
+        );
+        const email = (user.mail ?? user.userPrincipalName ?? "").trim().toLowerCase();
+        cache.set(principalId, email.includes("@") ? email : null);
+      } catch {
+        cache.set(principalId, null);
+      }
+    }
+    const resolved = cache.get(principalId);
+    if (resolved) emails.add(resolved);
+  }
+  return Array.from(emails);
+}
+
 function summarizeDiscoverySignals(input: {
   consentType: string | null;
   principalCount: number;
@@ -329,6 +369,9 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
   }
 
   const discoveries: ScanDiscovery[] = [];
+  // principalId -> UPN/mail (or null when not a resolvable user). Shared across
+  // apps so a user consented to several AI tools costs one Graph lookup.
+  const principalEmailCache = new Map<string, string | null>();
 
   for (const clientId of uniqueClientIds.slice(0, 50)) {
     try {
@@ -403,6 +446,23 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
         observedUsers ||
         (metadata?.consentType === "AllPrincipals" ? 3 : 1);
 
+      // Resolve delegated principals (from oauth2PermissionGrants) and
+      // user-typed app-role assignees to email addresses where possible.
+      const principalIds = new Set<string>(metadata?.principals ?? []);
+      for (const assignment of appRoleAssignments) {
+        if (
+          assignment.principalId &&
+          (assignment.principalType ?? "User") === "User"
+        ) {
+          principalIds.add(assignment.principalId);
+        }
+      }
+      const userEmails = await resolvePrincipalEmails(
+        Array.from(principalIds),
+        accessToken,
+        principalEmailCache
+      );
+
       discoveries.push({
         toolName: resolvedMatch.tool.toolName,
         vendor: resolvedMatch.tool.vendor,
@@ -411,8 +471,11 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
         // enterprise app's sign-ins (PATCH accountEnabled=false).
         externalAppId: servicePrincipal.id ?? undefined,
         externalAppProvider: servicePrincipal.id ? "microsoft_365" : undefined,
-        userEmails: [],
+        userEmails,
         userCount,
+        scopes: metadata?.scopes ?? [],
+        // oauth2PermissionGrants carry no consent timestamp; the executor
+        // falls back to the scan time for first/last seen.
         matchConfidence: resolvedMatch.confidence,
         matchScore: resolvedMatch.score,
         matchReasons: resolvedMatch.reasons,
@@ -436,6 +499,12 @@ export async function runMicrosoft365Scan(): Promise<FullScanResult> {
     const existing = deduped.get(key);
     if (existing) {
       existing.userCount = Math.max(existing.userCount, discovery.userCount);
+      existing.userEmails = Array.from(
+        new Set([...existing.userEmails, ...discovery.userEmails])
+      );
+      existing.scopes = Array.from(
+        new Set([...(existing.scopes ?? []), ...(discovery.scopes ?? [])])
+      );
       if (discovery.notes && !existing.notes?.includes(discovery.notes)) {
         existing.notes = existing.notes
           ? `${existing.notes}\n${discovery.notes}`

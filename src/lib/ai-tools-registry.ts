@@ -35,7 +35,16 @@ export const KNOWN_AI_TOOLS: KnownAITool[] = [
   {
     toolName: "GitHub Copilot",
     vendor: "GitHub / Microsoft",
-    domains: ["copilot.github.com", "github.com/features/copilot"],
+    // Bare hostnames only — `matchDomain` compares hostnames, so a URL path
+    // like "github.com/features/copilot" could never match. These are the
+    // hosts the Copilot IDE extensions actually talk to (and DNS/proxy logs
+    // record): the completions proxy, the Copilot API, and the telemetry host.
+    domains: [
+      "copilot.github.com",
+      "githubcopilot.com",
+      "copilot-proxy.githubusercontent.com",
+      "copilot-telemetry.githubusercontent.com",
+    ],
     clientNamePatterns: ["copilot", "github copilot", "copilot for github"],
     publisherPatterns: ["github", "microsoft"],
   },

@@ -10,6 +10,7 @@ import {
   bool,
   type AnyValue,
 } from "./otlp-shared";
+import { metricDedupeKey, eventDedupeKey } from "./otel-dedupe";
 
 // Re-exported so existing importers of these primitives keep working.
 export {
@@ -83,6 +84,10 @@ export type OtlpMetricsPayload = z.infer<typeof otlpMetricsPayloadSchema>;
 // ─── Flattening ──────────────────────────────────────────
 
 export interface FlattenedMetric {
+  // Content hash identifying this OTel data point — see ./otel-dedupe.ts.
+  // Routes pass it to createMany({ skipDuplicates }) so collector retries
+  // of a partially-written batch don't double-count.
+  dedupeKey: string;
   timestamp: Date;
   userId: string | null;
   userEmail: string | null;
@@ -130,8 +135,19 @@ export function flattenOtlpMetrics(
             ...resourceAttrs,
             ...pointAttrs,
           };
+          const timestamp = nanoToDate(dp.timeUnixNano, now);
+          const value = readDataPointValue(dp);
+          const unit = m.unit ?? null;
           rows.push({
-            timestamp: nanoToDate(dp.timeUnixNano, now),
+            dedupeKey: metricDedupeKey({
+              timeUnixNano: dp.timeUnixNano,
+              timestamp,
+              metricName: m.name,
+              value,
+              unit,
+              attributes: merged,
+            }),
+            timestamp,
             userId: str(merged["user.id"]),
             userEmail: str(merged["user.email"]),
             sessionId: str(merged["session.id"]),
@@ -143,8 +159,8 @@ export function flattenOtlpMetrics(
             osVersion: str(merged["os.version"]),
             terminalType: str(merged["terminal.type"]),
             metricName: m.name,
-            value: readDataPointValue(dp),
-            unit: m.unit ?? null,
+            value,
+            unit,
             model: str(merged["model"]),
             tokenType: str(merged["type"]),
             tool: str(merged["tool_name"] ?? merged["tool"]),
@@ -207,6 +223,9 @@ export const SENSITIVE_EVENT_KEYS = [
 ] as const;
 
 export interface FlattenedEvent {
+  // Content hash identifying this log record — computed AFTER sensitive keys
+  // are stripped, so a retry that arrives with/without `prompt` dedupes.
+  dedupeKey: string;
   timestamp: Date;
   sessionId: string | null;
   promptId: string | null;
@@ -266,14 +285,25 @@ export function flattenOtlpLogs(
         const promptText =
           eventName === "user_prompt" ? str(merged["prompt"]) : null;
         for (const k of SENSITIVE_EVENT_KEYS) delete merged[k];
+        const timeUnixNano = lr.timeUnixNano ?? lr.observedTimeUnixNano;
+        const timestamp = nanoToDate(timeUnixNano, now);
+        const sessionId = str(merged["session.id"]);
+        const promptId = str(merged["prompt.id"]);
+        const eventSequence = num(merged["event.sequence"]);
         rows.push({
-          timestamp: nanoToDate(
-            lr.timeUnixNano ?? lr.observedTimeUnixNano,
-            now,
-          ),
-          sessionId: str(merged["session.id"]),
-          promptId: str(merged["prompt.id"]),
-          eventSequence: num(merged["event.sequence"]),
+          dedupeKey: eventDedupeKey({
+            timeUnixNano,
+            timestamp,
+            eventName,
+            sessionId,
+            promptId,
+            eventSequence,
+            attributes: merged,
+          }),
+          timestamp,
+          sessionId,
+          promptId,
+          eventSequence,
           userId: str(merged["user.id"]),
           userEmail: str(merged["user.email"]),
           organizationId: str(merged["organization.id"]),

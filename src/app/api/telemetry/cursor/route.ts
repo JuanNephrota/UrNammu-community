@@ -8,8 +8,12 @@ import {
 } from "@/lib/validations/cursor-telemetry";
 
 // Derived cursor.* metrics arrive from the collector's spanmetrics connector.
-// Volume is low (batched), but keep a ceiling to protect the DB.
+// Volume is low (batched), but the row ceiling below still applies.
 export const maxDuration = 60;
+
+// Ceiling on flattened rows per request, to protect the DB from a runaway or
+// hostile batch. Override with TELEMETRY_MAX_ROWS.
+const MAX_ROWS = Number(process.env.TELEMETRY_MAX_ROWS) || 5000;
 
 // Dedicated Cursor ingest secret so it can be rotated independently of the
 // Claude Code token. Falls back to the env var when the AppSetting is unset.
@@ -54,11 +58,24 @@ export async function POST(req: NextRequest) {
   const rows = flattenCursorMetrics(parsed.data);
   if (rows.length === 0) {
     // Benign: either non-cursor metrics got through, or it was a heartbeat.
-    return NextResponse.json({ accepted: 0 }, { status: 202 });
+    return NextResponse.json({ accepted: 0, duplicates: 0 }, { status: 202 });
+  }
+  if (rows.length > MAX_ROWS) {
+    console.warn(
+      `[telemetry/cursor] rejected batch of ${rows.length} rows (ceiling ${MAX_ROWS})`,
+    );
+    return NextResponse.json(
+      { error: "Payload too large", rows: rows.length, max: MAX_ROWS },
+      { status: 413 },
+    );
   }
 
-  await prisma.cursorMetric.createMany({
+  // `dedupeKey` (unique) + skipDuplicates make collector retries idempotent;
+  // `count` is the number actually inserted.
+  const { count } = await prisma.cursorMetric.createMany({
+    skipDuplicates: true,
     data: rows.map((r) => ({
+      dedupeKey: r.dedupeKey,
       timestamp: r.timestamp,
       serviceName: r.serviceName,
       sessionId: r.sessionId,
@@ -76,5 +93,8 @@ export async function POST(req: NextRequest) {
     })),
   });
 
-  return NextResponse.json({ accepted: rows.length }, { status: 202 });
+  return NextResponse.json(
+    { accepted: count, duplicates: rows.length - count },
+    { status: 202 },
+  );
 }

@@ -42,6 +42,13 @@ export async function logUsage(params: {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * Prompt-cache breakdown. Already INCLUDED in promptTokens (which is the
+   * total input the provider processed); persisted separately on
+   * UsageBucket.cacheReadTokens / cacheCreationTokens. See ./pricing.ts.
+   */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   cost: number;
   flagged: boolean;
   flagCategory?:
@@ -113,6 +120,8 @@ export async function logUsage(params: {
           promptTokens: params.promptTokens,
           completionTokens: params.completionTokens,
           totalTokens: params.totalTokens,
+          cacheReadTokens: params.cacheReadTokens ?? 0,
+          cacheCreationTokens: params.cacheCreationTokens ?? 0,
           cost: params.cost,
           aiSystemId,
         });

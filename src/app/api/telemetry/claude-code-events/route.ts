@@ -9,8 +9,13 @@ import {
 import { analyzePromptRisk, createPromptRiskAlert } from "@/lib/prompt-risk";
 
 // Events are higher-volume than metrics; the Collector's batch processor is
-// capped at 1000 records per flush which fits comfortably under this.
+// capped at 1000 records per flush which fits comfortably under the row
+// ceiling below.
 export const maxDuration = 60;
+
+// Ceiling on flattened rows per request, to protect the DB from a runaway or
+// hostile batch. Override with TELEMETRY_MAX_ROWS.
+const MAX_ROWS = Number(process.env.TELEMETRY_MAX_ROWS) || 5000;
 
 // Same bearer secret as the metrics endpoint — the Collector presents one
 // token for both signals. Falls back to the env var when the AppSetting is
@@ -58,7 +63,19 @@ export async function POST(req: NextRequest) {
   // text on the transient `promptText` field for risk analysis only.
   const rows = flattenOtlpLogs(parsed.data);
   if (rows.length === 0) {
-    return NextResponse.json({ accepted: 0 }, { status: 202 });
+    return NextResponse.json(
+      { accepted: 0, duplicates: 0, flagged: 0 },
+      { status: 202 },
+    );
+  }
+  if (rows.length > MAX_ROWS) {
+    console.warn(
+      `[telemetry/claude-code-events] rejected batch of ${rows.length} rows (ceiling ${MAX_ROWS})`,
+    );
+    return NextResponse.json(
+      { error: "Payload too large", rows: rows.length, max: MAX_ROWS },
+      { status: 413 },
+    );
   }
 
   // ── Dangerous-prompt detection (Option A: analyze in-memory, persist
@@ -91,8 +108,12 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  await prisma.claudeCodeEvent.createMany({
+  // `dedupeKey` (unique) + skipDuplicates make collector retries idempotent;
+  // `count` is the number actually inserted.
+  const { count } = await prisma.claudeCodeEvent.createMany({
+    skipDuplicates: true,
     data: rows.map((r) => ({
+      dedupeKey: r.dedupeKey,
       timestamp: r.timestamp,
       sessionId: r.sessionId,
       promptId: r.promptId,
@@ -121,7 +142,7 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json(
-    { accepted: rows.length, flagged: flaggedCount },
+    { accepted: count, duplicates: rows.length - count, flagged: flaggedCount },
     { status: 202 },
   );
 }

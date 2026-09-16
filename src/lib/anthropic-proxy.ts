@@ -8,6 +8,15 @@ import { applyMcpPassthrough } from "./mcp-passthrough";
 import { writeProxyUsageBucket } from "./proxy-bucket-writer";
 import { secretsMatch } from "./secret-compare";
 import {
+  accountTokens,
+  calculateCost,
+  EMPTY_USAGE,
+  mergeAnthropicStreamUsage,
+  usageFromAnthropic,
+  usageMetadata,
+  type TokenUsage,
+} from "./model-pricing";
+import {
   evaluateServers,
   extractAnthropicStreamToolUse,
   extractAnthropicToolUses,
@@ -25,38 +34,11 @@ import {
 } from "./mcp-tool-activity";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
+const MESSAGES_ENDPOINT = "/v1/messages";
 
-// Pricing per million tokens (approximate)
-const PRICING: Record<string, { input: number; output: number }> = {
-  // Current bare model IDs (no date suffix). Listed first so current requests
-  // resolve to current pricing — the cost calc uses substring matching
-  // (model.includes(key) || key.includes(model)) and returns the first hit.
-  "claude-opus-4-8": { input: 5.0, output: 25.0 },
-  "claude-opus-4-7": { input: 5.0, output: 25.0 },
-  "claude-opus-4-6": { input: 5.0, output: 25.0 },
-  "claude-sonnet-4-6": { input: 3.0, output: 15.0 },
-  "claude-haiku-4-5": { input: 1.0, output: 5.0 },
-  "claude-fable-5": { input: 10.0, output: 50.0 },
-  // Deprecated dated IDs kept for any in-flight traffic still using them.
-  "claude-sonnet-4-20250514": { input: 3.0, output: 15.0 },
-  "claude-haiku-4-5-20251001": { input: 0.8, output: 4.0 },
-  "claude-opus-4-20250514": { input: 15.0, output: 75.0 },
-};
-
-function calculateCost(
-  model: string,
-  inputTokens: number,
-  outputTokens: number
-): number {
-  const pricing = Object.entries(PRICING).find(
-    ([key]) => model.includes(key) || key.includes(model)
-  )?.[1] ?? { input: 3.0, output: 15.0 };
-
-  return (
-    (inputTokens / 1_000_000) * pricing.input +
-    (outputTokens / 1_000_000) * pricing.output
-  );
-}
+// Pricing + token accounting live in ./model-pricing (mirrored into ai-proxy).
+// Anthropic's `input_tokens` excludes cached tokens; see that module for how
+// we fold cache_read / cache_creation into promptTokens and cost.
 
 /** Concatenate the assistant's text from a non-streaming Messages response. */
 function extractAnthropicResponseText(responseBody: unknown): string {
@@ -271,8 +253,10 @@ export async function handleAnthropicProxy(
 
   const latencyMs = Date.now() - startTime;
 
-  // For non-messages endpoints, pass through directly
-  if (!subpath.includes("/messages")) {
+  // Only the Messages endpoint itself produces usage. Everything else under
+  // /v1/messages/* (count_tokens, batches, ...) passes through untouched —
+  // logging those used to write 0-token rows.
+  if (subpath !== MESSAGES_ENDPOINT) {
     const responseBody = await anthropicResponse.text();
     return new NextResponse(responseBody, {
       status: anthropicResponse.status,
@@ -337,11 +321,10 @@ export async function handleAnthropicProxy(
   // ── Non-streaming response ──
   const responseBody = await anthropicResponse.json();
 
-  const usage = responseBody.usage ?? {};
-  const promptTokens = usage.input_tokens ?? 0;
-  const completionTokens = usage.output_tokens ?? 0;
-  const totalTokens = promptTokens + completionTokens;
-  const cost = calculateCost(model, promptTokens, completionTokens);
+  const tokenUsage = usageFromAnthropic(responseBody.usage);
+  const accounted = accountTokens(tokenUsage);
+  const pricing = calculateCost("anthropic", model, tokenUsage);
+  const requestId = anthropicResponse.headers.get("request-id");
   const toolUses = anthropicResponse.ok ? extractAnthropicToolUses(responseBody.content) : [];
 
   // Inline DLP on the model's response — detect sensitive info coming back
@@ -380,19 +363,23 @@ export async function handleAnthropicProxy(
     model,
     department,
     userEmail,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cost,
+    promptTokens: accounted.promptTokens,
+    completionTokens: accounted.completionTokens,
+    totalTokens: accounted.totalTokens,
+    cacheReadTokens: accounted.cacheReadTokens,
+    cacheCreationTokens: accounted.cacheCreationTokens,
+    cost: pricing.cost ?? 0,
     flagged,
     flagCategory,
     flagReason,
+    requestId,
     metadata: {
       latencyMs,
       status: anthropicResponse.status,
       path: subpath,
       aiSystemId: attributedSystemId,
       agentId: agent?.id ?? null,
+      ...usageMetadata(tokenUsage, pricing),
       mcp:
         mcpResult.detected || declaredServers.length > 0 || toolUses.length > 0
           ? {
@@ -438,7 +425,7 @@ export async function handleAnthropicProxy(
     aiSystemId: attributedSystemId,
     provider: "claude",
     model,
-    requestId: anthropicResponse.headers.get("request-id"),
+    requestId,
     userEmail,
     department,
     declaredServers,
@@ -451,8 +438,9 @@ export async function handleAnthropicProxy(
 }
 
 /**
- * Read a stream to extract usage info from the message_delta event,
- * then log it. The stream is consumed and discarded.
+ * Read a stream to extract usage info from the message_start / message_delta
+ * events (input, cache_read, cache_creation, output tokens), then log it.
+ * The stream is consumed and discarded.
  */
 async function extractStreamUsage(
   stream: ReadableStream<Uint8Array>,
@@ -474,8 +462,7 @@ async function extractStreamUsage(
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let inputTokens = 0;
-    let outputTokens = 0;
+    let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
 
@@ -497,15 +484,9 @@ async function extractStreamUsage(
         try {
           const event = JSON.parse(data);
 
-          // message_start contains input token count
-          if (event.type === "message_start" && event.message?.usage) {
-            inputTokens = event.message.usage.input_tokens ?? 0;
-          }
-
-          // message_delta contains output token count
-          if (event.type === "message_delta" && event.usage) {
-            outputTokens = event.usage.output_tokens ?? 0;
-          }
+          // message_start carries the input breakdown (uncached, cache_read,
+          // cache_creation); message_delta carries the final output count.
+          usage = mergeAnthropicStreamUsage(usage, event);
 
           // content_block_delta carries the assistant's streamed text — collect
           // it for inline response DLP once the stream drains.
@@ -527,8 +508,8 @@ async function extractStreamUsage(
       }
     }
 
-    const totalTokens = inputTokens + outputTokens;
-    const cost = calculateCost(ctx.model, inputTokens, outputTokens);
+    const accounted = accountTokens(usage);
+    const pricing = calculateCost("anthropic", ctx.model, usage);
 
     // Inline DLP on the streamed response text.
     const responseDlp =
@@ -547,16 +528,19 @@ async function extractStreamUsage(
       });
     }
 
-    if (totalTokens > 0) {
-      logUsage({
+    if (accounted.totalTokens > 0) {
+      await logUsage({
         provider: "claude",
         model: ctx.model,
         department: ctx.department,
         userEmail: ctx.userEmail,
-        promptTokens: inputTokens,
-        completionTokens: outputTokens,
-        totalTokens,
-        cost,
+        promptTokens: accounted.promptTokens,
+        completionTokens: accounted.completionTokens,
+        totalTokens: accounted.totalTokens,
+        cacheReadTokens: accounted.cacheReadTokens,
+        cacheCreationTokens: accounted.cacheCreationTokens,
+        cost: pricing.cost ?? 0,
+        requestId: ctx.requestId,
         flagged: ctx.promptRisk.flagged || !!responseDlp?.flagged,
         flagCategory: ctx.promptRisk.flagged
           ? "prompt_risk"
@@ -570,6 +554,7 @@ async function extractStreamUsage(
           path: ctx.subpath,
           aiSystemId: ctx.aiSystemId,
           agentId: ctx.agent?.id ?? null,
+          ...usageMetadata(usage, pricing),
           mcp:
             ctx.mcp.detected || ctx.declaredServers.length > 0 || toolUses.length > 0
               ? {
@@ -614,6 +599,9 @@ async function logUsage(params: {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Cache breakdown — already included in promptTokens; see model-pricing.ts. */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   cost: number;
   flagged: boolean;
   flagCategory?:
@@ -623,6 +611,11 @@ async function logUsage(params: {
     | "sensitive_response"
     | null;
   flagReason?: string | null;
+  /**
+   * Upstream `request-id` header. Null when the call never reached Anthropic.
+   * Joins the row to a Claude Code session trace — see the schema comment.
+   */
+  requestId?: string | null;
   metadata?: Record<string, unknown>;
 }) {
   try {
@@ -635,11 +628,17 @@ async function logUsage(params: {
       userId = user?.id ?? null;
     }
 
+    // aiSystemId is a real column (indexed with createdAt) as well as a
+    // metadata key — the Azure proxy sets both, so must we.
+    const aiSystemId =
+      typeof params.metadata?.aiSystemId === "string" ? params.metadata.aiSystemId : null;
+
     await prisma.aPIUsageLog.create({
       data: {
         provider: params.provider,
         model: params.model,
         department: params.department,
+        aiSystemId,
         userId,
         promptTokens: params.promptTokens,
         completionTokens: params.completionTokens,
@@ -648,6 +647,7 @@ async function logUsage(params: {
         flagged: params.flagged,
         flagCategory: params.flagCategory ?? null,
         flagReason: params.flagReason,
+        requestId: params.requestId ?? null,
         promptMetadata: params.metadata
           ? JSON.parse(JSON.stringify(params.metadata))
           : undefined,
@@ -666,10 +666,6 @@ async function logUsage(params: {
             ? "openai"
             : null;
       if (normalizedProvider) {
-        const aiSystemId =
-          typeof (params.metadata as Record<string, unknown> | undefined)?.aiSystemId === "string"
-            ? ((params.metadata as Record<string, unknown>).aiSystemId as string)
-            : null;
         await writeProxyUsageBucket({
           provider: normalizedProvider,
           model: params.model,
@@ -678,6 +674,8 @@ async function logUsage(params: {
           promptTokens: params.promptTokens,
           completionTokens: params.completionTokens,
           totalTokens: params.totalTokens,
+          cacheReadTokens: params.cacheReadTokens ?? 0,
+          cacheCreationTokens: params.cacheCreationTokens ?? 0,
           cost: params.cost,
           aiSystemId,
         });

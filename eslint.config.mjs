@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "ai-proxy/**",
+    // Local Claude Code worktrees and scratch copies are not part of the app.
+    ".claude/**",
   ]),
 ]);
 

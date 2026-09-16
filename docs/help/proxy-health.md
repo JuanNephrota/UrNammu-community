@@ -26,6 +26,8 @@ The ten most recent usage logs, with **Time**, **Status**, **User**, **Dept**, *
 
 Use this table to confirm attribution headers are populated. Rows with no user or department mean `x-user-email` and `x-department` are not being sent; configure them in **Settings → Proxy Setup**.
 
+**Tokens** counts all input tokens (uncached plus cache read and cache creation) and output. A row with tokens but a **Cost** of $0 on a real model usually means the model is not in the pricing table — the row's metadata will carry `pricingMatched: false`. Unknown models are never charged a default price.
+
 ## Sync errors
 
 If the last Azure Monitor sync failed, the metrics card reports **Last sync failed**; a connection that has never run shows **Never synced**. Neither affects proxy operation or logging — they only mean this board cannot show platform metrics right now.

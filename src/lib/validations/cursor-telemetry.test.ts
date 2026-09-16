@@ -204,3 +204,125 @@ test("flattenCursorMetrics keeps cursor.* and drops other prefixes", () => {
 
   assert.ok(!rows.some((r) => r.metricName.startsWith("claude_code")));
 });
+
+// ─── dedupeKey (idempotent ingest) ───────────────────────
+
+function spanPayload(span: Record<string, unknown>, resourceAttrs = [kv("service.name", "cursor-agent")]) {
+  return otlpTracesPayloadSchema.parse({
+    resourceSpans: [
+      { resource: { attributes: resourceAttrs }, scopeSpans: [{ spans: [span] }] },
+    ],
+  });
+}
+
+test("span dedupeKey is derived from traceId+spanId when both are present", () => {
+  const base = {
+    traceId: "trace-1",
+    spanId: "span-1",
+    name: "tool.read_file",
+    startTimeUnixNano: "1700000000000000000",
+    endTimeUnixNano: "1700000000500000000",
+    attributes: [kv("gen_ai.tool.name", "read_file")],
+  };
+  const a = flattenOtlpSpans(spanPayload(base))[0];
+  const b = flattenOtlpSpans(spanPayload({ ...base }))[0];
+  assert.match(a.dedupeKey, /^[0-9a-f]{40}$/);
+  assert.equal(a.dedupeKey, b.dedupeKey);
+
+  // Different attribute content but same ids → same key (ids are authoritative).
+  const c = flattenOtlpSpans(
+    spanPayload({ ...base, attributes: [kv("gen_ai.tool.name", "other")] }),
+  )[0];
+  assert.equal(a.dedupeKey, c.dedupeKey);
+
+  // Different spanId → different key.
+  const d = flattenOtlpSpans(spanPayload({ ...base, spanId: "span-2" }))[0];
+  assert.notEqual(a.dedupeKey, d.dedupeKey);
+});
+
+test("span dedupeKey falls back to content hash without ids; stripped keys don't affect it", () => {
+  const base = {
+    name: "chat.submit",
+    startTimeUnixNano: "1700000000000000000",
+    endTimeUnixNano: "1700000000100000000",
+    attributes: [
+      kv("langsmith.metadata.hook_event", "beforeSubmitPrompt"),
+      kv("langsmith.trace.session_id", "sess-1"),
+    ],
+  };
+  const withPrompt = flattenOtlpSpans(
+    spanPayload({
+      ...base,
+      attributes: [...base.attributes, kv("gen_ai.prompt", "delete prod db")],
+    }),
+  )[0];
+  const stripped = flattenOtlpSpans(spanPayload(base))[0];
+  assert.equal(withPrompt.traceId, null);
+  assert.equal(withPrompt.promptText, "delete prod db");
+  assert.equal(withPrompt.dedupeKey, stripped.dedupeKey);
+
+  // Attribute order irrelevant.
+  const reordered = flattenOtlpSpans(
+    spanPayload({
+      ...base,
+      attributes: [
+        kv("langsmith.trace.session_id", "sess-1"),
+        kv("langsmith.metadata.hook_event", "beforeSubmitPrompt"),
+      ],
+    }),
+  )[0];
+  assert.equal(stripped.dedupeKey, reordered.dedupeKey);
+
+  // Timestamp change → different key.
+  const later = flattenOtlpSpans(
+    spanPayload({ ...base, startTimeUnixNano: "1700000001000000000" }),
+  )[0];
+  assert.notEqual(stripped.dedupeKey, later.dedupeKey);
+});
+
+test("cursor metric dedupeKey: stable across retries, order-independent, sensitive to timestamp/value", () => {
+  const build = (opts: { attrs?: ReturnType<typeof kv>[]; t?: string; v?: number } = {}) =>
+    flattenCursorMetrics(
+      otlpCursorMetricsPayloadSchema.parse({
+        resourceMetrics: [
+          {
+            resource: { attributes: [kv("service.name", "cursor-agent")] },
+            scopeMetrics: [
+              {
+                metrics: [
+                  {
+                    name: "cursor.calls",
+                    unit: "1",
+                    sum: {
+                      dataPoints: [
+                        {
+                          timeUnixNano: opts.t ?? "1700000000000000000",
+                          asInt: String(opts.v ?? 3),
+                          attributes: opts.attrs ?? [
+                            kv("span.name", "tool.read_file"),
+                            kv("langsmith.span.kind", "tool"),
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    )[0];
+
+  const a = build();
+  assert.match(a.dedupeKey, /^[0-9a-f]{40}$/);
+  assert.equal(a.dedupeKey, build().dedupeKey);
+  assert.equal(
+    a.dedupeKey,
+    build({
+      attrs: [kv("langsmith.span.kind", "tool"), kv("span.name", "tool.read_file")],
+    }).dedupeKey,
+  );
+  assert.notEqual(a.dedupeKey, build({ t: "1700000060000000000" }).dedupeKey);
+  assert.notEqual(a.dedupeKey, build({ v: 4 }).dedupeKey);
+});

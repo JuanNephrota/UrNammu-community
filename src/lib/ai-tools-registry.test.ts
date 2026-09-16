@@ -35,6 +35,23 @@ test("matchDomain still supports direct domain fallback", () => {
   assert.equal(result?.toolName, "Mistral");
 });
 
+test("matchDomain recognizes the hostnames GitHub Copilot actually uses", () => {
+  // These are what the IDE extensions resolve and what DNS/proxy logs record.
+  for (const host of [
+    "copilot-proxy.githubusercontent.com",
+    "api.githubcopilot.com",
+    "proxy.individual.githubcopilot.com",
+    "copilot-telemetry.githubusercontent.com",
+    "copilot.github.com",
+  ]) {
+    assert.equal(matchDomain(host)?.toolName, "GitHub Copilot", `${host} should match GitHub Copilot`);
+  }
+  // A URL path is not a hostname and can never be matched; it must not be in
+  // the registry, and plain github.com traffic must not be flagged as Copilot.
+  assert.equal(matchDomain("github.com"), null);
+  assert.equal(matchDomain("raw.githubusercontent.com"), null);
+});
+
 // ---------- matchDomainHeuristic (DNS/proxy low-confidence fallback) ----------
 
 test("matchDomainHeuristic returns null for domains the registry already covers", () => {

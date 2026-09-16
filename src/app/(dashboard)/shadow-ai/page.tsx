@@ -19,6 +19,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { DNS_PROXY_IMPORT_SOURCES } from "@/lib/discovered-tools-ingest";
+import { formatDate } from "@/lib/utils";
+import { ObservationDetails } from "./observation-details";
 
 type Tool = {
   id: string;
@@ -35,6 +37,10 @@ type Tool = {
   matchConfidence?: string | null;
   matchScore?: number | null;
   matchReasons?: string[] | null;
+  userEmails?: string[] | null;
+  scopes?: string[] | null;
+  firstSeenAt?: string | null;
+  lastSeenAt?: string | null;
 };
 
 type ScanStatus = {
@@ -717,6 +723,14 @@ export default function ShadowAIPage() {
                           <p className="text-xs text-[var(--text-faint)] mt-1">
                             Detected via {tool.detectionSource.replace("_", " ")} on {new Date(tool.detectedAt).toLocaleDateString()}
                           </p>
+                          <div className="mt-2">
+                            <ObservationDetails
+                              firstSeenAt={tool.firstSeenAt}
+                              lastSeenAt={tool.lastSeenAt}
+                              userEmails={tool.userEmails}
+                              scopes={tool.scopes}
+                            />
+                          </div>
                         </div>
                         <div className="flex gap-2 shrink-0 ml-4">
                           <Button
@@ -839,6 +853,12 @@ export default function ShadowAIPage() {
                           ))}
                         </div>
                       )}
+                      <ObservationDetails
+                        firstSeenAt={tool.firstSeenAt}
+                        lastSeenAt={tool.lastSeenAt}
+                        userEmails={tool.userEmails}
+                        scopes={tool.scopes}
+                      />
                       {dismissingId === tool.id && (
                         <div className="flex items-center gap-2 pt-1">
                           <Input
@@ -869,7 +889,12 @@ export default function ShadowAIPage() {
                       <div className="flex items-center gap-2">
                         <div>
                           <p className="text-sm font-medium">{tool.toolName}</p>
-                          <p className="text-xs text-[var(--text-muted)]">{tool.vendor ?? "—"} &middot; {tool.department ?? "—"}</p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {tool.vendor ?? "—"} &middot; {tool.department ?? "—"}
+                            {tool.lastSeenAt && (
+                              <span className="text-[var(--text-faint)]"> &middot; Last seen {formatDate(tool.lastSeenAt)}</span>
+                            )}
+                          </p>
                         </div>
                         {(tool.detectionSource === "google_workspace" ||
                           tool.detectionSource === "microsoft_365") && (

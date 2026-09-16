@@ -5,6 +5,7 @@ import { withRole } from "@/lib/auth-guard";
 import { createAuditLog } from "@/lib/audit";
 import { classifyDiscoveredTool } from "@/lib/ai-classification";
 import { enforceIdentityBlock, type IdentityEnforcementResult } from "@/lib/identity-enforcement";
+import { dismissedDomainKey } from "@/lib/discovery-merge";
 
 const updateDiscoveredToolSchema = z.object({
   status: z.enum([
@@ -63,13 +64,18 @@ export async function PUT(
 
       await prisma.$transaction(async (tx) => {
         // Create DismissedCandidate to prevent resurfacing
+        // Store "" (never NULL) for a domain-less tool: the unique key is
+        // (toolName, detectedDomain) and the scan/ingest lookups query with
+        // dismissedDomainKey(), which maps null -> "". A NULL row would never
+        // be found and the tool would resurface on every scan.
+        const detectedDomain = dismissedDomainKey(tool.detectedDomain);
         await tx.dismissedCandidate.upsert({
-          where: { toolName_detectedDomain: { toolName: tool.toolName, detectedDomain: tool.detectedDomain ?? "" } },
+          where: { toolName_detectedDomain: { toolName: tool.toolName, detectedDomain } },
           update: { reason, dismissedByUserId: session.user.userId },
           create: {
             toolName: tool.toolName,
             vendor: tool.vendor,
-            detectedDomain: tool.detectedDomain,
+            detectedDomain,
             reason,
             dismissedByUserId: session.user.userId,
           },

@@ -152,12 +152,21 @@ Important files:
 - `src/lib/crowdstrike.ts`
 - `src/lib/discovered-tools-ingest.ts` and `src/lib/third-party-proxy-ingest.ts` (DNS / proxy / Netskope imports)
 - `src/lib/ai-tools-registry.ts`
+- `src/lib/discovery-merge.ts` (pure merge rules for user count, emails, scopes, first/last seen)
 - `src/lib/scan-executor.ts`
 - `src/app/api/discovered-tools/scan/route.ts`
 
 The source-specific scanners gather raw signals, the tool registry handles matching, and the scan executor persists normalized discoveries. Adding a source means writing a scanner and registering it in `ShadowAIScanProvider` inside `scan-executor.ts` — the dedupe, confidence scoring, and suppression logic is shared and should not be reimplemented per source.
 
-Hostnames from log imports are normalized before matching, so trailing dots and case differences do not create duplicate tools.
+Hostnames from log imports are normalized before matching, so trailing dots and case differences do not create duplicate tools. Registry domains must be bare hostnames — `matchDomain` compares hostnames, so a URL path can never match. GitHub Copilot, for example, is keyed on the hosts its IDE extensions actually resolve (`githubcopilot.com`, `copilot-proxy.githubusercontent.com`, `copilot-telemetry.githubusercontent.com`), which is what DNS logs record.
+
+**Observation columns.** `DiscoveredAITool` stores `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` as first-class fields (they were previously stringified into `notes`). Every scanner and importer funnels through the merge helpers in `discovery-merge.ts` rather than writing these directly:
+
+- `mergeUserCount` — a rescan from the **same** `detectionSource` is authoritative and may lower the count; a **different** source only raises it (max).
+- `pickEmails` — only email-shaped identities go into `userEmails`; device names and bare usernames from network logs still count toward `userCount`.
+- `mergeSeenWindow` — first/last seen widen across scans. Log imports and the Netskope webhook read a timestamp column/field (`timestamp`, `@timestamp`, `time`, `date`, …; ISO or epoch via `parseLogTimestamp`) and fall back to the import time.
+
+The Microsoft 365 scanner resolves granting principals to emails through Graph `/users/{id}`, which needs `User.Read.All` on the app registration; without it the scan still succeeds but `userEmails` stays empty. The CSV importer (`parseEntriesFromCsv`) maps headers through per-vendor presets (Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS) layered on a generic preset; add a preset rather than special-casing a vendor in the parser.
 
 ## Shadow AI Enforcement Architecture
 
@@ -183,9 +192,15 @@ Prefer `UsageBucket` and `CostBucket` over reading `APIUsageLog` directly. `APIU
 
 Because a single request can be recorded by both the proxy and a provider admin API, cost aggregation deduplicates. Reuse the existing exclusion helper (`EXCLUDE_PROXY_DUPLICATES_COST`) rather than summing `CostBucket` naively, or you will double-count proxied spend.
 
+**Proxy token accounting and pricing.** All four proxy paths (`src/lib/anthropic-proxy.ts`, `src/app/api/proxy/openai/route.ts`, and the two Azure functions) share one convention so `proxy_live` rows and admin-sync rows add up the same way: `inputTokens` / `promptTokens` = uncached + cache read + cache creation (all input the provider processed); `cacheReadTokens` / `cacheCreationTokens` are the breakdown. Cost = uncached × input + cacheRead × cacheReadPrice + cacheCreation × cacheWritePrice + output × outputPrice. The pricing table and the `TokenUsage` helpers live in `src/lib/model-pricing.ts`, **mirrored byte-for-byte** to `ai-proxy/src/lib/pricing.ts` because the Functions project cannot import from the app — edit both or CI will not catch the drift. Matching is exact model id first, then family prefix. An unknown model is never charged a default: `calculateCost` returns `null`, the row stores cost `0`, and `pricingMatched: false` lands in the usage metadata. The OpenAI proxies inject `stream_options.include_usage` when the client omitted it (and strip the extra trailing usage chunk in that case) so streaming calls record usage and run response DLP; Anthropic `/v1/messages/count_tokens` and `/v1/messages/batches` pass through untouched. Proxy rows carry `requestId` and `aiSystemId`, which session traces join on.
+
+**Provider sync specifics.** OpenAI usage/cost reads follow the `has_more` / `next_page` cursor (`paginateOpenAI`, page-capped, `truncated` recorded in sync metadata), record `input_cached_tokens` as cache reads, and take request counts from `num_model_requests`. Portkey issues one grouped call per UTC day (`buildPortkeyDayWindows`) to produce per-day per-model usage and cost buckets and per-day per-user usage buckets (`partition=actor`); Portkey costs are treated as cents and a `reconciliation` block in the sync-run metadata compares the graph total against the summed grouped totals. Provider sync runs on a single global `provider_sync_enabled` / `provider_sync_interval_hours`; per-provider schedules are planned (see Planned work).
+
 **Per-surface developer-AI telemetry** — OpenTelemetry data landing in dedicated tables (`ClaudeCodeEvent`, `ClaudeCodeMetric`, `CursorMetric`, `CursorSpan`) behind the Claude Code, Cowork, and Cursor pages. Session traces are reconstructed from event timing in `src/lib/claude-code-traces.ts`; spans are **derived**, not client-emitted, so treat durations as approximations.
 
-All of this is metadata only — no prompt text and no code content — and that boundary should be preserved in anything new. Not every surface carries the same fields: the Cursor hook reports no token or cost data, so a spend figure there would be fabricated rather than zero.
+All of this is metadata only — no prompt text and no code content — and that boundary should be preserved in anything new. Not every surface carries the same fields: the Cursor OTel hook reports no token or cost data, so a spend figure derived from it would be fabricated rather than zero — Cursor tokens and cost come from the Cursor Admin API sync (`provider = "cursor"` buckets) instead.
+
+**Idempotent ingest.** The collector retries a batch whose HTTP call timed out after a partial write, so every ingest route (`claude-code`, `claude-code-events`, `cursor`, `cursor-traces`) derives a content-hash `dedupeKey` per row (unique column; metrics hash timestamp + name + value + unit + sorted attributes, events hash timestamp + event name + session/prompt/sequence + stripped attributes, spans use `traceId` + `spanId`) and inserts with `createMany({ skipDuplicates })`. The 202 body reports `accepted` and `duplicates`. Bodies that flatten to more than 5000 rows (`TELEMETRY_MAX_ROWS`) are rejected with 413 — the collector flushes at 1000, so a 413 means something other than the collector is posting. Hash rules live in `src/lib/validations/otel-dedupe.ts`; if you add a field to a row, decide whether it belongs in the hash.
 
 ## Background Jobs
 
@@ -326,6 +341,10 @@ npm run check:secrets        # no credentials staged
   Add `docs/help/<key>.md`, register it in `scripts/gen-help-content.mjs`, then run `npm run help:sync`.
 - New telemetry surface:
   Model the metric/event tables, add an ingest route, and add a retention prune cron alongside it.
+
+## Planned Work
+
+The next tier of data-collection upgrades — splitting the maintenance route into per-provider crons with per-provider sync settings, and the follow-on collection items — is scoped in [docs/plans/data-collection-tier2.md](./plans/data-collection-tier2.md). Pick items up from there one PR at a time rather than re-deriving the scope.
 
 ## Current Caveat
 

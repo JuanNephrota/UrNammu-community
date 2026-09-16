@@ -11,8 +11,14 @@ export interface ScanDiscovery {
   toolName: string;
   vendor: string;
   domain: string;
+  /** Distinct user identities observed by this scan (empty when the source has no identity). */
   userEmails: string[];
   userCount: number;
+  /** OAuth scopes granted to the app (identity-provider sources only). */
+  scopes?: string[];
+  /** Earliest / latest observation in this scan. Omit when the source has no timestamps. */
+  firstSeenAt?: Date;
+  lastSeenAt?: Date;
   notes?: string;
   matchConfidence?: "high" | "medium" | "low";
   matchScore?: number;
@@ -318,6 +324,7 @@ export async function runFullScan(
     ScanDiscovery & {
       firstSeen: string;
       lastSeen: string;
+      scopeSet: Set<string>;
       eventCount: number;
       activeDays: Set<string>;
       confidence: MatchConfidence;
@@ -349,6 +356,7 @@ export async function runFullScan(
           : existing.firstSeen;
       existing.eventCount += 1;
       existing.activeDays.add(eventDay);
+      for (const scope of event.scopes) existing.scopeSet.add(scope);
       existing.confidence =
         confidenceRank(match.confidence) > confidenceRank(existing.confidence)
           ? match.confidence
@@ -370,6 +378,7 @@ export async function runFullScan(
         userCount: 1,
         firstSeen: event.timestamp,
         lastSeen: event.timestamp,
+        scopeSet: new Set(event.scopes),
         eventCount: 1,
         activeDays: new Set([eventDay]),
         confidence: match.confidence,
@@ -387,14 +396,15 @@ export async function runFullScan(
     externalAppProvider: discovery.externalAppProvider,
     userEmails: discovery.userEmails,
     userCount: discovery.userCount,
+    scopes: Array.from(discovery.scopeSet),
+    firstSeenAt: toValidDate(discovery.firstSeen),
+    lastSeenAt: toValidDate(discovery.lastSeen),
     matchConfidence: discovery.confidence,
     matchScore: discovery.confidence === "high" ? 12 : discovery.confidence === "medium" ? 7 : 3,
     matchReasons: discovery.reasons,
     notes: buildGoogleDiscoveryNotes({
       confidence: discovery.confidence,
       reasons: discovery.reasons,
-      firstSeen: discovery.firstSeen,
-      lastSeen: discovery.lastSeen,
       eventCount: discovery.eventCount,
       activeDays: discovery.activeDays.size,
       lowConfidenceCandidate: discovery.lowConfidenceCandidate,
@@ -418,7 +428,11 @@ function extractDomainsFromGoogleSignal(
 
   for (const match of text.matchAll(domainPattern)) {
     const candidate = match[0]?.toLowerCase().replace(/^www\./, "");
-    if (candidate && !candidate.endsWith("googleapis.com")) {
+    if (
+      candidate &&
+      candidate !== "googleapis.com" &&
+      !candidate.endsWith(".googleapis.com")
+    ) {
       domains.add(candidate);
     }
   }
@@ -477,11 +491,17 @@ function confidenceRank(value: MatchConfidence) {
   return value === "high" ? 3 : value === "medium" ? 2 : 1;
 }
 
+function toValidDate(value: string): Date | undefined {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+// First/last seen, scopes and user emails are persisted as structured columns
+// on DiscoveredAITool (see scan-executor.ts), so the note stays a short
+// human-readable summary of the match itself.
 function buildGoogleDiscoveryNotes(input: {
   confidence: MatchConfidence;
   reasons: string[];
-  firstSeen: string;
-  lastSeen: string;
   eventCount: number;
   activeDays: number;
   lowConfidenceCandidate: boolean;
@@ -492,6 +512,5 @@ function buildGoogleDiscoveryNotes(input: {
       : `Matched with ${input.confidence} confidence.`,
     `Signals: ${input.reasons.join(", ")}.`,
     `Observed ${input.eventCount} token event(s) across ${input.activeDays} day(s).`,
-    `First seen ${new Date(input.firstSeen).toLocaleDateString()} · Last seen ${new Date(input.lastSeen).toLocaleDateString()}.`,
   ].join(" ");
 }

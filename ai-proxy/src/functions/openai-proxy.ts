@@ -1,6 +1,12 @@
 import { app, HttpRequest, HttpResponseInit } from "@azure/functions";
-import { Readable, PassThrough } from "stream";
-import { calculateCost } from "../lib/pricing";
+import { Readable, PassThrough, Transform, type TransformCallback } from "stream";
+import {
+  accountTokens,
+  calculateCost,
+  isOpenAIUsageOnlyChunk,
+  usageFromOpenAI,
+  usageMetadata,
+} from "../lib/pricing";
 import { logPolicyDenial, logUsage } from "../lib/db";
 import { extractOpenAIStreamUsage } from "../lib/stream-parser";
 import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
@@ -25,6 +31,72 @@ const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
  */
 function upstreamRequestId(res: Response): string | null {
   return res.headers.get("x-request-id") ?? res.headers.get("request-id");
+}
+
+/**
+ * OpenAI only reports usage on a stream when `stream_options.include_usage`
+ * is set. When the client omits it we inject it upstream so the final chunk
+ * carries prompt/completion/cached tokens, then strip that usage-only chunk
+ * from the client's copy so the response matches what they asked for.
+ */
+function injectIncludeUsage(bodyJson: Record<string, unknown>): {
+  bodyJson: Record<string, unknown>;
+  injected: boolean;
+} {
+  if (bodyJson.stream !== true) return { bodyJson, injected: false };
+  const streamOptions =
+    bodyJson.stream_options && typeof bodyJson.stream_options === "object"
+      ? (bodyJson.stream_options as Record<string, unknown>)
+      : null;
+  if (streamOptions?.include_usage === true) return { bodyJson, injected: false };
+  return {
+    bodyJson: { ...bodyJson, stream_options: { ...(streamOptions ?? {}), include_usage: true } },
+    injected: true,
+  };
+}
+
+const SSE_EVENT_BOUNDARY = /\r?\n\r?\n/;
+
+/** Join the `data:` lines of one SSE event and parse them; null when not JSON. */
+function parseSseJson(eventText: string): unknown {
+  const data: string[] = [];
+  for (const line of eventText.split(/\r?\n/)) {
+    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  }
+  if (data.length === 0) return null;
+  const payload = data.join("\n");
+  if (payload === "[DONE]") return null;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+/** Node Transform that drops the trailing usage-only SSE chunk. */
+function createUsageChunkFilter(): Transform {
+  let buffer = "";
+  const emit = (self: Transform, eventText: string) => {
+    if (isOpenAIUsageOnlyChunk(parseSseJson(eventText))) return;
+    self.push(eventText);
+  };
+  return new Transform({
+    transform(chunk: Buffer | string, _encoding: BufferEncoding, callback: TransformCallback) {
+      buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      let match: RegExpExecArray | null;
+      while ((match = SSE_EVENT_BOUNDARY.exec(buffer)) !== null) {
+        const end = match.index + match[0].length;
+        emit(this, buffer.slice(0, end));
+        buffer = buffer.slice(end);
+      }
+      callback();
+    },
+    flush(callback: TransformCallback) {
+      if (buffer) emit(this, buffer);
+      buffer = "";
+      callback();
+    },
+  });
 }
 
 async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
@@ -83,6 +155,14 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const model = (bodyJson.model as string) ?? "unknown";
   const isStreaming = bodyJson.stream === true;
   const startTime = Date.now();
+
+  // Streaming usage — see injectIncludeUsage. Done before policy evaluation
+  // so the evaluated body is exactly what we forward.
+  const usageInjection = injectIncludeUsage(bodyJson);
+  if (usageInjection.injected) {
+    bodyJson = usageInjection.bodyJson;
+    bodyText = JSON.stringify(bodyJson);
+  }
 
   // ── Policy enforcement gate ── see anthropic-proxy.ts for mode semantics.
   if (aiSystemId) {
@@ -215,9 +295,15 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       requestId,
       agent,
       declaredServers: [],
+      usageInjected: usageInjection.injected,
     }).catch((err: unknown) => {
       console.error("extractOpenAIStreamUsage failed:", err);
     });
+
+    // Strip the usage-only chunk only when we asked for it ourselves.
+    const clientBody = usageInjection.injected
+      ? clientPass.pipe(createUsageChunkFilter())
+      : clientPass;
 
     return {
       status: openaiRes.status,
@@ -226,7 +312,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
       },
-      body: clientPass,
+      body: clientBody,
     };
   }
 
@@ -236,6 +322,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       prompt_tokens?: number;
       completion_tokens?: number;
       total_tokens?: number;
+      prompt_tokens_details?: { cached_tokens?: number } | null;
     };
     choices?: Array<{ message?: { content?: string } }>;
     error?: {
@@ -243,11 +330,11 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     };
   };
 
-  const usage = responseBody.usage ?? {};
-  const promptTokens = usage.prompt_tokens ?? 0;
-  const completionTokens = usage.completion_tokens ?? 0;
-  const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
-  const cost = calculateCost("chatgpt", model, promptTokens, completionTokens);
+  // prompt_tokens INCLUDES cached tokens — usageFromOpenAI splits them out so
+  // cache reads are priced at the cached rate (see ../lib/pricing.ts).
+  const tokenUsage = usageFromOpenAI(responseBody.usage);
+  const accounted = accountTokens(tokenUsage);
+  const pricing = calculateCost("openai", model, tokenUsage);
   const toolUses = openaiRes.ok ? extractOpenAIToolUses(responseBody) : [];
 
   let flagged = false;
@@ -282,10 +369,12 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
     model,
     department,
     userEmail,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cost,
+    promptTokens: accounted.promptTokens,
+    completionTokens: accounted.completionTokens,
+    totalTokens: accounted.totalTokens,
+    cacheReadTokens: accounted.cacheReadTokens,
+    cacheCreationTokens: accounted.cacheCreationTokens,
+    cost: pricing.cost ?? 0,
     flagged,
     flagCategory,
     flagReason,
@@ -295,6 +384,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       agentId: agent?.id ?? null,
       latencyMs,
       status: openaiRes.status,
+      ...usageMetadata(tokenUsage, pricing),
       mcp: summarizeMcpForMetadata([], toolUses),
     },
   }).catch((err) => {

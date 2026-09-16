@@ -281,6 +281,10 @@ export async function runCrowdStrikeScan(): Promise<FullScanResult> {
         toolName: entry.toolName,
         vendor: entry.vendor,
         domain: entry.domain,
+        // Falcon Discover's application inventory is host-centric: it has no
+        // user identity and no per-host install timestamps, so userEmails
+        // stays empty and the executor falls back to the scan time for
+        // first/last seen.
         userEmails: [],
         // Host count is the closest available proxy for reach. At least 1 so a
         // detected-but-uncounted app still surfaces with a non-zero footprint.
