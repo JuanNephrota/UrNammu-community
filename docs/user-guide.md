@@ -786,11 +786,13 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 
 ### How Provider Sync Works
 
-With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
+With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, a ChatGPT Enterprise Admin key on the Integrations page, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys, plus the same attribution columns as `UsageBucket` (API key, workspace, governed system) so cost can be rolled up by system and by key.
-- **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code and Cursor dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
+- **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API) and for ChatGPT Enterprise (`chatgpt`: messages sent and conversations per day; `codex`: prompts, sessions, tool calls, tokens, cost): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code and Cursor dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
+- **`ComplianceActivity`** — immutable auth and admin-audit events from provider compliance feeds (ChatGPT Enterprise `AUTH_LOG` / `AUDIT_LOG`, provider `openai`), keyed by the upstream event id. Metadata only: actor, IP, user agent, action, and action data — never message content.
+- **`ProviderSyncWatermark`** — one row per incremental stream (for example `chatgpt_enterprise:AUTH_LOG`) recording the instant the stream has been ingested through, so each scheduled run resumes where the last one stopped.
 - **`ProviderProject`** / **`ProviderActor`** — discovered workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
 
@@ -801,6 +803,7 @@ What each sync contributes:
 - **Anthropic Admin API** — organization usage per model, API key, and **workspace**, cost per workspace, model, and cost type (the Anthropic cost report cannot be grouped by API key, so per-key spend is available only at workspace granularity; the organization's default workspace is labelled "Default workspace"), the workspace list (stored as `ProviderProject` rows), plus the **Claude Code analytics** feed (per-developer sessions, lines, commits, estimated cost) used by Usage by Person when a machine has no OTel data.
 - **OpenAI Admin API** — usage per model / project with prompt-cache hits recorded as `cacheReadTokens` (OpenAI's `input_cached_tokens`), request counts (`num_model_requests`), and cost. Both the usage and cost endpoints are paginated; the sync follows the cursor up to a page cap and records `truncated: true` in the sync-run metadata if the cap was hit.
 - **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. Cursor's OTel hook does not carry tokens or cost; this sync is where they come from.
+- **ChatGPT Enterprise Compliance API** — workspace users (`ProviderActor`, provider `chatgpt`, with role and status), auth and admin-audit events (`ComplianceActivity`), per-user daily ChatGPT message counts and Codex activity (`AssistantDailyStat` providers `chatgpt` and `codex`), and alerts for admin-role grants and new GPTs with custom actions. Log streams (`AUTH_LOG`, `AUDIT_LOG`, `CONVERSATION_MESSAGE`, `CODEX_LOG`, `CODEX_TURN`) each keep their own cursor; a stream the key is not scoped for is skipped and listed under `unauthorizedStreams` in the sync-run metadata. Conversation and prompt content is never read into UrNammu — only counts, identifiers, models, and token totals.
 - **Portkey** — one `UsageBucket` + `CostBucket` per day per model, and one `UsageBucket` per day per user (dimension key `partition=actor`). Portkey reports cost in cents; the sync converts to USD and stores a `reconciliation` block (graph total vs. summed per-model and per-user totals) in the sync-run metadata so the unit assumption can be checked against the Portkey console.
 - **Helicone, OpenRouter, LiteLLM** — gateway request and cost records normalized into the same buckets.
 - **Gemini / Vertex AI** — spend and best-effort project attribution from the BigQuery billing export.
@@ -1180,6 +1183,7 @@ Every alert has a `source` string indicating what generated it:
 | `ownership_escalation` | System has no owner assigned. |
 | `dangerous_prompt` | Proxy-scanned traffic matched a risky prompt pattern. |
 | `key_usage_rule` | An API key's usage tripped a key usage rule. |
+| `chatgpt_compliance_api` | The ChatGPT Enterprise sync saw a workspace admin role granted, or a new GPT with custom actions. |
 
 ### Working an Alert
 
@@ -1362,6 +1366,17 @@ The sync records cached input tokens and request counts per model, and pages thr
 
 Provides per-user tokens, requests, accepted lines, and charged spend for the Cursor dashboard and Usage by Person — the Cursor OTel hook carries none of these.
 
+### ChatGPT Enterprise Compliance API
+
+1. As a ChatGPT Enterprise / Edu **workspace owner**, open the OpenAI Admin Console → Credentials → Admin keys and create a **workspace-scoped** Admin key. Use **Custom** permissions: read access to **Users**, **GPTs**, and **Compliance logging platform** (auth, audit, and Codex logs; add **Conversation messages** only if you want per-user message counts — UrNammu stores counts, never text). Only a workspace owner can grant the compliance scopes.
+2. Copy the workspace id (the UUID in the Admin Console URL and in every Compliance API route).
+3. Open **Integrations → ChatGPT Enterprise Compliance API**, paste the key and workspace id, **Save**, then **Test**. The test lists one user and reports log freshness; a key missing the compliance scope still passes, with a note that auth/audit logs will be skipped.
+4. The `chatgpt_enterprise` provider now appears in **Settings → Provider Admin APIs → Background Provider Sync** with its own enable flag and interval.
+
+What the sync writes: workspace users → `ProviderActor` (provider `chatgpt`), `AUTH_LOG` / `AUDIT_LOG` → `ComplianceActivity` (provider `openai`), `CONVERSATION_MESSAGE` → per-user daily `AssistantDailyStat` rows (provider `chatgpt`: messages sent, conversations, models, client surfaces), `CODEX_LOG` + `CODEX_TURN` → per-user daily rows (provider `codex`: prompts, sessions, tool calls, tokens, USD cost). Alerts (`chatgpt_compliance_api`): a member's role changed to `account-owner` / `account-admin`, an audit event granted an admin role, or a GPT with `custom_action` tools was created or reconfigured since the last run.
+
+Cursors: every log stream and the GPT catalog keep their own row in `ProviderSyncWatermark`. The Compliance Logs Platform retains files for 30 days; the first sync reaches back 7 days, and each run downloads at most 40 files (60 MB) per stream — when more are waiting the sync-run metadata records `truncated: true` for that stream and the next hourly run continues. A day's counts arrive across several runs and are added onto the existing row, so per-day totals grow during the day rather than being overwritten.
+
 ### DNS / Proxy Ingestion
 
 - **CSV**: upload a native gateway export via **Shadow AI → Import CSV** (choose the vendor preset), or `POST` it as multipart `file` + `source` to `/api/discovered-tools/import`.
@@ -1396,7 +1411,7 @@ Every background job has its own cron endpoint, guarded by `CRON_SECRET` and wir
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/api/cron/provider-sync/<provider>` | One entry each for `anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`. Syncs that provider's telemetry when its own interval has elapsed. The OpenAI job also discovers Assistants as agents. |
+| `/api/cron/provider-sync/<provider>` | One entry each for `anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`. Syncs that provider's telemetry when its own interval has elapsed. The OpenAI job also discovers Assistants as agents. |
 | `/api/cron/discovery-scan/<source>` | One entry each for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`. Fails scans of that source stuck in `running` for 10+ minutes, then scans when due. |
 | `/api/cron/governance-automation` | Governance automation (below). |
 | `/api/cron/key-usage-rules` | Key usage rule evaluation (see [Key Usage Rules](#key-usage-rules)); a failed evaluation is reported in the response rather than failing the cron. |

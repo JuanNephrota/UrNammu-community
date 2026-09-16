@@ -4,11 +4,12 @@ Provider-level usage, cost, anomaly, vendor, and investigation telemetry.
 
 ## How provider sync works
 
-With an Anthropic admin key, an OpenAI admin key, a Cursor admin key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (gateway keys live under **Settings → Integrations**), each provider has its own hourly cron that syncs once that provider's own interval has elapsed since its last successful run, and writes into:
+With an Anthropic admin key, an OpenAI admin key, a Cursor admin key, a ChatGPT Enterprise Admin key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (gateway and ChatGPT Enterprise keys live under **Settings → Integrations**), each provider has its own hourly cron that syncs once that provider's own interval has elapsed since its last successful run, and writes into:
 
 - `UsageBucket` — tokens / requests per provider / model / project / actor / time bucket.
 - `CostBucket` — amount and line-item cost, with the same attribution columns as `UsageBucket` (API key, workspace, governed system).
-- `AssistantDailyStat` — one row per person per day for the coding assistants (Claude Code via the Anthropic Admin API analytics report, Cursor via the Cursor Admin API): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as real columns rather than JSON.
+- `AssistantDailyStat` — one row per person per day for the coding assistants (Claude Code via the Anthropic Admin API analytics report, Cursor via the Cursor Admin API) and, from the ChatGPT Enterprise Compliance API, `chatgpt` (messages sent, conversations) and `codex` (prompts, sessions, tool calls, tokens, cost): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as real columns rather than JSON.
+- `ComplianceActivity` — immutable auth and admin-audit events from provider compliance feeds (ChatGPT Enterprise today, provider `openai`), keyed by the upstream event id so overlapping pulls never duplicate. Metadata only.
 - `ProviderProject` / `ProviderActor` — workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members discovered upstream.
 - `ProviderSyncRun` — a record of each sync attempt.
 
@@ -19,6 +20,7 @@ What each sync records, beyond the shared bucket shape:
 - **Anthropic** — organization usage per model, API key, and workspace; cost per workspace, model, and cost type (the cost report has no API-key dimension, so Anthropic spend is attributed at workspace granularity); the workspace list; plus the Claude Code analytics feed (sessions, lines, commits, estimated cost per developer) that backs Usage by Person when a machine is not instrumented with OTel.
 - **OpenAI** — usage per model and project, including prompt-cache hits as `cacheReadTokens`, and request counts. Usage and cost results are paginated; if the page cap is hit the sync-run metadata records `truncated: true` so a partial day is never mistaken for a quiet one.
 - **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. This is where Cursor tokens and cost come from; the Cursor OTel hook carries neither.
+- **ChatGPT Enterprise Compliance API** — workspace users (email, role, status) as `ProviderActor` rows with provider `chatgpt`; `AUTH_LOG` and `AUDIT_LOG` events into `ComplianceActivity`; `CONVERSATION_MESSAGE` events counted into per-user daily `chatgpt` rows (messages sent, assistant replies, conversations, models, client surfaces — never content); `CODEX_LOG` and `CODEX_TURN` events into per-user daily `codex` rows (prompts, sessions, tool calls, tokens, USD cost when reported). Each log stream resumes from its own cursor in `ProviderSyncWatermark`; the platform keeps files for 30 days, so the first sync reaches back 7 days and each run downloads at most 40 files per stream, recording `truncated: true` when more are waiting.
 - **Portkey** — one usage and cost bucket per day per model, and one usage bucket per day per user. Portkey reports cost in cents; the sync divides by 100 and records a `reconciliation` block in the sync-run metadata comparing the org-level graph total with the summed per-model and per-user totals so the unit assumption is auditable.
 - **Gemini** — spend and best-effort project attribution from the BigQuery billing export.
 

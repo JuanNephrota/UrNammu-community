@@ -66,14 +66,52 @@ import {
   getCursorUsageEvents,
 } from "./cursor-admin";
 import {
+  ChatGPTEnterpriseApiError,
+  downloadChatGPTLogFile,
+  getChatGPTWorkspaceId,
+  isChatGPTEnterpriseConfigured,
+  listChatGPTLogFiles,
+  listChatGPTWorkspaceGpts,
+  listChatGPTWorkspaceUsers,
+} from "./chatgpt-enterprise-admin";
+import {
+  advanceStreamWatermark,
+  aggregateCodexEvents,
+  aggregateConversationMessages,
+  CHATGPT_LOG_EVENT_TYPES,
+  CHATGPT_LOG_MAX_FILES_PER_RUN,
+  CHATGPT_SYNC_PROVIDER,
+  chatgptStreamWatermarkKey,
+  complianceActivityFromEvent,
+  dedupeEvents,
+  detectAdminRoleAuditGrants,
+  detectAdminRoleGrants,
+  detectGptsWithActions,
+  detectNewWorkspaceUsers,
+  latestGptCreatedAt,
+  normalizeWorkspaceUser,
+  planLogFileBatch,
+  resolveLogCursor,
+  type ChatGPTLogEventType,
+  type ChatGPTLogFileMetadata,
+  type ComplianceActivityValues,
+  type ComplianceLogEnvelope,
+} from "./chatgpt-enterprise-compliance";
+import { notifyDatadog } from "./datadog-client";
+import {
   getSetting,
   PROVIDER_KEY_SYSTEM_MAP_SETTING_KEY,
   PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS,
 } from "./settings";
 import { logger } from "./observability";
 import {
+  assistantActorName,
+  assistantDay,
+  chatgptDailyCountsToStat,
   claudeCodeEntryToDailyStat,
+  codexDailyCountsToStat,
   cursorDailyRowToStat,
+  mergeAssistantDailyStat,
   type AssistantDailyStatValues,
 } from "./assistant-daily-stats";
 import {
@@ -93,7 +131,17 @@ type SyncSummary = {
   apiUsageLogsCreated: number;
 };
 
-type SyncProvider = "anthropic" | "openai" | "claude_code" | "gemini" | "openrouter" | "helicone" | "portkey" | "litellm" | "cursor";
+type SyncProvider =
+  | "anthropic"
+  | "openai"
+  | "claude_code"
+  | "gemini"
+  | "openrouter"
+  | "helicone"
+  | "portkey"
+  | "litellm"
+  | "cursor"
+  | "chatgpt_enterprise";
 
 type SyncResult =
   | ({ provider: SyncProvider; success: true } & SyncSummary)
@@ -2965,5 +3013,445 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "litellm", success: false, error: errorMessage };
+  }
+}
+
+// ─── ChatGPT Enterprise (OpenAI Compliance API) ───────────────────────────
+//
+// Reads a ChatGPT Enterprise / Edu workspace through the OpenAI Programmatic
+// Admin Platform: the stateful users and GPTs exports plus the append-only
+// Compliance Logs Platform (AUTH_LOG, AUDIT_LOG, CONVERSATION_MESSAGE,
+// CODEX_LOG, CODEX_TURN). Each log stream keeps its own `after` cursor in
+// ProviderSyncWatermark (`chatgpt_enterprise:<EVENT_TYPE>`); the GPTs stream
+// keeps the newest creation time it has seen so "new GPT with actions" can be
+// detected; the bare `chatgpt_enterprise` row marks the last successful run.
+//
+// Metadata boundary: conversation messages and Codex prompts are aggregated
+// into per-user daily counts (AssistantDailyStat) and never stored. Only
+// auth and admin-audit events land in ComplianceActivity, with provider
+// "openai" so the planned Anthropic feed can share the table.
+
+const CHATGPT_ALERT_SOURCE = "chatgpt_compliance_api";
+const COMPLIANCE_ACTIVITY_INSERT_CHUNK = 500;
+
+type WatermarkState = { watermark: Date; earliest: Date };
+
+async function loadSyncWatermark(key: string): Promise<WatermarkState | null> {
+  const row = await prisma.providerSyncWatermark.findUnique({ where: { provider: key } });
+  return row ? { watermark: row.watermark, earliest: row.earliest } : null;
+}
+
+async function saveSyncWatermark(key: string, state: WatermarkState) {
+  await prisma.providerSyncWatermark.upsert({
+    where: { provider: key },
+    update: { watermark: state.watermark, earliest: state.earliest },
+    create: { provider: key, watermark: state.watermark, earliest: state.earliest },
+  });
+}
+
+/**
+ * Create a governance alert unless an open one with the same title exists.
+ * Titles carry the subject (email, GPT id) so they double as the dedupe key.
+ */
+async function raiseComplianceAlert(input: {
+  title: string;
+  description: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
+}): Promise<boolean> {
+  const existing = await prisma.alert.findFirst({
+    where: {
+      source: CHATGPT_ALERT_SOURCE,
+      title: input.title,
+      status: { in: ["OPEN", "ACKNOWLEDGED"] },
+    },
+    select: { id: true },
+  });
+  if (existing) return false;
+
+  await prisma.alert.create({
+    data: {
+      title: input.title,
+      description: input.description,
+      severity: input.severity,
+      source: CHATGPT_ALERT_SOURCE,
+    },
+  });
+  await notifyDatadog({
+    title: `[UrNammu] ${input.title}`,
+    text: input.description,
+    tags: ["source:urnammu", `alert_source:${CHATGPT_ALERT_SOURCE}`, `severity:${input.severity.toLowerCase()}`],
+    alertType: input.severity === "CRITICAL" || input.severity === "HIGH" ? "error" : input.severity === "MEDIUM" ? "warning" : "info",
+    aggregationKey: `urnammu:${CHATGPT_ALERT_SOURCE}:${input.title}`,
+  });
+  return true;
+}
+
+/**
+ * Add a batch of log-derived counts onto the existing row for the same
+ * (provider, day, actor). See mergeAssistantDailyStat for why this is not a
+ * plain upsert.
+ */
+async function accumulateAssistantDailyStat(syncRunId: string, values: AssistantDailyStatValues) {
+  const existing = await prisma.assistantDailyStat.findUnique({
+    where: {
+      provider_day_actorExternalId: {
+        provider: values.provider,
+        day: values.day,
+        actorExternalId: values.actorExternalId,
+      },
+    },
+    select: {
+      isActive: true,
+      sessions: true,
+      requests: true,
+      linesAdded: true,
+      linesRemoved: true,
+      linesAccepted: true,
+      commits: true,
+      pullRequests: true,
+      toolAccepted: true,
+      toolRejected: true,
+      estimatedCost: true,
+      inputTokens: true,
+      outputTokens: true,
+      cacheReadTokens: true,
+      cacheCreationTokens: true,
+      metadata: true,
+    },
+  });
+  await upsertAssistantDailyStat(syncRunId, mergeAssistantDailyStat(existing, values));
+}
+
+type ChatGPTStreamReport = {
+  after: string;
+  files: number;
+  events: number;
+  duplicates: number;
+  malformed: number;
+  bytes: number;
+  truncated: boolean;
+  processedThrough: string | null;
+  skipped?: string;
+};
+
+function isUnauthorized(err: unknown): err is ChatGPTEnterpriseApiError {
+  return err instanceof ChatGPTEnterpriseApiError && (err.status === 401 || err.status === 403);
+}
+
+function countBy(values: readonly (string | null)[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const v of values) {
+    const k = v ?? "unknown";
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
+}
+
+export async function syncChatGPTEnterprise(triggeredByUserId: string): Promise<SyncResult> {
+  if (!(await isChatGPTEnterpriseConfigured())) {
+    return {
+      provider: "chatgpt_enterprise",
+      success: false,
+      skipped: true,
+      error: "ChatGPT Enterprise Admin key or workspace id is not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("chatgpt_enterprise", triggeredByUserId);
+
+  try {
+    const workspaceId = await getChatGPTWorkspaceId();
+    const now = new Date();
+    let rawSnapshotsStored = 0;
+    let actorsUpserted = 0;
+    let alertsCreated = 0;
+    let complianceActivitiesInserted = 0;
+    let assistantDailyStatsUpserted = 0;
+
+    const overallKey = CHATGPT_SYNC_PROVIDER;
+    const previousRun = await loadSyncWatermark(overallKey);
+
+    // ── Users → ProviderActor (provider "chatgpt") ──────────────────────
+    const { users, truncated: usersTruncated } = await listChatGPTWorkspaceUsers(workspaceId);
+    const existingActors = await prisma.providerActor.findMany({
+      where: { provider: "chatgpt" },
+      select: { externalId: true, role: true },
+    });
+    const previousRoles = new Map(existingActors.map((a) => [a.externalId, a.role]));
+
+    const normalizedUsers = users
+      .map((user) => normalizeWorkspaceUser(user))
+      .filter((u): u is NonNullable<typeof u> => u !== null);
+    for (const user of normalizedUsers) {
+      const metadata = toJsonValue({
+        status: user.status,
+        createdAt: user.createdAt?.toISOString() ?? null,
+        workspaceId,
+      });
+      await prisma.providerActor.upsert({
+        where: { provider_externalId: { provider: "chatgpt", externalId: user.externalId } },
+        update: {
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          metadata,
+          lastSeenAt: now,
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "chatgpt",
+          externalId: user.externalId,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          metadata,
+          syncRunId: syncRun.id,
+        },
+      });
+      actorsUpserted++;
+    }
+    await storeSnapshot(syncRun.id, "chatgpt_enterprise", "users", {
+      users: users.length,
+      truncated: usersTruncated,
+      roles: countBy(normalizedUsers.map((u) => u.role)),
+      statuses: countBy(normalizedUsers.map((u) => u.status)),
+    });
+    rawSnapshotsStored++;
+
+    for (const grant of detectAdminRoleGrants(previousRoles, users)) {
+      const who = grant.email ?? grant.userId;
+      const created = await raiseComplianceAlert({
+        title: `ChatGPT workspace admin role granted: ${who}`,
+        description:
+          `${who} now holds the "${grant.newRole}" role in ChatGPT workspace ${workspaceId} ` +
+          `(previously "${grant.previousRole ?? "unknown"}"). Confirm the change was approved and that the ` +
+          `account is covered by SSO/MFA. Source: Compliance API users export.`,
+        severity: "HIGH",
+      });
+      if (created) alertsCreated++;
+    }
+
+    // New members since the last run. The directory cross-check (Tier 3
+    // item 3.3, DirectoryPerson) is not on main yet, so this is reported in
+    // the run metadata only.
+    const newUsers = detectNewWorkspaceUsers(users, previousRun?.watermark ?? null);
+
+    // ── GPTs → "new GPT with custom actions" alerts ─────────────────────
+    const gptsKey = chatgptStreamWatermarkKey("GPTS");
+    let gptsReport: Record<string, unknown>;
+    try {
+      const gptsWatermark = await loadSyncWatermark(gptsKey);
+      const { gpts, truncated } = await listChatGPTWorkspaceGpts(workspaceId);
+      const newWithActions = detectGptsWithActions(gpts, gptsWatermark?.watermark ?? null);
+      for (const hit of newWithActions) {
+        const exposed = hit.visibility === "anyone-with-link" || hit.visibility === "gpt-store";
+        const created = await raiseComplianceAlert({
+          title: `ChatGPT GPT with custom actions created: ${hit.name ?? hit.gptId}`,
+          description:
+            `GPT ${hit.gptId}${hit.name ? ` ("${hit.name}")` : ""} owned by ${hit.ownerEmail ?? "unknown"} ` +
+            `calls external actions at ${hit.actionDomains.length ? hit.actionDomains.join(", ") : "an unlisted domain"}` +
+            `${hit.authTypes.length ? ` (auth: ${hit.authTypes.join(", ")})` : ""}; sharing: ${hit.visibility ?? "unknown"}. ` +
+            `Custom actions send conversation data to third-party endpoints — review the domain against the approved list.`,
+          severity: exposed ? "HIGH" : "MEDIUM",
+        });
+        if (created) alertsCreated++;
+      }
+      const latest = latestGptCreatedAt(gpts);
+      const nextGptsWatermark: WatermarkState = latest
+        ? {
+            watermark: gptsWatermark && gptsWatermark.watermark > latest ? gptsWatermark.watermark : latest,
+            earliest: gptsWatermark && gptsWatermark.earliest < latest ? gptsWatermark.earliest : latest,
+          }
+        : gptsWatermark ?? { watermark: now, earliest: now };
+      await saveSyncWatermark(gptsKey, nextGptsWatermark);
+      gptsReport = {
+        gpts: gpts.length,
+        withActions: detectGptsWithActions(gpts, new Date(0)).length,
+        newWithActions: newWithActions.length,
+        truncated,
+        baseline: !gptsWatermark,
+      };
+      await storeSnapshot(syncRun.id, "chatgpt_enterprise", "gpts", gptsReport);
+      rawSnapshotsStored++;
+    } catch (err) {
+      if (!isUnauthorized(err)) throw err;
+      gptsReport = { skipped: `unauthorized (${err.status}): key lacks the GPTs read scope` };
+    }
+
+    // ── Compliance Logs Platform streams ────────────────────────────────
+    const seenEventIds = new Set<string>();
+    const streams: Record<string, ChatGPTStreamReport> = {};
+    let codexLogEvents: ComplianceLogEnvelope[] = [];
+    let codexTurnEvents: ComplianceLogEnvelope[] = [];
+    const deferredWatermarks: { key: string; state: WatermarkState }[] = [];
+
+    for (const eventType of CHATGPT_LOG_EVENT_TYPES) {
+      const key = chatgptStreamWatermarkKey(eventType);
+      const existingWatermark = await loadSyncWatermark(key);
+      const after = resolveLogCursor({ watermark: existingWatermark?.watermark ?? null, now });
+      const report: ChatGPTStreamReport = {
+        after: after.toISOString(),
+        files: 0,
+        events: 0,
+        duplicates: 0,
+        malformed: 0,
+        bytes: 0,
+        truncated: false,
+        processedThrough: null,
+      };
+
+      try {
+        // List up to one page past the per-run cap so truncation is known.
+        const listed: ChatGPTLogFileMetadata[] = [];
+        let cursor = after;
+        let listingTruncated = false;
+        for (;;) {
+          const page = await listChatGPTLogFiles(workspaceId, eventType, cursor, { before: now });
+          listed.push(...page.data);
+          if (listed.length > CHATGPT_LOG_MAX_FILES_PER_RUN) {
+            listingTruncated = true;
+            break;
+          }
+          if (!page.has_more || !page.last_end_time) break;
+          cursor = new Date(page.last_end_time);
+        }
+
+        const plan = planLogFileBatch(listed);
+        report.truncated = plan.truncated || listingTruncated;
+
+        const events: ComplianceLogEnvelope[] = [];
+        for (const file of plan.files) {
+          const downloaded = await downloadChatGPTLogFile(workspaceId, file.id);
+          report.files++;
+          report.bytes += downloaded.bytes;
+          report.malformed += downloaded.malformed;
+          const deduped = dedupeEvents(downloaded.records, seenEventIds);
+          report.duplicates += deduped.duplicates;
+          events.push(...deduped.events);
+        }
+        report.events = events.length;
+
+        if (eventType === "AUTH_LOG" || eventType === "AUDIT_LOG") {
+          const rows = events
+            .map((event) => complianceActivityFromEvent(event, eventType, workspaceId))
+            .filter((row): row is ComplianceActivityValues => row !== null);
+          for (let i = 0; i < rows.length; i += COMPLIANCE_ACTIVITY_INSERT_CHUNK) {
+            const chunk = rows.slice(i, i + COMPLIANCE_ACTIVITY_INSERT_CHUNK);
+            const inserted = await prisma.complianceActivity.createMany({
+              data: chunk.map((row) => ({ ...row, payload: toJsonValue(row.payload) })),
+              skipDuplicates: true,
+            });
+            complianceActivitiesInserted += inserted.count;
+          }
+          if (eventType === "AUDIT_LOG") {
+            for (const grant of detectAdminRoleAuditGrants(events)) {
+              const target = grant.targetEmails.join(", ") || grant.targetUserId || "unknown user";
+              const created = await raiseComplianceAlert({
+                title: `ChatGPT workspace admin role granted: ${target}`,
+                description:
+                  `Audit event ${grant.action} granted the "${grant.role}" role to ${target} in ChatGPT workspace ${workspaceId}` +
+                  `${grant.actorEmail ? `, performed by ${grant.actorEmail}` : ""}` +
+                  `${grant.occurredAt ? ` at ${grant.occurredAt.toISOString()}` : ""}. Confirm the change was approved.`,
+                severity: "HIGH",
+              });
+              if (created) alertsCreated++;
+            }
+          }
+        } else if (eventType === "CONVERSATION_MESSAGE") {
+          for (const counts of aggregateConversationMessages(events)) {
+            await accumulateAssistantDailyStat(
+              syncRun.id,
+              chatgptDailyCountsToStat(
+                counts,
+                { externalId: counts.actorExternalId, name: assistantActorName(counts.actorExternalId) },
+                assistantDay(counts.day),
+              ),
+            );
+            assistantDailyStatsUpserted++;
+          }
+        } else if (eventType === "CODEX_LOG") {
+          codexLogEvents = events;
+        } else if (eventType === "CODEX_TURN") {
+          codexTurnEvents = events;
+        }
+
+        const next = advanceStreamWatermark(existingWatermark, plan.nextWatermark, after);
+        report.processedThrough = plan.nextWatermark?.toISOString() ?? null;
+        if (next) {
+          // Codex counts are written after both Codex streams are read, so
+          // their cursors only advance once those rows are safely stored.
+          if (eventType === "CODEX_LOG" || eventType === "CODEX_TURN") {
+            deferredWatermarks.push({ key, state: next });
+          } else {
+            await saveSyncWatermark(key, next);
+          }
+        }
+      } catch (err) {
+        if (!isUnauthorized(err)) throw err;
+        report.skipped = `unauthorized (${err.status}): key lacks the ${eventType} read scope`;
+      }
+
+      streams[eventType] = report;
+    }
+
+    for (const counts of aggregateCodexEvents(codexLogEvents, codexTurnEvents)) {
+      await accumulateAssistantDailyStat(
+        syncRun.id,
+        codexDailyCountsToStat(
+          counts,
+          { externalId: counts.actorExternalId, name: assistantActorName(counts.actorExternalId) },
+          assistantDay(counts.day),
+        ),
+      );
+      assistantDailyStatsUpserted++;
+    }
+    for (const deferred of deferredWatermarks) {
+      await saveSyncWatermark(deferred.key, deferred.state);
+    }
+
+    await storeSnapshot(syncRun.id, "chatgpt_enterprise", "logs", { streams });
+    rawSnapshotsStored++;
+
+    await saveSyncWatermark(overallKey, {
+      watermark: now,
+      earliest: previousRun?.earliest ?? now,
+    });
+
+    const summary = {
+      usageBucketsUpserted: 0,
+      costBucketsUpserted: 0,
+      rawSnapshotsStored,
+      projectsUpserted: 0,
+      actorsUpserted,
+      apiUsageLogsCreated: 0,
+    };
+
+    const unauthorizedStreams = (Object.keys(streams) as ChatGPTLogEventType[]).filter((t) => streams[t]?.skipped);
+    await completeSyncRun(syncRun.id, summary, {
+      workspaceId,
+      users: users.length,
+      newUsers: newUsers.length,
+      directoryCheck: "skipped: DirectoryPerson (Tier 3 item 3.3) is not present",
+      gpts: gptsReport,
+      streams,
+      unauthorizedStreams,
+      complianceActivitiesInserted,
+      assistantDailyStatsUpserted,
+      alertsCreated,
+    });
+
+    logger.info("provider_sync.chatgpt_enterprise.completed", {
+      syncRunId: syncRun.id,
+      users: users.length,
+      complianceActivitiesInserted,
+      assistantDailyStatsUpserted,
+      alertsCreated,
+      unauthorizedStreams,
+    });
+
+    return { provider: "chatgpt_enterprise", success: true, syncRunId: syncRun.id, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "chatgpt_enterprise", success: false, error: errorMessage };
   }
 }

@@ -689,6 +689,54 @@ model AssistantDailyStat {
   @@index([syncRunId])
 }
 
+// One row per sync stream (e.g. `chatgpt_enterprise`, or a per-log-type
+// stream such as `chatgpt_enterprise:AUTH_LOG`). Drives the incremental
+// `after` cursor each scheduled provider sync resumes from.
+//
+// Shape matches the ProviderSyncWatermark introduced by the sync-watermarks
+// work (PR #113, currently merged to feat/data-collection-tier1 rather than
+// main) so the two land as one table.
+model ProviderSyncWatermark {
+  provider   String   @id
+  // Last instant fully ingested (UTC). The next scheduled sync starts here
+  // (log streams) or re-pulls a short overlap before it (day-bucketed data).
+  watermark  DateTime
+  // Earliest instant ever ingested — lets the UI say "history from X".
+  earliest   DateTime
+  updatedAt  DateTime @updatedAt
+}
+
+// Immutable compliance / audit events pulled from provider compliance feeds
+// (OpenAI Compliance Logs Platform AUTH_LOG + AUDIT_LOG today; the Anthropic
+// Compliance API Activity Feed is planned to share this table). `id` is the
+// upstream event id, so re-ingesting an overlapping window is a no-op.
+// Metadata only — conversation content and Codex prompt text are never
+// written here; those streams are aggregated into AssistantDailyStat.
+model ComplianceActivity {
+  id             String   @id
+  provider       String
+  // Provider event category + action, e.g. `auth_log:login_success`,
+  // `audit_log:USER_ROLE_UPDATED`.
+  type           String
+  occurredAt     DateTime
+  // Upstream workspace / organization id the event belongs to.
+  organizationId String?
+  actorType      String?
+  actorEmail     String?
+  actorUserId    String?
+  actorApiKeyId  String?
+  ipAddress      String?
+  userAgent      String?
+  // Sanitized upstream event (envelope + action data), no message content.
+  payload        Json
+  ingestedAt     DateTime @default(now())
+
+  @@index([occurredAt])
+  @@index([actorEmail, occurredAt])
+  @@index([type, occurredAt])
+  @@index([provider, occurredAt])
+}
+
 model CostBucket {
   id               String          @id @default(cuid())
   provider         String

@@ -74,6 +74,8 @@ const SETTINGS_KEYS = [
   "portkey_workspace_slug",
   "litellm_api_key",
   "litellm_api_base_url",
+  "chatgpt_enterprise_admin_key",
+  "chatgpt_workspace_id",
   "datadog_api_key",
   "datadog_app_key",
   "datadog_site",
@@ -92,6 +94,7 @@ const SETTINGS_KEYS = [
   "policy_denial_retention_days",
   "proxy_health_retention_days",
   "scan_result_retention_days",
+  "compliance_activity_retention_days",
   "claude_code_telemetry_retention_days",
   "cursor_telemetry_retention_days",
 ] as const;
@@ -196,6 +199,8 @@ export async function getSettingsPageData() {
     hasPortkeyKey: !!settingsMap.portkey_api_key,
     hasLiteLLMKey:
       !!settingsMap.litellm_api_key && !!settingsMap.litellm_api_base_url,
+    hasChatGPTEnterpriseConfig:
+      !!settingsMap.chatgpt_enterprise_admin_key && !!settingsMap.chatgpt_workspace_id,
     hasDatadogKey: !!settingsMap.datadog_api_key,
     datadogEnabled: settingsMap.datadog_enabled === "true",
     datadogSite: settingsMap.datadog_site ?? "datadoghq.com",

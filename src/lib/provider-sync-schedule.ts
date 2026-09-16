@@ -14,6 +14,7 @@ export const SYNC_PROVIDERS = [
   "helicone",
   "portkey",
   "litellm",
+  "chatgpt_enterprise",
 ] as const;
 
 export type SyncProviderId = (typeof SYNC_PROVIDERS)[number];
@@ -28,6 +29,7 @@ export const SYNC_PROVIDER_LABELS: Record<SyncProviderId, string> = {
   helicone: "Helicone request logs",
   portkey: "Portkey analytics",
   litellm: "LiteLLM spend logs",
+  chatgpt_enterprise: "ChatGPT Enterprise compliance",
 };
 
 export function isSyncProvider(value: string): value is SyncProviderId {

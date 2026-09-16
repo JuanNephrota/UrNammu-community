@@ -27,6 +27,7 @@ Centralized alert inbox for governance signals.
 - `ownership_escalation` — system has no owner assigned.
 - `dangerous_prompt` — proxy-scanned traffic matched a risky prompt pattern.
 - `key_usage_rule` — an API key's usage tripped a key usage rule.
+- `chatgpt_compliance_api` — the ChatGPT Enterprise sync saw a workspace admin role granted (users export or `USER_ROLE_UPDATED` / `INVITE_USERS` audit events) or a new GPT whose configuration includes custom actions (HIGH when shared by link or in the GPT Store). One open alert per subject; re-syncs do not duplicate it.
 
 ## Dangerous prompt alerts
 

@@ -3,6 +3,7 @@ import { fetchOpenAIOrgData, isOpenAIAdminConfigured, listAssistants } from "./o
 import { isAnthropicAdminConfigured } from "./anthropic-admin";
 import { isClaudeCodeAnalyticsAvailable } from "./claude-code-analytics";
 import { isCursorAdminConfigured } from "./cursor-admin";
+import { isChatGPTEnterpriseConfigured } from "./chatgpt-enterprise-admin";
 import { isGeminiBillingConfigured } from "./gemini-admin";
 import { isOpenRouterConfigured } from "./openrouter-admin";
 import { isHeliconeConfigured } from "./helicone-admin";
@@ -12,6 +13,7 @@ import { logger } from "./observability";
 import { notifyDatadog } from "./datadog-client";
 import {
   syncAnthropicTelemetry,
+  syncChatGPTEnterprise,
   syncClaudeCodeAnalytics,
   syncCursorTelemetry,
   syncGeminiTelemetry,
@@ -93,6 +95,7 @@ const PROVIDER_SYNC_FUNCTIONS: Record<
   helicone: syncHeliconeTelemetry,
   portkey: syncPortkeyTelemetry,
   litellm: syncLiteLLMTelemetry,
+  chatgpt_enterprise: syncChatGPTEnterprise,
 };
 
 const PROVIDER_CONFIGURED_CHECKS: Record<SyncProviderId, () => Promise<boolean>> = {
@@ -105,6 +108,7 @@ const PROVIDER_CONFIGURED_CHECKS: Record<SyncProviderId, () => Promise<boolean>>
   helicone: isHeliconeConfigured,
   portkey: isPortkeyConfigured,
   litellm: isLiteLLMConfigured,
+  chatgpt_enterprise: isChatGPTEnterpriseConfigured,
 };
 
 const DISCOVERY_SCAN_SETTINGS: Record<

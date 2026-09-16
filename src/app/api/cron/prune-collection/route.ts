@@ -28,6 +28,7 @@ import {
  *   proxy_health_retention_days      ProxyHealthSnapshot      default 90
  *   scan_result_retention_days       SensitiveScan +          default 365
  *                                    ProviderSecurityScan
+ *   compliance_activity_retention_days ComplianceActivity     default 365
  *
  * UsageBucket and CostBucket are never touched — they are the long-term
  * aggregate that APIUsageLog and AgentToolCall roll up into, so pruning the
@@ -50,7 +51,8 @@ type TableName =
   | "PolicyDenial"
   | "ProxyHealthSnapshot"
   | "SensitiveScan"
-  | "ProviderSecurityScan";
+  | "ProviderSecurityScan"
+  | "ComplianceActivity";
 
 interface TableReport {
   table: TableName;
@@ -162,6 +164,25 @@ const proxyHealthSource: PruneSource = {
   },
 };
 
+const complianceActivitySource: PruneSource = {
+  async findOldest(cutoff, take, after) {
+    const rows = await prisma.complianceActivity.findMany({
+      where: { occurredAt: window(cutoff, after) },
+      orderBy: { occurredAt: "asc" },
+      take,
+      select: { id: true, occurredAt: true },
+    });
+    return rows.map((r) => ({ id: r.id, ts: r.occurredAt }));
+  },
+  async deleteByIds(ids) {
+    const res = await prisma.complianceActivity.deleteMany({ where: { id: { in: ids } } });
+    return res.count;
+  },
+  countRemaining(cutoff) {
+    return prisma.complianceActivity.count({ where: { occurredAt: { lt: cutoff } } });
+  },
+};
+
 const BATCHED_TABLES: Array<{
   table: TableName;
   setting: CollectionRetentionKey;
@@ -191,6 +212,11 @@ const BATCHED_TABLES: Array<{
     table: "ProxyHealthSnapshot",
     setting: COLLECTION_RETENTION_SETTINGS_KEYS.PROXY_HEALTH,
     source: proxyHealthSource,
+  },
+  {
+    table: "ComplianceActivity",
+    setting: COLLECTION_RETENTION_SETTINGS_KEYS.COMPLIANCE_ACTIVITY,
+    source: complianceActivitySource,
   },
 ];
 

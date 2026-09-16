@@ -19,6 +19,7 @@ export const COLLECTION_RETENTION_SETTINGS_KEYS = {
   POLICY_DENIAL: "policy_denial_retention_days",
   PROXY_HEALTH: "proxy_health_retention_days",
   SCAN_RESULT: "scan_result_retention_days",
+  COMPLIANCE_ACTIVITY: "compliance_activity_retention_days",
 } as const;
 
 export type CollectionRetentionKey =
@@ -31,6 +32,7 @@ export const COLLECTION_RETENTION_DEFAULTS: Record<CollectionRetentionKey, numbe
   policy_denial_retention_days: 365,
   proxy_health_retention_days: 90,
   scan_result_retention_days: 365,
+  compliance_activity_retention_days: 365,
 };
 
 /**
@@ -45,6 +47,7 @@ export const RETENTION_ENV_VARS = {
   policy_denial_retention_days: "POLICY_DENIAL_RETENTION_DAYS",
   proxy_health_retention_days: "PROXY_HEALTH_RETENTION_DAYS",
   scan_result_retention_days: "SCAN_RESULT_RETENTION_DAYS",
+  compliance_activity_retention_days: "COMPLIANCE_ACTIVITY_RETENTION_DAYS",
   claude_code_telemetry_retention_days: "CLAUDE_CODE_TELEMETRY_RETENTION_DAYS",
   cursor_telemetry_retention_days: "CURSOR_TELEMETRY_RETENTION_DAYS",
 } as const;

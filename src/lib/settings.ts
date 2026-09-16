@@ -72,6 +72,8 @@ export async function getSetting(key: string): Promise<string | null> {
     portkey_workspace_slug: process.env.PORTKEY_WORKSPACE_SLUG,
     litellm_api_key: process.env.LITELLM_API_KEY,
     litellm_api_base_url: process.env.LITELLM_API_BASE_URL,
+    chatgpt_enterprise_admin_key: process.env.CHATGPT_ENTERPRISE_ADMIN_KEY,
+    chatgpt_workspace_id: process.env.CHATGPT_WORKSPACE_ID,
     datadog_api_key: process.env.DATADOG_API_KEY,
     datadog_app_key: process.env.DATADOG_APP_KEY,
     datadog_site: process.env.DATADOG_SITE,

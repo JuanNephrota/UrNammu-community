@@ -35,6 +35,7 @@ import {
 } from "@/app/(dashboard)/settings/admin-api-settings";
 import { GeminiBillingSettings } from "./gemini-billing-settings";
 import { LiteLLMSettings } from "./litellm-settings";
+import { ChatGPTEnterpriseSettings } from "./chatgpt-enterprise-settings";
 import { DatadogSettings } from "./datadog-settings";
 
 type Category =
@@ -73,6 +74,10 @@ export interface IntegrationsGridProps {
   hasPortkeyKey: boolean;
   hasLiteLLMKey: boolean;
   hasGeminiBillingConfig: boolean;
+  chatgptEnterprise: {
+    workspaceId: string;
+    hasAdminKey: boolean;
+  };
   litellm: {
     baseUrl: string;
     hasApiKey: boolean;
@@ -138,6 +143,14 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
       description: "Organization usage, costs, admin keys, and auto-discovered Assistants.",
       icon: Eye,
       connected: props.hasOpenAIAdminKey,
+    },
+    {
+      id: "chatgpt-enterprise",
+      category: "Provider Telemetry",
+      name: "ChatGPT Enterprise Compliance API",
+      description: "Workspace users, auth and admin-audit events, per-user ChatGPT message counts, and Codex activity from the OpenAI Compliance Logs Platform.",
+      icon: Eye,
+      connected: props.chatgptEnterprise.hasAdminKey && props.chatgptEnterprise.workspaceId.trim().length > 0,
     },
     {
       id: "gemini-billing",
@@ -382,6 +395,8 @@ function renderModalBody(id: string, props: IntegrationsGridProps) {
       return renderProviderSection("portkey", props.hasPortkeyKey);
     case "litellm":
       return <LiteLLMSettings initial={props.litellm} />;
+    case "chatgpt-enterprise":
+      return <ChatGPTEnterpriseSettings initial={props.chatgptEnterprise} />;
     case "gemini-billing":
       return <GeminiBillingSettings initial={props.geminiBilling} />;
     case "azure-monitor":

@@ -65,6 +65,12 @@ const ROWS: Array<{
     note: "Sensitive-scan and provider-security runs with their findings. The newest run per provider is always kept.",
   },
   {
+    key: "compliance_activity_retention_days",
+    label: "Compliance activity",
+    tables: "ComplianceActivity",
+    note: "Auth and admin-audit events ingested from provider compliance feeds (ChatGPT Enterprise). Metadata only.",
+  },
+  {
     key: "claude_code_telemetry_retention_days",
     label: "Claude Code telemetry",
     tables: "ClaudeCodeMetric · ClaudeCodeEvent",

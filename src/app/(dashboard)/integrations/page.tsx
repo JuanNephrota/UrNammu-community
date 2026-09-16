@@ -101,6 +101,10 @@ export default async function IntegrationsPage() {
         hasPortkeyKey={hasPortkeyKey}
         hasLiteLLMKey={hasLiteLLMKey}
         hasGeminiBillingConfig={hasGeminiBillingConfig}
+        chatgptEnterprise={{
+          workspaceId: settingsMap.chatgpt_workspace_id ?? "",
+          hasAdminKey: !!settingsMap.chatgpt_enterprise_admin_key,
+        }}
         litellm={{
           baseUrl: settingsMap.litellm_api_base_url ?? "",
           hasApiKey: !!settingsMap.litellm_api_key,

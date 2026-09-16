@@ -273,6 +273,7 @@ Use these when traffic already flows through a gateway and you want its records 
 | `PORTKEY_API_KEY`, `PORTKEY_API_BASE_URL` | Portkey analytics. |
 | `PORTKEY_WORKSPACE_SLUG` | Only needed for a non-default Portkey workspace. |
 | `LITELLM_API_KEY`, `LITELLM_API_BASE_URL` | LiteLLM proxy telemetry. |
+| `CHATGPT_ENTERPRISE_ADMIN_KEY`, `CHATGPT_WORKSPACE_ID` | ChatGPT Enterprise Compliance API: workspace-scoped Admin key (created by a workspace owner) and the workspace id. Usually set in the Integrations UI instead. |
 
 ### 3.12 Developer-AI telemetry ingest
 
@@ -296,6 +297,7 @@ Retention for the other collection tables is enforced by `/api/cron/prune-collec
 | `RAW_SNAPSHOT_RETENTION_DAYS` | `ProviderRawSnapshot` | 14 |
 | `PROXY_HEALTH_RETENTION_DAYS` | `ProxyHealthSnapshot` | 90 |
 | `SCAN_RESULT_RETENTION_DAYS` | `SensitiveScan`, `ProviderSecurityScan` (newest run per provider is always kept) | 365 |
+| `COMPLIANCE_ACTIVITY_RETENTION_DAYS` | `ComplianceActivity` (auth / admin-audit events from provider compliance feeds; the upstream platform keeps 30 days) | 365 |
 
 ### 3.13 Scheduled report delivery
 
@@ -652,6 +654,17 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 
 Supplies per-user, per-day tokens, requests, accepted lines, and charged spend to the Cursor dashboard and Usage by Person.
 
+### 8.6b ChatGPT Enterprise Compliance API (telemetry + audit)
+
+Requires a ChatGPT Enterprise or Edu workspace.
+
+1. As a **workspace owner**, open the [OpenAI Admin Console](https://admin.openai.com/credentials?tab=admin-keys) → Credentials → Admin keys → **Create new admin key**, scoped to the workspace, with **Custom** permissions: read on **Users**, **GPTs**, and **Compliance logging platform** (add **Conversation messages** only if you want per-user message counts; UrNammu stores counts, never content). Copy the secret — it is shown once.
+2. Note the **workspace id** (UUID) from the Admin Console URL.
+3. **Integrations → ChatGPT Enterprise Compliance API**: paste the key and workspace id, **Save**, **Test**.
+4. Apply the migration `20260916170000_chatgpt_enterprise_compliance` (`ProviderSyncWatermark`, `ComplianceActivity`) before the first sync — see §10.1.
+
+The hourly `/api/cron/provider-sync/chatgpt_enterprise` job then pulls users, auth/audit events, per-user daily ChatGPT message counts, and Codex activity, and raises alerts for admin-role grants and new GPTs with custom actions. Streams the key is not scoped for are skipped and listed in the sync-run metadata. Reference: [OpenAI Admin API](https://chatgpt.com/public/admin/api-reference).
+
 ### 8.7 Google Gemini / Vertex AI oversight
 
 UrNammu supports Gemini oversight through Google Cloud Billing export data in BigQuery.
@@ -775,7 +788,7 @@ UrNammu schedules **one cron entry per background job**. Every route authenticat
 
 | Endpoint | Entries | Purpose |
 |----------|---------|---------|
-| `/api/cron/provider-sync/<provider>` | 9 (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry when its own interval has elapsed since its last successful sync. |
+| `/api/cron/provider-sync/<provider>` | 10 (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`) | Pulls that provider's admin telemetry when its own interval has elapsed since its last successful sync. |
 | `/api/cron/discovery-scan/<source>` | 4 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. |
 | `/api/cron/governance-automation` | 1 | Review-renewal, exception-renewal, and ownership-escalation alerts. |
 | `/api/cron/key-usage-rules` | 1 | Key usage rule evaluation. |
@@ -792,13 +805,13 @@ Running each provider and each scan source in its own function means a slow or f
 | `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy configuration. |
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
 | `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
-| `/api/cron/prune-collection` | daily | Enforces retention for the proxy request log, agent tool calls, policy denials, provider raw snapshots, proxy health snapshots, and scan runs (see §3.12). |
+| `/api/cron/prune-collection` | daily | Enforces retention for the proxy request log, agent tool calls, policy denials, provider raw snapshots, proxy health snapshots, compliance activity, and scan runs (see §3.12). |
 
 The prune jobs matter more than they look: the developer-AI telemetry tables and the proxy request log are high-volume, and without retention they grow without bound. `prune-collection` deletes oldest-first in batches of 5,000 inside a fixed time budget and reports `deleted` / `remaining` per table, so a large backlog drains over several nights rather than timing out.
 
 ### 9.3 Vercel Cron (recommended if deploying to Vercel)
 
-All of the above are already configured in `vercel.json` (20 entries, staggered so the hourly jobs do not all fire at minute zero):
+All of the above are already configured in `vercel.json` (21 entries, staggered so the hourly jobs do not all fire at minute zero):
 
 ```json
 {
@@ -812,6 +825,7 @@ All of the above are already configured in `vercel.json` (20 entries, staggered 
     { "path": "/api/cron/provider-sync/helicone", "schedule": "18 * * * *" },
     { "path": "/api/cron/provider-sync/portkey", "schedule": "21 * * * *" },
     { "path": "/api/cron/provider-sync/litellm", "schedule": "24 * * * *" },
+    { "path": "/api/cron/provider-sync/chatgpt_enterprise", "schedule": "27 * * * *" },
     { "path": "/api/cron/discovery-scan/google_workspace", "schedule": "30 * * * *" },
     { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
@@ -831,7 +845,7 @@ All of the above are already configured in `vercel.json` (20 entries, staggered 
 
 Per-provider sync cadence is set in **Settings → Provider Admin APIs** (global default plus a per-provider override table); shadow-AI scan cadence in **Settings → Shadow AI**.
 
-> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency and the total number of crons (well below the 20 entries above). Either upgrade to Pro, or drive the endpoints from an external scheduler as below.
+> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency and the total number of crons (well below the 21 entries above). Either upgrade to Pro, or drive the endpoints from an external scheduler as below.
 
 ### 9.4 External cron (non-Vercel hosts)
 
@@ -873,7 +887,7 @@ npm install          # re-runs prisma generate
 npm run db:migrate   # applies any new migrations
 ```
 
-Merging or deploying a release does **not** migrate the database — run `npx prisma migrate deploy` against production yourself after each deploy that ships a migration. The data-collection Tier 1 release adds `20260916120000_collection_tier1`, which adds the `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` columns to `DiscoveredAITool` and a unique `dedupeKey` column to `ClaudeCodeMetric`, `ClaudeCodeEvent`, `CursorMetric`, and `CursorSpan`. Until it is applied, Shadow AI scans and OTel ingest will fail on the missing columns. Redeploy the Azure proxy in the same release so its pricing table matches the app's.
+Merging or deploying a release does **not** migrate the database — run `npx prisma migrate deploy` against production yourself after each deploy that ships a migration. The data-collection Tier 1 release adds `20260916120000_collection_tier1`, which adds the `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` columns to `DiscoveredAITool` and a unique `dedupeKey` column to `ClaudeCodeMetric`, `ClaudeCodeEvent`, `CursorMetric`, and `CursorSpan`. Until it is applied, Shadow AI scans and OTel ingest will fail on the missing columns. Redeploy the Azure proxy in the same release so its pricing table matches the app's. The ChatGPT Enterprise release adds `20260916170000_chatgpt_enterprise_compliance`, which creates `ProviderSyncWatermark` and `ComplianceActivity`; until it is applied the `chatgpt_enterprise` sync fails on the missing tables (no other provider is affected).
 
 ### 10.2 Major version upgrades
 
