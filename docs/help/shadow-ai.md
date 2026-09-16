@@ -24,6 +24,7 @@ Each discovered tool records what the scans actually observed, shown under the t
 
 - **First seen / Last seen** — the earliest and latest observation across every scan. Log imports use the export's own timestamp column when it has one (`timestamp`, `@timestamp`, `time`, `date`, and similar; ISO or epoch); otherwise the import time is used.
 - **Users** — the email addresses seen using the tool, as chips. Only real email addresses are kept; device names or bare usernames from network logs count toward the user total but are not listed.
+- **Departments** — when a directory sync is enabled (**Settings → Users & Identity**), the observed users are rolled up by their directory department, for example "Engineering 4 · Sales 2". Email aliases fold onto the same person first, and users with no directory match (or no department) are counted as unmatched.
 - **OAuth scopes** — the permissions granted to the app, for identity-provider sources.
 
 The **user count** follows one rule: a rescan from the **same** source replaces the count, so it can go down when access is revoked or devices are retired; a **different** source only ever raises it, so two partial views combine as a maximum rather than overwriting each other.

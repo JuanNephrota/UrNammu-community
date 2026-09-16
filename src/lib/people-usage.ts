@@ -29,6 +29,13 @@ import { prisma } from "@/lib/prisma";
 // opaque user ids are deliberately NOT folded in — neither identifies a
 // person by email, so they would appear as phantom people. Anything without
 // an email lands in `unattributed` so totals stay honest.
+//
+// Identity: when a directory sync (Settings → Users & Identity) has populated
+// DirectoryPerson, every observed email is first resolved through the
+// alias → primary map, so a person seen as `ada.lovelace@` in Cursor and
+// `ada@` in the proxy is one row keyed by the directory primary. Name and
+// department come from the directory first, then the UrNammu User, then the
+// provider member list; `directoryStatus` flags leavers still showing usage.
 
 import {
   SURFACE_LABELS,
@@ -38,7 +45,15 @@ import {
   type PersonUsageRow,
   type UnattributedUsage,
 } from "./people-usage-types";
+import {
+  buildAliasMap,
+  buildDirectoryIndex,
+  directoryStatusFor,
+  resolveAlias,
+  type DirectoryIdentity,
+} from "./directory-identity";
 export * from "./people-usage-types";
+export type { DirectoryIdentity } from "./directory-identity";
 
 // ── Per-source inputs (kept as plain data so the merge is unit-testable) ──
 
@@ -94,7 +109,15 @@ export interface PeopleUsageInputs {
   claudeCodeAdmin: ClaudeCodeAdminUsage[];
   cursor: CursorUsage[];
   proxy: ProxyUsage[];
+  /** Registered Users first, then provider member directories (first wins). */
   identities: PersonIdentity[];
+  /**
+   * Synced identity-provider directory (DirectoryPerson). Every observed
+   * email is resolved through its alias map before merging, so
+   * `ada.lovelace@` and `ada@` collapse onto one row keyed by the directory
+   * primary; name / department come from here before `identities`.
+   */
+  directory?: DirectoryIdentity[];
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────
@@ -126,6 +149,7 @@ function emptyRow(email: string): PersonUsageRow {
     email,
     name: null,
     department: null,
+    directoryStatus: "unknown",
     claudeCodeSource: null,
     claudeCodeSessions: 0,
     claudeCodeTokens: 0,
@@ -167,13 +191,19 @@ function emptyUnattributed(): UnattributedUsage {
 
 /**
  * Merge per-source aggregates into one row per person. Emails are normalized
- * here, so callers may pass raw actor strings. Rows are sorted by total cost
- * (desc), then email.
+ * here (and folded onto the directory primary when `inputs.directory` knows
+ * the address as an alias), so callers may pass raw actor strings. Rows are
+ * sorted by total cost (desc), then email.
  */
 export function mergePeopleUsage(inputs: PeopleUsageInputs): {
   rows: PersonUsageRow[];
   unattributed: UnattributedUsage;
 } {
+  const directory = inputs.directory ?? [];
+  const aliasMap = buildAliasMap(directory);
+  const directoryIndex = buildDirectoryIndex(directory);
+  const resolve = (raw: string | null | undefined) => resolveAlias(normalizeEmail(raw), aliasMap);
+
   const rows = new Map<string, PersonUsageRow>();
   const unattributed = emptyUnattributed();
   const get = (email: string) => {
@@ -194,7 +224,7 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
   // OTel — authoritative for Claude Code + Cowork when present.
   const otelClaudeCodeEmails = new Set<string>();
   for (const s of inputs.otel) {
-    const email = normalizeEmail(s.email);
+    const email = resolve(s.email);
     if (!email) {
       drop(s.surface, n(s.cost), n(s.tokens));
       continue;
@@ -218,7 +248,7 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
 
   // Admin API analytics — fallback for people with no OTel Claude Code data.
   for (const a of inputs.claudeCodeAdmin) {
-    const email = normalizeEmail(a.email);
+    const email = resolve(a.email);
     if (!email) {
       drop("claude_code", n(a.cost), n(a.tokens));
       continue;
@@ -235,7 +265,7 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
   }
 
   for (const c of inputs.cursor) {
-    const email = normalizeEmail(c.email);
+    const email = resolve(c.email);
     if (!email) {
       drop("cursor", n(c.cost), n(c.tokens));
       continue;
@@ -250,7 +280,7 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
   }
 
   for (const p of inputs.proxy) {
-    const email = normalizeEmail(p.email);
+    const email = resolve(p.email);
     if (!email) {
       drop("proxy", n(p.cost), n(p.tokens));
       continue;
@@ -263,10 +293,11 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
     r.lastActiveAt = later(r.lastActiveAt, p.lastActiveAt);
   }
 
-  // Identity enrichment: registered Users win over provider directory names.
+  // Identity enrichment: the synced IdP directory wins, then registered
+  // Users, then provider member directories (first non-null wins per field).
   const identity = new Map<string, PersonIdentity>();
   for (const id of inputs.identities) {
-    const email = normalizeEmail(id.email);
+    const email = resolve(id.email);
     if (!email) continue;
     const existing = identity.get(email);
     identity.set(email, {
@@ -277,11 +308,11 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
   }
 
   for (const r of rows.values()) {
+    const dir = directoryIndex.get(r.email);
     const id = identity.get(r.email);
-    if (id) {
-      r.name = id.name;
-      r.department = id.department;
-    }
+    r.name = dir?.displayName ?? id?.name ?? null;
+    r.department = dir?.department ?? id?.department ?? null;
+    r.directoryStatus = directoryStatusFor(dir);
     r.surfaces = [];
     if (r.claudeCodeSessions > 0 || r.claudeCodeTokens > 0 || r.claudeCodeCost > 0 || r.claudeCodeLinesAdded > 0) {
       r.surfaces.push("claude_code");
@@ -563,6 +594,30 @@ async function loadProxyUsage(since: Date, until: Date): Promise<ProxyUsage[]> {
   return [...map.values()];
 }
 
+/**
+ * DirectoryPerson rows matching the observed emails, by primary address or
+ * alias. Returns the read-side shape so mergePeopleUsage can build its alias
+ * map and enrichment index without touching Prisma types.
+ */
+async function loadDirectoryIdentities(emails: string[]): Promise<DirectoryIdentity[]> {
+  if (emails.length === 0) return [];
+  const rows = await prisma.directoryPerson.findMany({
+    where: { OR: [{ primaryEmail: { in: emails } }, { aliases: { hasSome: emails } }] },
+    select: {
+      primaryEmail: true,
+      aliases: true,
+      displayName: true,
+      department: true,
+      active: true,
+      deactivatedAt: true,
+    },
+    // Active rows first so buildDirectoryIndex keeps the live record when the
+    // same person exists in two sources.
+    orderBy: [{ active: "desc" }, { lastSyncedAt: "desc" }],
+  });
+  return rows;
+}
+
 async function loadIdentities(emails: string[]): Promise<PersonIdentity[]> {
   if (emails.length === 0) return [];
   const [users, actors] = await Promise.all([
@@ -601,14 +656,23 @@ export async function loadPeopleUsage(window: { since: Date; until: Date }): Pro
   ]);
   const { claudeCodeAdmin, cursor } = rollupAssistantDailyStats(assistantRows);
 
-  const emails = new Set<string>();
+  const observed = new Set<string>();
   for (const s of [...otel, ...claudeCodeAdmin, ...cursor, ...proxy]) {
     const e = normalizeEmail(s.email);
-    if (e) emails.add(e);
+    if (e) observed.add(e);
+  }
+  // Directory first: observed aliases resolve to primaries, and the User /
+  // ProviderActor lookup must cover both spellings.
+  const directory = await loadDirectoryIdentities([...observed]);
+  const aliasMap = buildAliasMap(directory);
+  const emails = new Set(observed);
+  for (const e of observed) {
+    const primary = resolveAlias(e, aliasMap);
+    if (primary) emails.add(primary);
   }
   const identities = await loadIdentities([...emails]);
 
-  const { rows, unattributed } = mergePeopleUsage({ otel, claudeCodeAdmin, cursor, proxy, identities });
+  const { rows, unattributed } = mergePeopleUsage({ otel, claudeCodeAdmin, cursor, proxy, identities, directory });
   return { rows, unattributed, summary: summarizePeopleUsage(rows, unattributed), since, until };
 }
 

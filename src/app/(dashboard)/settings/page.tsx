@@ -49,7 +49,7 @@ export default async function SettingsOverviewPage() {
     {
       href: "/settings/users",
       title: "Users & Identity",
-      description: "Current users, roles, local auth, Microsoft 365, and Google sign-in.",
+      description: "Current users, roles, local auth, Microsoft 365 and Google sign-in, and identity-provider directory sync.",
       icon: Shield,
       badge: `${users.length} users · identity controls`,
       visible: isAdmin,

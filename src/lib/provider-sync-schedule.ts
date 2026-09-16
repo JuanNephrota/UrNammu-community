@@ -213,3 +213,73 @@ export function resolveDiscoveryScanSchedule(
     skippedReason,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Directory sync (/api/cron/directory-sync/[source])
+// ---------------------------------------------------------------------------
+
+export const DIRECTORY_SYNC_SOURCES = ["google_workspace", "microsoft_365"] as const;
+
+export type DirectorySyncSource = (typeof DIRECTORY_SYNC_SOURCES)[number];
+
+export const DIRECTORY_SYNC_LABELS: Record<DirectorySyncSource, string> = {
+  google_workspace: "Google Workspace directory",
+  microsoft_365: "Microsoft Entra ID directory",
+};
+
+export function isDirectorySyncSource(value: string): value is DirectorySyncSource {
+  return (DIRECTORY_SYNC_SOURCES as readonly string[]).includes(value);
+}
+
+/** Directory syncs are opt-in and daily by default. */
+export const DIRECTORY_SYNC_DEFAULT_ENABLED = false;
+export const DIRECTORY_SYNC_DEFAULT_INTERVAL_HOURS = 24;
+/** How long a RUNNING directory sync is trusted before it is assumed dead. */
+export const DIRECTORY_SYNC_RUNNING_GRACE_MS = 30 * 60 * 1000;
+
+export type DirectorySyncScheduleInput = {
+  enabledRaw: string | null;
+  intervalRaw: string | null;
+  /** completedAt of the latest SUCCEEDED directory run for this source. */
+  lastSucceededAt: Date | null;
+  running: boolean;
+  configured: boolean;
+  now: Date;
+};
+
+export type DirectorySyncSchedule = {
+  enabled: boolean;
+  intervalHours: number;
+  due: boolean;
+  nextDueAt: Date | null;
+  skippedReason?: string;
+};
+
+export function resolveDirectorySyncSchedule(
+  source: DirectorySyncSource,
+  input: DirectorySyncScheduleInput
+): DirectorySyncSchedule {
+  const label = DIRECTORY_SYNC_LABELS[source];
+  const enabled = parseBooleanSetting(input.enabledRaw, DIRECTORY_SYNC_DEFAULT_ENABLED);
+  const intervalHours = parseIntervalHours(input.intervalRaw, DIRECTORY_SYNC_DEFAULT_INTERVAL_HOURS);
+  const dueByClock = isDue(input.lastSucceededAt, intervalHours, input.now);
+  const due = enabled && input.configured && !input.running && dueByClock;
+
+  const skippedReason = !enabled
+    ? `${label} sync is disabled.`
+    : !input.configured
+      ? `${label} credentials are not configured.`
+      : input.running
+        ? `A ${label} sync is already running.`
+        : !dueByClock
+          ? `Not due yet. Interval is ${intervalHours} hour(s).`
+          : undefined;
+
+  return {
+    enabled,
+    intervalHours,
+    due,
+    nextDueAt: nextDueAt(input.lastSucceededAt, intervalHours),
+    skippedReason,
+  };
+}

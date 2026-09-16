@@ -282,6 +282,8 @@ Recent improvements:
 - repeat-activity heuristics such as first seen, last seen, event count, and active days
 - low-confidence AI candidates surfaced in debug output for admin review
 
+The same service account can also drive **directory sync** (`Settings > Users & Identity`, off by default): a daily `GET /admin/directory/v1/users` listing into `DirectoryPerson` — primary email, aliases, name, department, title, manager, org unit, suspended/archived state. This needs one extra scope on the domain-wide delegation grant, `https://www.googleapis.com/auth/admin.directory.user.readonly`, which the shadow-AI scan does not request.
+
 ### Microsoft 365
 
 Used for shadow AI discovery from delegated Microsoft 365 / Entra-connected apps.
@@ -300,6 +302,19 @@ Recent improvements:
 - weighted vendor matching across names, publishers, domains, scopes, and app IDs
 - usage heuristics based on delegated principals and assignment counts
 - discovery notes that explain match confidence and observed signals
+
+The same app registration can also drive **directory sync** (`Settings > Users & Identity`, off by default): a daily Graph `/users?$expand=manager` listing into `DirectoryPerson` — mail / UPN, `proxyAddresses` as aliases, display name, department, job title, manager, office, `accountEnabled`. Requires the `User.Read.All` application permission. Guest accounts (`#EXT#`) are skipped unless `directory_sync_include_guests` is `true`.
+
+### Directory Sync (Google Workspace, Microsoft Entra ID)
+
+Both identity providers above can populate a shared people directory (`DirectoryPerson`) that the rest of the platform reads:
+
+- **Usage by Person** resolves every observed email through the directory's alias map (so two addresses for one person collapse onto one row), takes name and department from the directory first, and shows a **Deactivated** badge / `directoryStatus` column for disabled accounts that still have usage.
+- **Shadow AI** rolls each discovered tool's users up by department ("Engineering 4 · Sales 2").
+- **Offboarding**: when a directory account goes inactive, a matching `ACTIVE` UrNammu user is set to `SUSPENDED` (never deleted) with an audit log entry.
+- **Usage after deactivation**: the governance-automation cron raises a `HIGH` alert (`usage_after_deactivation`) when a deactivated person's email or alias shows activity after `deactivatedAt`, once per person per 7 days.
+
+Each run is a full sync recorded as a `ProviderSyncRun` (`syncType = "directory"`); rows not returned are deactivated only after a complete, successful listing. Both syncs default **off**; enable per source under `Settings > Users & Identity`, where **Sync now** runs one immediately.
 
 ### AI Gateways (Helicone, OpenRouter, Portkey, LiteLLM)
 
@@ -344,7 +359,8 @@ Background work runs as **one Vercel Cron entry per job**, all guarded by `Autho
 |---|---|---|
 | `/api/cron/provider-sync/<provider>` | hourly, one entry per provider (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry into `UsageBucket` / `CostBucket`. The OpenAI entry also refreshes the Assistants inventory. |
 | `/api/cron/discovery-scan/<source>` | hourly, one entry per source (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan and fails any scan of the same source stuck in `running` for 10+ minutes. |
-| `/api/cron/governance-automation` | hourly | Review-renewal, exception-renewal, and ownership-escalation alerts. |
+| `/api/cron/governance-automation` | hourly | Review-renewal, exception-renewal, ownership-escalation, and usage-after-deactivation alerts. |
+| `/api/cron/directory-sync/<source>` | daily, one entry per source (`google_workspace` 04:10 UTC, `microsoft_365` 04:20 UTC) | Full people-directory sync into `DirectoryPerson` when that source's `directory_sync_<source>_enabled` is on (default off) and its interval (default 24 h) has elapsed; fails runs stuck in `RUNNING` for 30+ minutes. |
 | `/api/cron/key-usage-rules` | hourly | Key usage rule evaluation and `ApiKeyProfile` refresh. |
 | `/api/cron/run-report-schedules` | every 15 min | Scheduled report email delivery. |
 | `/api/cron/sensitive-scan`, `/api/cron/provider-security-scan` | daily | Gateway leakage probes and provider secure-use audit. |
@@ -358,6 +374,7 @@ Cadence is controlled in Settings:
 
 - `Settings > Provider Admin APIs`: global provider-sync default (enable + interval) plus a per-provider table with its own Auto-sync / Interval override, last run, and next due. Overrides are stored as `provider_sync_<provider>_enabled` / `provider_sync_<provider>_interval_hours` (env fallback `PROVIDER_SYNC_<PROVIDER>_ENABLED` / `_INTERVAL_HOURS`) and inherit the global keys when unset.
 - `Settings > Shadow AI`: Google Workspace, Microsoft 365, Hexnode, and CrowdStrike auto-scan enable/interval
+- `Settings > Users & Identity`: Google Workspace and Microsoft Entra ID directory-sync enable/interval, last run, people counts, and Sync now
 - `Settings > Integrations`: AI gateway and Azure Monitor configuration
 - `Settings > General`: data-retention windows for every prune cron
 - `Settings > Reporting`: report email delivery
@@ -423,6 +440,7 @@ npm run db:reset
 - **Shadow AI** gained a single "Scan All Sources" action, Hexnode UEM device discovery, Netskope log-shipper ingestion, and an Unblock action for blocked tools.
 - **Shadow AI observation detail**: `DiscoveredAITool` stores `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` as queryable columns (previously notes text), shown as first/last seen, user chips, and OAuth scopes on the page. A rescan from the same source replaces the user count (it can go down); a different source keeps the max. DNS/proxy imports and the Netskope webhook read a timestamp column/field (ISO or epoch) for first/last seen; the CSV importer maps vendor-native headers via presets (Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS). Microsoft 365 scans need `User.Read.All` to resolve principals to emails. GitHub Copilot detection now keys on the hostnames its IDE extensions actually resolve.
 - **Data collection Tier 1**: cache read/creation tokens captured on every proxy path with one accounting convention and one pricing module (unknown models cost `0` with `pricingMatched: false`); OpenAI streaming usage + response DLP through the proxy; Portkey per-day per-model and per-user buckets with a cost `reconciliation` block; OpenAI sync pagination, cached-token capture, and a request-count fix (`num_model_requests`); idempotent OTel ingest via `dedupeKey`. Requires migration `20260916120000_collection_tier1`. Next tier: [docs/plans/data-collection-tier2.md](docs/plans/data-collection-tier2.md).
+- **Directory sync** (`DirectoryPerson`, migration `20260916170000_directory_person`): per-source daily crons pull the Google Workspace (Admin SDK `users.list`, needs the `admin.directory.user.readonly` delegation scope) and Microsoft Entra ID (Graph `/users?$expand=manager`, needs `User.Read.All`) people directories, off by default. Usage by Person folds aliases onto the directory primary and enriches name/department from it; Shadow AI shows a department rollup per tool; a directory deactivation suspends the matching UrNammu user with an audit entry; and governance automation raises `usage_after_deactivation` alerts for leavers who keep using AI.
 - **Proxy Health** live-ops board combines Azure Monitor heartbeat metrics with real-time DB counters (usage, flagged, policy denials).
 - **Framework control catalog** (`FrameworkControl` / `ControlCrosswalk`): 96 seeded controls — 19 NIST AI RMF categories, 38 ISO/IEC 42001 Annex A controls, 19 EU AI Act articles, 20 SOC 2 criteria — with a 107-link crosswalk. Systems are assessed control by control on the Compliance tab; a `COMPLIANT` control satisfies its crosswalked peers as *Inherited*, and coverage rolls up per framework at Compliance → Framework Coverage. The previously unused `/api/ai/summarize` endpoint now powers an advisory AI gap analysis per framework.
 - **EU AI Act classification** (`EuAiActClassification`): a stepped wizard (role, Art. 5 prohibited practices, Annex I, Annex III, Art. 6(3) derogation, Art. 50 transparency, GPAI, Art. 27 FRIA) derives the tier server-side, stores the answers and rationale, pre-creates `NOT_ASSESSED` mappings for every applicable article, raises `eu_ai_act` alerts for high-risk/prohibited outcomes, hard-blocks approval for prohibited systems, and feeds an "EU AI Act Classified" board metric on the Executive dashboard.

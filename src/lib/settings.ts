@@ -103,6 +103,13 @@ export async function getSetting(key: string): Promise<string | null> {
   if (PROVIDER_SYNC_OVERRIDE_KEY_PATTERN.test(key)) {
     return process.env[key.toUpperCase()] ?? null;
   }
+  // Directory sync (directory_sync_<source>_enabled /
+  // directory_sync_<source>_interval_hours / directory_sync_include_guests)
+  // falls back to the upper-cased env var, e.g.
+  // DIRECTORY_SYNC_GOOGLE_WORKSPACE_ENABLED.
+  if (DIRECTORY_SYNC_KEY_PATTERN.test(key)) {
+    return process.env[key.toUpperCase()] ?? null;
+  }
   return null;
 }
 
@@ -205,6 +212,24 @@ export function providerSyncSettingKeys(provider: string) {
   return {
     enabled: `provider_sync_${provider}_enabled`,
     intervalHours: `provider_sync_${provider}_interval_hours`,
+  } as const;
+}
+
+// Identity-provider directory sync (Settings → Users & Identity). One pair of
+// keys per source (`google_workspace`, `microsoft_365`); both syncs default
+// OFF and to a 24 h interval. INCLUDE_GUESTS controls whether Entra guest
+// accounts (#EXT# in the UPN) are synced; default false.
+export const DIRECTORY_SYNC_SETTINGS_KEYS = {
+  INCLUDE_GUESTS: "directory_sync_include_guests",
+} as const;
+
+const DIRECTORY_SYNC_KEY_PATTERN =
+  /^directory_sync_([a-z0-9_]+_(enabled|interval_hours)|include_guests)$/;
+
+export function directorySyncSettingKeys(source: string) {
+  return {
+    enabled: `directory_sync_${source}_enabled`,
+    intervalHours: `directory_sync_${source}_interval_hours`,
   } as const;
 }
 

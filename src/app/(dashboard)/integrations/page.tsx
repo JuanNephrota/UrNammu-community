@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Network } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { IntegrationsGrid } from "@/components/settings/integrations-grid";
+import { getDirectorySyncStatuses } from "@/lib/background-jobs";
+import { getDirectoryPeopleCounts } from "@/lib/directory-sync";
 import { getSettingsPageData } from "../settings/data";
 
 export default async function IntegrationsPage() {
@@ -48,6 +50,20 @@ export default async function IntegrationsPage() {
     !!settingsMap.microsoft_shadow_ai_tenant_id &&
     !!settingsMap.microsoft_shadow_ai_client_id &&
     !!settingsMap.microsoft_shadow_ai_client_secret;
+
+  const [directoryStatuses, directoryCounts] = await Promise.all([
+    getDirectorySyncStatuses(),
+    getDirectoryPeopleCounts(),
+  ]);
+  const directoryTile = (source: "google_workspace" | "microsoft_365") => {
+    const status = directoryStatuses.find((s) => s.source === source);
+    const people = directoryCounts[source];
+    return {
+      configured: status?.configured ?? false,
+      enabled: status?.schedule.enabled ?? false,
+      people: people.active + people.deactivated,
+    };
+  };
 
   return (
     <div className="space-y-6">
@@ -107,6 +123,10 @@ export default async function IntegrationsPage() {
         microsoftShadowAIConnected={microsoftShadowAIConnected}
         googleSignInConnected={googleSignInConnected}
         microsoftSignInConnected={microsoftSignInConnected}
+        directorySync={{
+          google: directoryTile("google_workspace"),
+          microsoft: directoryTile("microsoft_365"),
+        }}
       />
     </div>
   );

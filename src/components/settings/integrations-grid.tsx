@@ -13,6 +13,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  Users,
   Wifi,
   WifiOff,
   type LucideIcon,
@@ -102,6 +103,11 @@ export interface IntegrationsGridProps {
   microsoftShadowAIConnected: boolean;
   googleSignInConnected: boolean;
   microsoftSignInConnected: boolean;
+  /** Directory sync: credentials configured + auto-sync enabled, per source. */
+  directorySync: {
+    google: { configured: boolean; enabled: boolean; people: number };
+    microsoft: { configured: boolean; enabled: boolean; people: number };
+  };
 }
 
 export function IntegrationsGrid(props: IntegrationsGridProps) {
@@ -188,6 +194,32 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
       description: "Entra ID / Microsoft 365 SSO for UrNammu login.",
       icon: Shield,
       connected: props.microsoftSignInConnected,
+    },
+    {
+      id: "google-directory",
+      category: "Identity",
+      name: "Google Workspace Directory",
+      description: "Daily people sync — emails, aliases, departments, managers, and suspended status — for alias folding, department rollups, and offboarding checks.",
+      icon: Users,
+      connected: props.directorySync.google.configured && props.directorySync.google.enabled,
+      statusLabel: props.directorySync.google.people > 0
+        ? `${props.directorySync.google.people} people`
+        : props.directorySync.google.configured && !props.directorySync.google.enabled
+          ? "Sync off"
+          : undefined,
+    },
+    {
+      id: "microsoft-directory",
+      category: "Identity",
+      name: "Microsoft Entra ID Directory",
+      description: "Daily people sync from Microsoft Graph — mail, proxy addresses, departments, managers, and accountEnabled — for alias folding, department rollups, and offboarding checks.",
+      icon: Users,
+      connected: props.directorySync.microsoft.configured && props.directorySync.microsoft.enabled,
+      statusLabel: props.directorySync.microsoft.people > 0
+        ? `${props.directorySync.microsoft.people} people`
+        : props.directorySync.microsoft.configured && !props.directorySync.microsoft.enabled
+          ? "Sync off"
+          : undefined,
     },
     {
       id: "google-workspace",
@@ -363,6 +395,15 @@ function renderModalBody(id: string, props: IntegrationsGridProps) {
           href="/settings/users"
           label="Open Users & Identity"
           explanation="Sign-in provider configuration lives alongside user management."
+        />
+      );
+    case "google-directory":
+    case "microsoft-directory":
+      return (
+        <LinkOutBody
+          href="/settings/users"
+          label="Open Users & Identity"
+          explanation="Directory sync reuses the Shadow AI credentials for each identity provider (Google service account, Entra app registration) and is switched on per source under Users & Identity, where the schedule, last run, people counts, and Sync now button live. Google needs the admin.directory.user.readonly scope on the domain-wide delegation grant; Microsoft needs the User.Read.All application permission."
         />
       );
     case "google-workspace":

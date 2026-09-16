@@ -991,7 +991,7 @@ The page shows:
 - **Window** — 7 / 30 / 90 days.
 - **Save as report** (`ADMIN` / `COMPLIANCE_OFFICER`) — creates a report from the *Usage by Person* template so the same data can be exported as PDF/CSV/JSON and scheduled for email delivery (see [Reports](#11-reports)).
 
-Name and department come from the person's UrNammu user profile when one exists (Settings → Users & Identity), otherwise from the provider's member directory. Anthropic Console usage is reported per API key, not per person, and is intentionally excluded — use **Claude Platform** for that view.
+When a **directory sync** is enabled (Settings → Users & Identity), every observed email is first resolved through the identity provider's alias map, so one person seen under two addresses is one row keyed by their primary address, and name and department come from the directory. Otherwise they come from the person's UrNammu user profile when one exists, then the provider's member directory. Each row carries a directory status (`active` / `deactivated` / `unknown`, also a CSV column); a **Deactivated** badge marks someone whose directory account is disabled but who still shows usage — the same condition that raises a `usage_after_deactivation` alert. Anthropic Console usage is reported per API key, not per person, and is intentionally excluded — use **Claude Platform** for that view.
 
 ### Proxy Health
 
@@ -1232,6 +1232,7 @@ Add this to `~/.zshrc` or `~/.bashrc`. The managed settings and per-user setting
 
 ### 13.4 Users & Identity
 
+- **Directory sync** — one card per identity provider (Google Workspace directory, Microsoft Entra ID directory): auto-sync toggle (default off), interval (default 24 h), last run outcome with fetched / new / updated / deactivated counts, active and deactivated people counts, and **Sync now**. Reuses the Shadow AI credentials; Google additionally needs the `admin.directory.user.readonly` delegation scope and Microsoft needs `User.Read.All`. The Microsoft card also chooses whether guest accounts are included. The synced directory folds email aliases and supplies names / departments on Usage by Person, rolls Shadow AI users up by department, suspends UrNammu users whose directory account was disabled, and arms the `usage_after_deactivation` alert.
 - **User list** — email, name, role, created date. Admins change roles here.
 - **Google OAuth** — client ID, client secret, test button.
 - **Microsoft / Entra ID** — tenant ID, client ID, client secret.
@@ -1277,17 +1278,20 @@ The dedicated **Integrations** settings area (also surfaced as the top-level **I
 
 1. Create a Google Cloud service account with a JSON key.
 2. Enable domain-wide delegation for the service account and authorize these scopes in the Workspace admin console:
-   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
-   - `https://www.googleapis.com/auth/admin.reports.audit.readonly`
+   - `https://www.googleapis.com/auth/admin.reports.audit.readonly` (shadow-AI scan)
+   - `https://www.googleapis.com/auth/admin.directory.user.security` (revoking a blocked app's grants)
+   - `https://www.googleapis.com/auth/admin.directory.user.readonly` (directory sync — add it to an existing grant if you enable the sync later)
 3. In **Settings → Shadow AI**, paste the service account JSON and enter the workspace **admin email** (used for delegation impersonation).
 4. Click **Test Connection** → **Run Scan**.
+5. Optionally enable **Directory sync → Google Workspace directory** under **Settings → Users & Identity** and click **Sync now**.
 
 ### Microsoft Entra ID (sign-in + shadow AI)
 
 1. Register an application in Azure AD.
 2. For sign-in: add a redirect URI `https://<urnammu-host>/api/auth/callback/azure-ad`, and grant `openid profile email User.Read`.
-3. For shadow AI: grant Graph permissions `AuditLog.Read.All` and `Directory.Read.All` (application permissions with admin consent).
+3. For shadow AI: grant Graph permissions `AuditLog.Read.All` and `Directory.Read.All` (application permissions with admin consent). Add `User.Read.All` to resolve granting users to emails and to enable **directory sync**.
 4. Copy tenant ID, client ID, and secret into **Settings → Users & Identity** (auth) and/or **Settings → Shadow AI** (discovery).
+5. Optionally enable **Directory sync → Microsoft Entra ID directory** under **Settings → Users & Identity** and click **Sync now**.
 
 ### Anthropic Admin Key
 

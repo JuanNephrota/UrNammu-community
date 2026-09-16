@@ -18,6 +18,7 @@ const SETTINGS_KEYS = [
   "microsoft_shadow_ai_client_secret",
   "microsoft_shadow_ai_scan_enabled",
   "microsoft_shadow_ai_scan_interval_hours",
+  "directory_sync_include_guests",
   "hexnode_api_key",
   "hexnode_subdomain",
   "hexnode_scan_enabled",

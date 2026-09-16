@@ -15,6 +15,8 @@
     { "path": "/api/cron/discovery-scan/crowdstrike", "schedule": "45 * * * *" },
     { "path": "/api/cron/governance-automation", "schedule": "50 * * * *" },
     { "path": "/api/cron/key-usage-rules", "schedule": "55 * * * *" },
+    { "path": "/api/cron/directory-sync/google_workspace", "schedule": "10 4 * * *" },
+    { "path": "/api/cron/directory-sync/microsoft_365", "schedule": "20 4 * * *" },
     { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
     { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
     { "path": "/api/cron/prune-collection", "schedule": "45 3 * * *" },

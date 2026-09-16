@@ -83,6 +83,8 @@ The most important Prisma models are:
   Per-person, per-day coding-assistant stats (provider `claude_code` from the Anthropic Admin API analytics report, `cursor` from the Cursor Admin API daily-usage + usage-events feeds) as columns: sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, cost, `isActive`. Written by `syncClaudeCodeAnalytics` / `syncCursorTelemetry` in `src/lib/provider-telemetry.ts` via the pure mappers in `src/lib/assistant-daily-stats.ts`. Read by `claude-code-dashboard.ts`, `cursor-dashboard.ts`, and `people-usage.ts` (which feeds the `PEOPLE_USAGE` report source). The syncs still write the legacy per-day `UsageBucket` rows (same data in `metadata` JSON) for one release; new readers should not depend on them.
 - `DiscoveredAITool`
   Normalized shadow AI discoveries. `externalAppId` / `externalAppProvider` are the IdP handles that make identity enforcement possible — a discovery without them cannot be enforced at the identity layer.
+- `DirectoryPerson`
+  One row per person in an identity provider's directory, keyed by `(source, externalId)` with `source` = `google_workspace` | `microsoft_365`. Stores the lower-cased `primaryEmail`, deduped `aliases` (never containing the primary), `displayName`, `department`, `title`, `managerEmail`, `orgUnit`, `active` / `deactivatedAt`, `lastSyncedAt`, and the raw provider payload. Written only by `runDirectorySync()` in `src/lib/directory-sync.ts` (Google Admin SDK `users.list`, Graph `/users?$expand=manager`), whose runs are `ProviderSyncRun` rows with `syncType = "directory"`. The pure mappers and read-side helpers (alias map, department rollup) live in `src/lib/directory-identity.ts`. Consumers: `people-usage.ts` (alias folding, enrichment, `directoryStatus`), the `/api/discovered-tools` department rollup, the offboarding hook (suspends a matching `ACTIVE` `User`), and the `usage_after_deactivation` governance check in `governance-automation.ts`.
 - `KeyUsageRule` and `ApiKeyProfile`
   Rule definitions for credential-behavior alerting, and the per-key rolling profile the rules evaluate against.
 - `PolicyDenial`
@@ -215,13 +217,14 @@ Every scheduled job is its own route under `src/app/api/cron/`, wired as its own
 
 - `/api/cron/provider-sync/[provider]` — `runScheduledProviderSync()`. One cron entry per `SyncProvider` (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`), staggered a few minutes apart, `maxDuration = 300`. Due-ness is computed **per provider** from that provider's latest `SUCCEEDED` `ProviderSyncRun`, with the effective schedule resolved as `provider_sync_<provider>_*` → `provider_sync_*` → built-in default (enabled, 6 h). The OpenAI job also runs Assistants discovery after a successful sync.
 - `/api/cron/discovery-scan/[source]` — `runScheduledDiscoveryScan()` for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`, `maxDuration = 300`. Each source first fails its own scans stuck in `running` for 10+ minutes, then scans if enabled, configured, idle, and past its interval.
-- `/api/cron/governance-automation` — `runGovernanceAutomationJob()`: review renewals, exception renewals, ownership escalations.
+- `/api/cron/governance-automation` — `runGovernanceAutomationJob()`: review renewals, exception renewals, ownership escalations, and the **usage-after-deactivation** check (`evaluateUsageAfterDeactivation()` in `governance-automation.ts`, pure): deactivated `DirectoryPerson` rows from the last 180 days are matched — by primary email or alias — against the latest `UsageBucket`, `AssistantDailyStat`, and `APIUsageLog` activity, and a `HIGH` alert with source `usage_after_deactivation` is raised when activity postdates `deactivatedAt`, deduped per person per 7 days. A telemetry read failure in this check is logged and reported as 0 rather than failing the other alert families.
 - `/api/cron/key-usage-rules` — `runKeyUsageRulesJob()`: never throws; a failed evaluation returns `ok: false` with a 207 so one bad rule shows up in the cron log without a 500.
 
 Splitting the work this way is what makes the acceptance criteria hold: a provider that hangs burns only its own budget, and a healthy provider's success no longer resets the clock for a stalled one. `runProviderSyncJob()` (the manual **Sync now** button) still fans out to every provider at once via the same `runProviderSync()` unit.
 
 **Dedicated crons**, each on its own schedule:
 
+- `/api/cron/directory-sync/[source]` — daily (`10 4 * * *` for `google_workspace`, `20 4 * * *` for `microsoft_365`), `maxDuration = 300`. `runScheduledDirectorySync()` fails that source's runs stuck in `RUNNING` for 30+ minutes, then calls `runDirectorySync()` when `directory_sync_<source>_enabled` is `true` (default **false**), the source's Shadow AI credentials are configured, no run is in flight, and `directory_sync_<source>_interval_hours` (default 24) has elapsed since the last `SUCCEEDED` directory run. Due-ness logic is `resolveDirectorySyncSchedule()` in `provider-sync-schedule.ts`. The manual `POST /api/directory-sync { source }` (`ADMIN`) runs one source immediately regardless of the flag. A full sync upserts every returned person, then deactivates unseen rows for that source — only when at least one page succeeded and the 100-page cap was not hit — and suspends any `ACTIVE` `User` whose directory account just went inactive, writing a `SUSPEND` audit entry attributed to the triggering admin (or the oldest `ADMIN` for the cron).
 - `/api/cron/run-report-schedules` — every 15 minutes
 - `/api/cron/proxy-health` — every 15 minutes; calls `runProxyHealthSync` in `src/lib/proxy-health-sync.ts` (shared with the manual `POST /api/proxy-health/sync`) with the `system` actor, and skips when Azure Monitor is unconfigured
 - `/api/cron/sensitive-scan` — daily
@@ -244,7 +247,7 @@ Settings are split by responsibility:
 - `Settings > Proxy Setup`
   Proxy secret, generated client config, and attribution headers.
 - `Settings > Users & Identity`
-  Authentication providers and user-management options.
+  Authentication providers, user-management options, and the per-source **Directory sync** cards (`directory_sync_<source>_enabled`, `directory_sync_<source>_interval_hours`, `directory_sync_include_guests`; env fallbacks are the upper-cased key names). Directory sync deliberately reuses the Shadow AI credentials rather than storing a second copy.
 - `Settings > Shadow AI`
   Discovery configuration for every scan source and log import, plus the blocklist feed token and the enforcement readiness summary.
 - `Settings > Reporting`

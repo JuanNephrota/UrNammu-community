@@ -51,11 +51,30 @@ export async function isGoogleWorkspaceConfigured(): Promise<boolean> {
   return !!(serviceKey && adminEmail);
 }
 
+const SHADOW_AI_SCOPES = [
+  "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+  "https://www.googleapis.com/auth/admin.directory.user.security",
+];
+
 /**
  * Create a JWT auth client for Google Admin SDK.
  * Reads credentials from DB settings, falling back to env vars.
  */
 async function getAuthClient(): Promise<JWT> {
+  return createGoogleAdminAuthClient(SHADOW_AI_SCOPES);
+}
+
+/**
+ * Build a domain-wide-delegation JWT client for the configured service
+ * account, impersonating the configured admin, with an explicit scope list.
+ * Every scope requested here must also be authorised for the service
+ * account's client ID under Admin console → Security → API controls →
+ * Domain-wide delegation, or Google rejects the token request. Callers that
+ * need a scope the shadow-AI scan does not (e.g. the directory sync's
+ * `admin.directory.user.readonly`) pass their own list so the scan keeps
+ * working on tenants that never granted the extra scope.
+ */
+export async function createGoogleAdminAuthClient(scopes: string[]): Promise<JWT> {
   const keyData =
     (await getSetting(GOOGLE_SETTINGS_KEYS.SERVICE_ACCOUNT_KEY)) ??
     process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -82,10 +101,7 @@ async function getAuthClient(): Promise<JWT> {
   return new JWT({
     email: key.client_email,
     key: key.private_key,
-    scopes: [
-      "https://www.googleapis.com/auth/admin.reports.audit.readonly",
-      "https://www.googleapis.com/auth/admin.directory.user.security",
-    ],
+    scopes,
     subject: adminEmail,
   });
 }

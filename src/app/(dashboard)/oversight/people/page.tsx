@@ -154,8 +154,14 @@ export default async function PeopleUsagePage({
             <li>
               <span className="text-[var(--text-secondary)]">Identity.</span>{" "}
               People are matched by lower-cased email
-              across every source. Name and department come from the UrNammu user profile when one exists, otherwise
-              from the provider&apos;s member directory.
+              across every source. When a directory sync is enabled (
+              <Link href="/settings/users" className="text-[var(--accent)] hover:underline">
+                Settings → Users &amp; Identity
+              </Link>
+              ), email aliases fold onto the person&apos;s primary address and name and department come from the
+              directory; otherwise they come from the UrNammu user profile when one exists, or the provider&apos;s
+              member directory. A <span className="uppercase text-[10px] tracking-wider text-[var(--danger)]">deactivated</span>{" "}
+              badge marks someone whose directory account is disabled but who still shows usage.
             </li>
             <li>
               <span className="text-[var(--text-secondary)]">Claude Code and Cowork</span>{" "}

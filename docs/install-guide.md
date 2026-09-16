@@ -218,6 +218,8 @@ All variables read from `.env` in local dev and from the platform environment (V
 | `GOOGLE_SCAN_ENABLED` | `true` / `false`. |
 | `GOOGLE_SCAN_LOOKBACK_DAYS` | Default 30. |
 | `GOOGLE_SCAN_INTERVAL_HOURS` | Default 24. |
+| `DIRECTORY_SYNC_GOOGLE_WORKSPACE_ENABLED` | `true` / `false` (default `false`). Daily people-directory sync into `DirectoryPerson`; reuses the service account above and additionally needs the `admin.directory.user.readonly` scope (see 8.3). |
+| `DIRECTORY_SYNC_GOOGLE_WORKSPACE_INTERVAL_HOURS` | Default 24. |
 
 ### 3.7 Microsoft 365 shadow-AI fallback
 
@@ -228,6 +230,9 @@ All variables read from `.env` in local dev and from the platform environment (V
 | `MICROSOFT_SHADOW_AI_CLIENT_SECRET` | Entra app client secret. |
 | `MICROSOFT_SHADOW_AI_SCAN_ENABLED` | `true` / `false`. |
 | `MICROSOFT_SHADOW_AI_SCAN_INTERVAL_HOURS` | Default 24. |
+| `DIRECTORY_SYNC_MICROSOFT_365_ENABLED` | `true` / `false` (default `false`). Daily people-directory sync from Graph `/users` into `DirectoryPerson`; reuses the tenant app above and needs `User.Read.All` (see 8.4). |
+| `DIRECTORY_SYNC_MICROSOFT_365_INTERVAL_HOURS` | Default 24. |
+| `DIRECTORY_SYNC_INCLUDE_GUESTS` | `true` to sync guest accounts (`#EXT#` in the UPN); default skips them. |
 
 ### 3.8 Hexnode UEM shadow-AI fallback
 
@@ -601,14 +606,16 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 1. Google Cloud Console → IAM & Admin → Service Accounts → create a service account.
 2. Create and download a JSON key for it.
 3. Enable **domain-wide delegation** on the service account.
-4. Google Workspace admin console → Security → API controls → Domain-wide delegation → add the service account client ID with these scopes:
-   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
-   - `https://www.googleapis.com/auth/admin.reports.audit.readonly`
+4. Google Workspace admin console → Security → API controls → Domain-wide delegation → add the service account client ID with these scopes (one comma-separated grant):
+   - `https://www.googleapis.com/auth/admin.reports.audit.readonly` — shadow-AI token audit scan
+   - `https://www.googleapis.com/auth/admin.directory.user.security` — revoke an app's OAuth grants when a tool is blocked
+   - `https://www.googleapis.com/auth/admin.directory.user.readonly` — **directory sync** (`GET /admin/directory/v1/users`). The shadow-AI scan does not request this scope, so an existing grant that predates directory sync must be edited to add it or the sync fails with `unauthorized_client`.
 5. **Settings → Shadow AI → Google Workspace**:
    - Paste the full service-account JSON.
    - Enter a **super-admin email** for impersonation.
    - Enable auto-scan; set interval (default 24 h) and lookback (default 30 days).
 6. Click **Test Connection** → **Run Scan Now**.
+7. Optional — **Settings → Users & Identity → Directory sync → Google Workspace directory**: enable auto-sync (default off, 24 h) and click **Sync now** once to populate `DirectoryPerson`. This powers alias folding and department enrichment on Usage by Person, department rollups on Shadow AI, automatic suspension of UrNammu users whose Google account is suspended or archived, and the `usage_after_deactivation` alert.
 
 ### 8.4 Microsoft 365 (shadow-AI discovery)
 
@@ -617,11 +624,12 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
    - `AuditLog.Read.All`
    - `Directory.Read.All`
    - `Application.Read.All`
-   - `User.Read.All` — resolves the principals who granted each app to email addresses (Graph `/users/{id}`). Without it the scan still finds tools but their user emails stay empty.
+   - `User.Read.All` — resolves the principals who granted each app to email addresses (Graph `/users/{id}`). Without it the scan still finds tools but their user emails stay empty. The same permission is what **directory sync** uses to list `/users` (with `$expand=manager`), so it is required, not optional, if you enable that.
 3. **Grant admin consent** for the tenant.
 4. **Certificates & secrets** → create a client secret.
 5. **Settings → Shadow AI → Microsoft 365**: paste tenant ID, client ID, secret; enable auto-scan; set interval.
 6. **Test Connection** → **Run Scan Now**.
+7. Optional — **Settings → Users & Identity → Directory sync → Microsoft Entra ID directory**: enable auto-sync (default off, 24 h), choose whether to include guest accounts (`#EXT#` UPNs are skipped by default), and click **Sync now**. Disabled accounts (`accountEnabled: false`) are stored as deactivated, which suspends the matching UrNammu user and arms the `usage_after_deactivation` alert.
 
 ### 8.5 Anthropic Admin API (telemetry)
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { type ColumnDef, type Column } from "@tanstack/react-table";
-import { ArrowUpDown, Bot, Download, MousePointer2, Network, Terminal } from "lucide-react";
+import { ArrowUpDown, Bot, Download, MousePointer2, Network, Terminal, UserX } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { formatCompactNumber, formatDate } from "@/lib/utils";
@@ -60,6 +60,7 @@ const CSV_COLUMNS: { key: keyof PersonUsageTableRow; label: string }[] = [
   { key: "name", label: "Name" },
   { key: "email", label: "Email" },
   { key: "department", label: "Department" },
+  { key: "directoryStatus", label: "Directory Status" },
   { key: "surfaces", label: "Surfaces" },
   { key: "totalCost", label: "Total Cost (USD)" },
   { key: "totalTokens", label: "Total Tokens" },
@@ -115,7 +116,18 @@ const columns: ColumnDef<PersonUsageTableRow>[] = [
       const r = row.original;
       return (
         <div className="min-w-[160px] max-w-[260px]">
-          <p className="truncate text-sm font-medium text-[var(--text-primary)]">{r.name ?? r.email}</p>
+          <p className="flex items-center gap-1.5 truncate text-sm font-medium text-[var(--text-primary)]">
+            <span className="truncate">{r.name ?? r.email}</span>
+            {r.directoryStatus === "deactivated" && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-[var(--critical-border)] bg-[var(--critical-dim)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--critical-strong)]"
+                title="This account is deactivated in the synced identity-provider directory but still shows AI usage in this window"
+              >
+                <UserX className="h-3 w-3" />
+                Deactivated
+              </span>
+            )}
+          </p>
           <p className="truncate text-xs text-[var(--text-muted)]">
             {r.name ? r.email : null}
             {r.name && r.department ? " · " : null}

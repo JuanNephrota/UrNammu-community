@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Clock, Users, KeyRound, ChevronDown, ChevronRight } from "lucide-react";
+import { Clock, Users, KeyRound, ChevronDown, ChevronRight, Building2 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { formatDepartmentRollup, type DepartmentRollup } from "@/lib/directory-identity";
 
 const PREVIEW_LIMIT = 5;
 
@@ -17,11 +18,14 @@ export function ObservationDetails({
   lastSeenAt,
   userEmails,
   scopes,
+  departmentRollup,
 }: {
   firstSeenAt?: string | null;
   lastSeenAt?: string | null;
   userEmails?: string[] | null;
   scopes?: string[] | null;
+  /** Users grouped by directory department (from the identity-provider directory sync). */
+  departmentRollup?: DepartmentRollup | null;
 }) {
   const [showAllUsers, setShowAllUsers] = useState(false);
   const [showScopes, setShowScopes] = useState(false);
@@ -34,6 +38,10 @@ export function ObservationDetails({
 
   const visibleEmails = showAllUsers ? emails : emails.slice(0, PREVIEW_LIMIT);
   const hiddenEmailCount = emails.length - visibleEmails.length;
+  const departmentLabel =
+    departmentRollup && departmentRollup.entries.length > 0
+      ? formatDepartmentRollup(departmentRollup)
+      : null;
 
   return (
     <div className="space-y-1.5 text-xs">
@@ -75,12 +83,29 @@ export function ObservationDetails({
             <button
               type="button"
               onClick={() => setShowAllUsers(false)}
-              className="text-[11px] text-[var(--text-faint)] hover:underline"
+              className="text-[var(--text-faint)] text-[11px] hover:underline"
             >
               show fewer
             </button>
           )}
         </div>
+      )}
+
+      {departmentLabel && (
+        <p
+          className="flex items-center gap-1.5 text-[var(--text-faint)]"
+          title={
+            departmentRollup && departmentRollup.unmatched > 0
+              ? `${departmentRollup.unmatched} user${departmentRollup.unmatched === 1 ? "" : "s"} not matched to a directory department`
+              : "Users by department, from the identity-provider directory sync"
+          }
+        >
+          <Building2 className="h-3 w-3 shrink-0" />
+          <span className="text-[var(--text-secondary)]">{departmentLabel}</span>
+          {departmentRollup && departmentRollup.unmatched > 0 && (
+            <span>· {departmentRollup.unmatched} unmatched</span>
+          )}
+        </p>
       )}
 
       {scopeList.length > 0 && (

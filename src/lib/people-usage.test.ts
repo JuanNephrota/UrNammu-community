@@ -356,6 +356,108 @@ test("rollup keeps Cursor cost null until a day carried spend, and drops idle se
   assert.deepEqual(rows[0].surfaces, ["cursor"]);
 });
 
+// ── Directory alias folding + deactivated flag ─────────────────────────────
+
+test("directory aliases fold one person's surfaces onto the primary email", () => {
+  const inputs = empty();
+  inputs.otel.push({
+    email: "ada@example.com", // primary, from OTel
+    surface: "claude_code",
+    sessions: 2,
+    commits: 1,
+    linesAdded: 10,
+    tokens: 1_000,
+    cost: 1,
+    lastActiveAt: new Date("2026-09-10T00:00:00Z"),
+  });
+  inputs.cursor.push({
+    email: "Ada.Lovelace@Example.com", // alias, from Cursor
+    requests: 5,
+    tokens: 500,
+    linesAccepted: 20,
+    activeDays: 2,
+    cost: 0.5,
+    lastActiveAt: new Date("2026-09-12T00:00:00Z"),
+  });
+  inputs.proxy.push({
+    email: "alovelace@example.com", // second alias, from the proxy header
+    requests: 3,
+    tokens: 300,
+    cost: 0.25,
+    flagged: 0,
+    lastActiveAt: null,
+  });
+  // A registered User under the alias spelling still enriches the merged row.
+  inputs.identities.push({ email: "ada.lovelace@example.com", name: "A. Lovelace (user)", department: "Platform" });
+  inputs.directory = [
+    {
+      primaryEmail: "ada@example.com",
+      aliases: ["ada.lovelace@example.com", "alovelace@example.com"],
+      displayName: "Ada Lovelace",
+      department: "Engineering",
+      active: true,
+    },
+  ];
+
+  const { rows, unattributed } = mergePeopleUsage(inputs);
+  assert.equal(rows.length, 1);
+  const ada = rows[0];
+  assert.equal(ada.email, "ada@example.com");
+  // directory wins over the User row for name / department
+  assert.equal(ada.name, "Ada Lovelace");
+  assert.equal(ada.department, "Engineering");
+  assert.equal(ada.directoryStatus, "active");
+  assert.deepEqual(ada.surfaces, ["claude_code", "cursor", "proxy"]);
+  assert.equal(ada.totalCost, 1.75);
+  assert.equal(ada.totalTokens, 1_800);
+  assert.equal(ada.lastActiveAt?.toISOString(), "2026-09-12T00:00:00.000Z");
+  assert.equal(unattributed.cost, 0);
+});
+
+test("directory falls back to User / provider identity for fields it lacks and leaves unknown people alone", () => {
+  const inputs = empty();
+  inputs.proxy.push({ email: "bob@example.com", requests: 1, tokens: 10, cost: 0.1, flagged: 0, lastActiveAt: null });
+  inputs.proxy.push({ email: "stranger@example.com", requests: 1, tokens: 10, cost: 0.1, flagged: 0, lastActiveAt: null });
+  inputs.identities.push({ email: "bob@example.com", name: "Bob (user)", department: "Sales" });
+  inputs.directory = [{ primaryEmail: "bob@example.com", aliases: [], displayName: null, department: null, active: true }];
+
+  const { rows } = mergePeopleUsage(inputs);
+  const byEmail = Object.fromEntries(rows.map((r) => [r.email, r]));
+  assert.equal(byEmail["bob@example.com"].name, "Bob (user)");
+  assert.equal(byEmail["bob@example.com"].department, "Sales");
+  assert.equal(byEmail["bob@example.com"].directoryStatus, "active");
+  assert.equal(byEmail["stranger@example.com"].directoryStatus, "unknown");
+  assert.equal(byEmail["stranger@example.com"].name, null);
+});
+
+test("deactivated directory people are flagged even when only an alias was observed", () => {
+  const inputs = empty();
+  inputs.cursor.push({
+    email: "old.alias@example.com",
+    requests: 4,
+    tokens: 40,
+    linesAccepted: 0,
+    activeDays: 1,
+    cost: 0.4,
+    lastActiveAt: new Date("2026-09-14T00:00:00Z"),
+  });
+  inputs.directory = [
+    {
+      primaryEmail: "leaver@example.com",
+      aliases: ["old.alias@example.com"],
+      displayName: "Former Employee",
+      department: "Finance",
+      active: false,
+      deactivatedAt: new Date("2026-09-01T00:00:00Z"),
+    },
+  ];
+  const { rows } = mergePeopleUsage(inputs);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].email, "leaver@example.com");
+  assert.equal(rows[0].name, "Former Employee");
+  assert.equal(rows[0].directoryStatus, "deactivated");
+});
+
 test("rollup ignores providers it does not know", () => {
   const out = rollupAssistantDailyStats([
     statRow({ provider: "copilot", actorExternalId: "x@example.com", day: new Date(), sessions: 1 }),

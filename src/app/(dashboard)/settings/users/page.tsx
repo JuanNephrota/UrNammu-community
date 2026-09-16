@@ -1,22 +1,54 @@
 import { requireRole } from "@/lib/auth-guard";
 import { UserManagement } from "@/components/settings/user-management";
+import {
+  DirectorySyncSettings,
+  type DirectorySyncCardData,
+} from "@/components/settings/directory-sync-settings";
 import { prisma } from "@/lib/prisma";
 import { managedUserSelect, serializeManagedUser } from "@/lib/user-lifecycle";
+import { getDirectorySyncStatuses } from "@/lib/background-jobs";
+import { getDirectoryPeopleCounts } from "@/lib/directory-sync";
 import { getSettingsPageData } from "../data";
 
 export default async function UserSettingsPage() {
   const session = await requireRole(["ADMIN"]);
-  const [{ settingsMap }, users] = await Promise.all([
+  const [{ settingsMap }, users, directoryStatuses, directoryCounts] = await Promise.all([
     getSettingsPageData(),
     prisma.user.findMany({
       where: { status: { not: "DELETED" } },
       orderBy: { createdAt: "desc" },
       select: managedUserSelect,
     }),
+    getDirectorySyncStatuses(),
+    getDirectoryPeopleCounts(),
   ]);
+
+  const directorySources: DirectorySyncCardData[] = directoryStatuses.map((status) => ({
+    source: status.source,
+    label: status.label,
+    configured: status.configured,
+    enabled: status.schedule.enabled,
+    intervalHours: status.schedule.intervalHours,
+    nextDueAt: status.schedule.nextDueAt ? status.schedule.nextDueAt.toISOString() : null,
+    skippedReason: status.schedule.skippedReason ?? null,
+    lastRun: status.lastRun
+      ? {
+          status: status.lastRun.status,
+          startedAt: status.lastRun.startedAt.toISOString(),
+          completedAt: status.lastRun.completedAt ? status.lastRun.completedAt.toISOString() : null,
+          errorMessage: status.lastRun.errorMessage,
+          counts: status.lastRun.counts,
+        }
+      : null,
+    people: directoryCounts[status.source],
+  }));
 
   return (
     <div className="space-y-6">
+      <DirectorySyncSettings
+        sources={directorySources}
+        includeGuests={settingsMap.directory_sync_include_guests === "true"}
+      />
       <UserManagement
         initialUsers={users.map(serializeManagedUser)}
         currentUserId={session.user.userId}

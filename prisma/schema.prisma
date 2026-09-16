@@ -753,6 +753,37 @@ model ProviderActor {
   @@index([syncRunId])
 }
 
+// ─── Directory Sync ─────────────────────────────────────
+// One row per person in an identity provider's directory (source =
+// "google_workspace" | "microsoft_365"). Written by the per-source directory
+// sync (src/lib/directory-sync.ts); read by Usage by Person (alias folding,
+// name/department enrichment, deactivated flag), the shadow-AI department
+// rollup, and the usage-after-deactivation governance check. Emails are
+// stored lower-cased; `aliases` excludes `primaryEmail` and is deduped.
+model DirectoryPerson {
+  id            String    @id @default(cuid())
+  source        String
+  externalId    String
+  primaryEmail  String
+  aliases       String[]  @default([])
+  displayName   String?
+  department    String?
+  title         String?
+  managerEmail  String?
+  orgUnit       String?
+  active        Boolean   @default(true)
+  deactivatedAt DateTime?
+  lastSyncedAt  DateTime
+  raw           Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([source, externalId])
+  @@index([primaryEmail])
+  @@index([department])
+  @@index([active])
+}
+
 // ─── Risk Assessment ────────────────────────────────────
 
 model RiskAssessment {

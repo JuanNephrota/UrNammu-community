@@ -34,10 +34,19 @@ export const SURFACE_LABELS: Record<PersonSurface, string> = {
 
 export const SURFACE_ORDER: PersonSurface[] = ["claude_code", "cowork", "cursor", "proxy"];
 
+/**
+ * Where the person stands in the synced identity-provider directory:
+ * `active` / `deactivated` when a DirectoryPerson row matches the email (or
+ * one of its aliases), `unknown` when no directory sync covers them.
+ */
+export type PersonDirectoryStatus = "active" | "deactivated" | "unknown";
+
 export interface PersonUsageRow {
+  /** Directory primary email when the observed address was an alias; otherwise the observed email. */
   email: string;
   name: string | null;
   department: string | null;
+  directoryStatus: PersonDirectoryStatus;
 
   // Claude Code (terminal / IDE). `claudeCodeSource` says where the numbers
   // came from: live OTel, or the Admin API analytics fallback.

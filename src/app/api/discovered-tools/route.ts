@@ -4,6 +4,7 @@ import { withAuth, withRole } from "@/lib/auth-guard";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { findMatchingGovernedSystem } from "@/lib/governed-system-match";
+import { normalizeDirectoryEmail, rollupDepartments } from "@/lib/directory-identity";
 
 const createDiscoveredToolSchema = z.object({
   toolName: z.string().min(1),
@@ -35,7 +36,37 @@ export async function GET(req: NextRequest) {
       orderBy: { detectedAt: "desc" },
       include: { _count: { select: { alerts: true } } },
     });
-    return NextResponse.json(tools);
+
+    // Department rollup of each tool's observed users, from the synced
+    // identity-provider directory (DirectoryPerson). One lookup for every
+    // email across all tools; tools with no matches get an empty rollup.
+    const observedEmails = [
+      ...new Set(
+        tools
+          .flatMap((tool) => tool.userEmails)
+          .map((email) => normalizeDirectoryEmail(email))
+          .filter((email): email is string => !!email)
+      ),
+    ];
+    const people =
+      observedEmails.length > 0
+        ? await prisma.directoryPerson.findMany({
+            where: {
+              OR: [{ primaryEmail: { in: observedEmails } }, { aliases: { hasSome: observedEmails } }],
+            },
+            select: { primaryEmail: true, aliases: true, department: true, active: true },
+          })
+        : [];
+
+    return NextResponse.json(
+      tools.map((tool) => ({
+        ...tool,
+        departmentRollup:
+          tool.userEmails.length > 0 && people.length > 0
+            ? rollupDepartments(tool.userEmails, people)
+            : null,
+      }))
+    );
   });
 }
 

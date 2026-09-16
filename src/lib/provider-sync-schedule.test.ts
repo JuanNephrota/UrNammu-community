@@ -1,8 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isDirectorySyncSource,
   isDiscoveryScanSource,
   isSyncProvider,
+  resolveDirectorySyncSchedule,
   resolveDiscoveryScanSchedule,
   resolveProviderSyncSchedule,
   SYNC_PROVIDERS,
@@ -186,5 +188,63 @@ describe("id guards", () => {
   it("recognises discovery scan sources", () => {
     assert.equal(isDiscoveryScanSource("google_workspace"), true);
     assert.equal(isDiscoveryScanSource("netskope"), false);
+  });
+});
+
+describe("resolveDirectorySyncSchedule", () => {
+  it("defaults to disabled and 24 hours", () => {
+    const s = resolveDirectorySyncSchedule("google_workspace", {
+      enabledRaw: null,
+      intervalRaw: null,
+      lastSucceededAt: null,
+      running: false,
+      configured: true,
+      now: NOW,
+    });
+    assert.equal(s.enabled, false);
+    assert.equal(s.intervalHours, 24);
+    assert.equal(s.due, false);
+    assert.match(s.skippedReason ?? "", /disabled/);
+  });
+
+  it("is due once enabled, configured, idle, and past the interval", () => {
+    const s = resolveDirectorySyncSchedule("microsoft_365", {
+      enabledRaw: "true",
+      intervalRaw: "12",
+      lastSucceededAt: hoursAgo(13),
+      running: false,
+      configured: true,
+      now: NOW,
+    });
+    assert.equal(s.due, true);
+    assert.equal(s.nextDueAt?.toISOString(), hoursAgo(1).toISOString());
+  });
+
+  it("is not due while a run is in flight or credentials are missing", () => {
+    const running = resolveDirectorySyncSchedule("microsoft_365", {
+      enabledRaw: "true",
+      intervalRaw: null,
+      lastSucceededAt: null,
+      running: true,
+      configured: true,
+      now: NOW,
+    });
+    assert.equal(running.due, false);
+    const unconfigured = resolveDirectorySyncSchedule("google_workspace", {
+      enabledRaw: "true",
+      intervalRaw: null,
+      lastSucceededAt: null,
+      running: false,
+      configured: false,
+      now: NOW,
+    });
+    assert.equal(unconfigured.due, false);
+    assert.match(unconfigured.skippedReason ?? "", /not configured/);
+  });
+
+  it("recognises only the two identity sources", () => {
+    assert.equal(isDirectorySyncSource("google_workspace"), true);
+    assert.equal(isDirectorySyncSource("microsoft_365"), true);
+    assert.equal(isDirectorySyncSource("hexnode"), false);
   });
 });

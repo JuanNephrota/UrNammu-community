@@ -4,6 +4,7 @@ import type {
   GovernanceReviewStage,
 } from "@prisma/client";
 import { getSystemWorkflowSummary } from "./governance-workflow";
+import { buildAliasMap, normalizeDirectoryEmail, resolveAlias } from "./directory-identity";
 
 type AutomationSystem = {
   id: string;
@@ -134,4 +135,91 @@ export function evaluateGovernanceAutomation(input: {
       (candidate, index, all) => all.findIndex((item) => item.key === candidate.key) === index
     ),
   };
+}
+
+// ── Usage after deactivation ──────────────────────────────────────────────
+// Directory sync marks leavers inactive; this rule catches AI activity dated
+// after that. The cron (background-jobs.ts) loads deactivated DirectoryPerson
+// rows plus the latest activity per email from UsageBucket, AssistantDailyStat
+// and APIUsageLog, and raises one HIGH `usage_after_deactivation` alert per
+// person per 7 days.
+
+export interface DeactivatedPerson {
+  primaryEmail: string;
+  aliases: string[];
+  displayName?: string | null;
+  source: string;
+  deactivatedAt: Date;
+}
+
+export interface ObservedActivity {
+  /** Raw actor email as recorded by the telemetry source. */
+  email: string | null;
+  /** Where the activity was seen (e.g. "proxy", "claude_code", "cursor"). */
+  surface: string;
+  /** Latest activity timestamp for that email on that surface. */
+  lastActiveAt: Date;
+}
+
+export interface UsageAfterDeactivationCandidate {
+  key: string;
+  email: string;
+  title: string;
+  description: string;
+  severity: "HIGH";
+  lastActiveAt: Date;
+  surfaces: string[];
+}
+
+/**
+ * Find people whose directory account was deactivated but who still show AI
+ * activity dated after `deactivatedAt`. Activity is matched on the primary
+ * email or any alias, case-insensitively. Pure so the rule is testable.
+ */
+export function evaluateUsageAfterDeactivation(input: {
+  people: DeactivatedPerson[];
+  activity: ObservedActivity[];
+}): UsageAfterDeactivationCandidate[] {
+  const aliasMap = buildAliasMap(
+    input.people.map((p) => ({ primaryEmail: p.primaryEmail, aliases: p.aliases, active: false }))
+  );
+  const byPrimary = new Map<string, DeactivatedPerson>();
+  for (const person of input.people) {
+    const primary = normalizeDirectoryEmail(person.primaryEmail);
+    if (primary && !byPrimary.has(primary)) byPrimary.set(primary, person);
+  }
+
+  const hits = new Map<string, { lastActiveAt: Date; surfaces: Set<string> }>();
+  for (const activity of input.activity) {
+    const primary = resolveAlias(activity.email, aliasMap);
+    if (!primary) continue;
+    const person = byPrimary.get(primary);
+    if (!person) continue;
+    if (activity.lastActiveAt.getTime() <= person.deactivatedAt.getTime()) continue;
+    const hit = hits.get(primary) ?? { lastActiveAt: activity.lastActiveAt, surfaces: new Set<string>() };
+    if (activity.lastActiveAt > hit.lastActiveAt) hit.lastActiveAt = activity.lastActiveAt;
+    hit.surfaces.add(activity.surface);
+    hits.set(primary, hit);
+  }
+
+  return [...hits.entries()]
+    .map(([email, hit]) => {
+      const person = byPrimary.get(email)!;
+      const surfaces = [...hit.surfaces].sort();
+      const who = person.displayName ? `${person.displayName} (${email})` : email;
+      return {
+        key: `usage_after_deactivation:${email}`,
+        email,
+        title: `AI usage after deactivation: ${email}`,
+        description:
+          `${who} was deactivated in the ${person.source.replace("_", " ")} directory on ` +
+          `${person.deactivatedAt.toISOString().slice(0, 10)} but shows AI activity on ` +
+          `${surfaces.join(", ")} as recently as ${hit.lastActiveAt.toISOString().slice(0, 10)}. ` +
+          "Revoke remaining credentials and confirm offboarding is complete.",
+        severity: "HIGH" as const,
+        lastActiveAt: hit.lastActiveAt,
+        surfaces,
+      };
+    })
+    .sort((a, b) => a.email.localeCompare(b.email));
 }

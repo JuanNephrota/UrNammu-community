@@ -32,6 +32,7 @@ import {
   MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
   PROVIDER_SYNC_SETTINGS_KEYS,
   providerSyncSettingKeys,
+  directorySyncSettingKeys,
 } from "./settings";
 import { isGoogleWorkspaceConfigured } from "./google-workspace";
 import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
@@ -43,20 +44,37 @@ import {
   type KeyUsageEvaluationResult,
 } from "./key-usage-evaluation";
 import {
+  DIRECTORY_SYNC_LABELS,
+  DIRECTORY_SYNC_RUNNING_GRACE_MS,
+  DIRECTORY_SYNC_SOURCES,
   DISCOVERY_SCAN_LABELS,
   DISCOVERY_SCAN_RUNNING_GRACE_MS,
   DISCOVERY_SCAN_SOURCES,
   PROVIDER_SYNC_RUNNING_GRACE_MS,
   parseIntervalHours,
+  resolveDirectorySyncSchedule,
   resolveDiscoveryScanSchedule,
   resolveProviderSyncSchedule,
   SYNC_PROVIDER_LABELS,
   SYNC_PROVIDERS,
+  type DirectorySyncSchedule,
+  type DirectorySyncSource,
   type DiscoveryScanSchedule,
   type DiscoveryScanSource,
   type ProviderSyncSchedule,
   type SyncProviderId,
 } from "./provider-sync-schedule";
+import {
+  DIRECTORY_SYNC_TYPE,
+  isDirectorySourceConfigured,
+  runDirectorySync,
+  type DirectorySyncCounts,
+  type DirectorySyncResult,
+} from "./directory-sync";
+import {
+  evaluateUsageAfterDeactivation,
+  type ObservedActivity,
+} from "./governance-automation";
 
 type BackgroundActor = string;
 
@@ -213,6 +231,35 @@ export type GovernanceAutomationJobResult = {
   reviewRenewals: number;
   exceptionRenewals: number;
   ownershipEscalations: number;
+  /** New `usage_after_deactivation` alerts raised this run (deduped per person per 7 days). */
+  usageAfterDeactivation: number;
+};
+
+/** Everything Settings → Users & Identity needs to render one directory-sync card. */
+export type DirectorySyncStatus = {
+  source: DirectorySyncSource;
+  label: string;
+  configured: boolean;
+  /** True when a RUNNING directory run for this source is younger than the grace period. */
+  running: boolean;
+  schedule: DirectorySyncSchedule;
+  /** Raw saved values; null means "built-in default". */
+  settings: { enabled: string | null; intervalHours: string | null };
+  lastRun: (ProviderSyncRunSummary & { counts: DirectorySyncCounts | null }) | null;
+  lastSucceededAt: Date | null;
+};
+
+export type ScheduledDirectorySyncResult = {
+  source: DirectorySyncSource;
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+  intervalHours: number;
+  due: boolean;
+  skippedReason?: string;
+  nextDueAt: Date | null;
+  staleRunsFailed: number;
+  result?: DirectorySyncResult;
 };
 
 /**
@@ -730,8 +777,273 @@ export async function runScheduledDiscoveryScan(
 }
 
 // ---------------------------------------------------------------------------
+// Per-source scheduled directory sync (/api/cron/directory-sync/[source])
+// ---------------------------------------------------------------------------
+
+/**
+ * Fail directory runs stuck in RUNNING beyond the grace period, scoped to one
+ * source so a Google run cannot fail an in-flight Entra run.
+ */
+export async function failStaleDirectorySyncs(now = new Date(), source?: DirectorySyncSource) {
+  const cutoff = new Date(now.getTime() - DIRECTORY_SYNC_RUNNING_GRACE_MS);
+  const result = await prisma.providerSyncRun.updateMany({
+    where: {
+      syncType: DIRECTORY_SYNC_TYPE,
+      status: "RUNNING",
+      startedAt: { lt: cutoff },
+      ...(source ? { provider: source } : {}),
+    },
+    data: { status: "FAILED", errorMessage: "Directory sync timed out", completedAt: now },
+  });
+  return result.count;
+}
+
+function directoryCountsFromMetadata(metadata: unknown): DirectorySyncCounts | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const m = metadata as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    fetched: num(m.fetched),
+    created: num(m.created),
+    updated: num(m.updated),
+    deactivated: num(m.deactivated),
+    usersSuspended: num(m.usersSuspended),
+    pages: num(m.pages),
+    truncated: m.truncated === true,
+  };
+}
+
+/**
+ * Resolve schedule, last run, and configuration for the directory-sync
+ * sources. Due-ness is keyed off each source's own latest SUCCEEDED run with
+ * syncType "directory".
+ */
+export async function getDirectorySyncStatuses(
+  sources: readonly DirectorySyncSource[] = DIRECTORY_SYNC_SOURCES,
+  now = new Date()
+): Promise<DirectorySyncStatus[]> {
+  const settingKeys = sources.flatMap((source) => {
+    const keys = directorySyncSettingKeys(source);
+    return [keys.enabled, keys.intervalHours];
+  });
+  const runningSince = new Date(now.getTime() - DIRECTORY_SYNC_RUNNING_GRACE_MS);
+
+  const [settings, succeeded, latest, running, configuredFlags] = await Promise.all([
+    getSettings(settingKeys),
+    prisma.providerSyncRun.findMany({
+      where: {
+        provider: { in: [...sources] },
+        syncType: DIRECTORY_SYNC_TYPE,
+        status: "SUCCEEDED",
+        completedAt: { not: null },
+      },
+      orderBy: { completedAt: "desc" },
+      distinct: ["provider"],
+      select: { provider: true, completedAt: true },
+    }),
+    prisma.providerSyncRun.findMany({
+      where: { provider: { in: [...sources] }, syncType: DIRECTORY_SYNC_TYPE },
+      orderBy: { startedAt: "desc" },
+      distinct: ["provider"],
+    }),
+    prisma.providerSyncRun.findMany({
+      where: {
+        provider: { in: [...sources] },
+        syncType: DIRECTORY_SYNC_TYPE,
+        status: "RUNNING",
+        startedAt: { gte: runningSince },
+      },
+      select: { provider: true },
+      distinct: ["provider"],
+    }),
+    Promise.all(sources.map((source) => isDirectorySourceConfigured(source).catch(() => false))),
+  ]);
+
+  const lastSucceeded = new Map(succeeded.map((run) => [run.provider, run.completedAt]));
+  const latestRun = new Map(latest.map((run) => [run.provider, run]));
+  const runningSet = new Set(running.map((run) => run.provider));
+
+  return sources.map((source, index) => {
+    const keys = directorySyncSettingKeys(source);
+    // getSettings only reads the DB; honour the env fallback like getSetting.
+    const enabledRaw = settings[keys.enabled] ?? process.env[keys.enabled.toUpperCase()] ?? null;
+    const intervalRaw =
+      settings[keys.intervalHours] ?? process.env[keys.intervalHours.toUpperCase()] ?? null;
+    const lastSucceededAt = lastSucceeded.get(source) ?? null;
+    const configured = configuredFlags[index];
+    const run = latestRun.get(source) ?? null;
+    const summary = summarizeRun(run);
+
+    return {
+      source,
+      label: DIRECTORY_SYNC_LABELS[source],
+      configured,
+      running: runningSet.has(source),
+      schedule: resolveDirectorySyncSchedule(source, {
+        enabledRaw,
+        intervalRaw,
+        lastSucceededAt,
+        running: runningSet.has(source),
+        configured,
+        now,
+      }),
+      settings: { enabled: enabledRaw, intervalHours: intervalRaw },
+      lastRun: summary ? { ...summary, counts: directoryCountsFromMetadata(run?.metadata) } : null,
+      lastSucceededAt,
+    };
+  });
+}
+
+/**
+ * Cron entry point for one directory source: fail its stale runs, then sync
+ * if (and only if) it is enabled, configured, idle, and past its interval.
+ */
+export async function runScheduledDirectorySync(
+  source: DirectorySyncSource,
+  now = new Date()
+): Promise<ScheduledDirectorySyncResult> {
+  const staleRunsFailed = await failStaleDirectorySyncs(now, source);
+  const [status] = await getDirectorySyncStatuses([source], now);
+  const result: ScheduledDirectorySyncResult = {
+    source,
+    label: status.label,
+    configured: status.configured,
+    enabled: status.schedule.enabled,
+    intervalHours: status.schedule.intervalHours,
+    due: status.schedule.due,
+    skippedReason: status.schedule.skippedReason,
+    nextDueAt: status.schedule.nextDueAt,
+    staleRunsFailed,
+  };
+
+  if (status.schedule.due) {
+    result.result = await runDirectorySync(source, "system");
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Governance automation (/api/cron/governance-automation)
 // ---------------------------------------------------------------------------
+
+const USAGE_AFTER_DEACTIVATION_SOURCE = "usage_after_deactivation";
+const USAGE_AFTER_DEACTIVATION_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Only people deactivated this recently are checked; older leavers have had their credentials cleaned up or not, and re-alerting forever helps no one. */
+const USAGE_AFTER_DEACTIVATION_LOOKBACK_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * Raise a HIGH alert for every deactivated directory person whose email (or
+ * alias) still shows AI activity dated after `deactivatedAt`, across the
+ * proxy usage buckets, coding-assistant daily stats, and the proxy request
+ * log. One alert per person per 7 days, regardless of alert status.
+ */
+async function syncUsageAfterDeactivationAlerts(now: Date): Promise<number> {
+  const people = await prisma.directoryPerson.findMany({
+    where: {
+      active: false,
+      deactivatedAt: { not: null, gte: new Date(now.getTime() - USAGE_AFTER_DEACTIVATION_LOOKBACK_MS) },
+    },
+    select: { primaryEmail: true, aliases: true, displayName: true, source: true, deactivatedAt: true },
+  });
+  if (people.length === 0) return 0;
+
+  const emails = [...new Set(people.flatMap((p) => [p.primaryEmail, ...p.aliases]))];
+  const earliest = people.reduce(
+    (min, p) => (p.deactivatedAt! < min ? p.deactivatedAt! : min),
+    people[0].deactivatedAt!
+  );
+
+  const [buckets, stats, logs] = await Promise.all([
+    prisma.usageBucket.groupBy({
+      by: ["actorExternalId"],
+      where: { actorExternalId: { in: emails, mode: "insensitive" }, bucketStart: { gt: earliest } },
+      _max: { bucketStart: true },
+    }),
+    prisma.assistantDailyStat.groupBy({
+      by: ["provider", "actorExternalId"],
+      where: { actorExternalId: { in: emails, mode: "insensitive" }, day: { gt: earliest } },
+      _max: { day: true },
+    }),
+    prisma.aPIUsageLog.groupBy({
+      by: ["userId"],
+      where: {
+        createdAt: { gt: earliest },
+        user: { email: { in: emails, mode: "insensitive" } },
+      },
+      _max: { createdAt: true },
+    }),
+  ]);
+
+  const logUserIds = logs.map((l) => l.userId).filter((id): id is string => !!id);
+  const logUsers = logUserIds.length
+    ? await prisma.user.findMany({ where: { id: { in: logUserIds } }, select: { id: true, email: true } })
+    : [];
+  const emailByUserId = new Map(logUsers.map((u) => [u.id, u.email]));
+
+  const activity: ObservedActivity[] = [];
+  for (const b of buckets) {
+    if (b.actorExternalId && b._max.bucketStart) {
+      activity.push({ email: b.actorExternalId, surface: "proxy", lastActiveAt: b._max.bucketStart });
+    }
+  }
+  for (const s of stats) {
+    if (s._max.day) activity.push({ email: s.actorExternalId, surface: s.provider, lastActiveAt: s._max.day });
+  }
+  for (const l of logs) {
+    const email = l.userId ? emailByUserId.get(l.userId) : null;
+    if (email && l._max.createdAt) activity.push({ email, surface: "proxy", lastActiveAt: l._max.createdAt });
+  }
+
+  const candidates = evaluateUsageAfterDeactivation({
+    people: people.map((p) => ({
+      primaryEmail: p.primaryEmail,
+      aliases: p.aliases,
+      displayName: p.displayName,
+      source: p.source,
+      deactivatedAt: p.deactivatedAt!,
+    })),
+    activity,
+  });
+  if (candidates.length === 0) return 0;
+
+  const recent = await prisma.alert.findMany({
+    where: {
+      source: USAGE_AFTER_DEACTIVATION_SOURCE,
+      createdAt: { gte: new Date(now.getTime() - USAGE_AFTER_DEACTIVATION_DEDUPE_MS) },
+      title: { in: candidates.map((c) => c.title) },
+    },
+    select: { title: true },
+  });
+  const recentTitles = new Set(recent.map((a) => a.title));
+
+  let created = 0;
+  for (const candidate of candidates) {
+    if (recentTitles.has(candidate.title)) continue;
+    await prisma.alert.create({
+      data: {
+        title: candidate.title,
+        description: candidate.description,
+        severity: candidate.severity,
+        source: USAGE_AFTER_DEACTIVATION_SOURCE,
+      },
+    });
+    created += 1;
+    await notifyDatadog({
+      title: `[UrNammu] ${candidate.title}`,
+      text: candidate.description,
+      tags: [
+        "source:urnammu",
+        `alert_source:${USAGE_AFTER_DEACTIVATION_SOURCE}`,
+        "severity:high",
+        ...candidate.surfaces.map((s) => `surface:${s}`),
+      ],
+      alertType: "error",
+      aggregationKey: `urnammu:${candidate.key}`,
+    });
+  }
+  return created;
+}
 
 export async function runGovernanceAutomationJob(now = new Date()): Promise<GovernanceAutomationJobResult> {
   const [reviewNoticeDaysRaw, exceptionNoticeDaysRaw, escalationOverdueDaysRaw] = await Promise.all([
@@ -858,8 +1170,18 @@ export async function runGovernanceAutomationJob(now = new Date()): Promise<Gove
     candidates: automation.ownershipEscalations,
   });
 
+  let usageAfterDeactivation = 0;
+  try {
+    usageAfterDeactivation = await syncUsageAfterDeactivationAlerts(now);
+  } catch (error) {
+    // A telemetry read failure must not take the renewal / escalation alerts
+    // down with it; log and report zero for this run.
+    logger.error("governance_automation.usage_after_deactivation_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
-  return { reviewRenewals, exceptionRenewals, ownershipEscalations };
+  return { reviewRenewals, exceptionRenewals, ownershipEscalations, usageAfterDeactivation };
 }
 
 // ---------------------------------------------------------------------------

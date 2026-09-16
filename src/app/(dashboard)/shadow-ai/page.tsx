@@ -41,6 +41,10 @@ type Tool = {
   scopes?: string[] | null;
   firstSeenAt?: string | null;
   lastSeenAt?: string | null;
+  departmentRollup?: {
+    entries: { department: string; count: number }[];
+    unmatched: number;
+  } | null;
 };
 
 type ScanStatus = {
@@ -729,6 +733,7 @@ export default function ShadowAIPage() {
                               lastSeenAt={tool.lastSeenAt}
                               userEmails={tool.userEmails}
                               scopes={tool.scopes}
+                              departmentRollup={tool.departmentRollup}
                             />
                           </div>
                         </div>
@@ -858,6 +863,7 @@ export default function ShadowAIPage() {
                         lastSeenAt={tool.lastSeenAt}
                         userEmails={tool.userEmails}
                         scopes={tool.scopes}
+                        departmentRollup={tool.departmentRollup}
                       />
                       {dismissingId === tool.id && (
                         <div className="flex items-center gap-2 pt-1">
