@@ -1,6 +1,6 @@
 # Data collection upgrades — Tier 2 (staged)
 
-Status: **staged, not started**. Tier 1 shipped in `feat/data-collection-tier1`
+Status: **complete** (PRs #108–#113, merged 2026-09-16). Tier 1 shipped in `feat/data-collection-tier1`
 (cache tokens, unified pricing, OpenAI stream telemetry, Portkey per-model
 buckets, Shadow AI observation columns, OTel idempotency). This document scopes
 the next tier so each item can be picked up as its own PR. Items are ordered
