@@ -1,6 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth-guard";
 import { getSettings, parseEnforcementMode } from "@/lib/settings";
+import {
+  RETENTION_ENV_VARS,
+  RETENTION_SETTING_KEYS,
+  type RetentionSettingKey,
+} from "@/lib/collection-retention";
 
 const SETTINGS_KEYS = [
   "google_service_account_key",
@@ -77,7 +82,22 @@ const SETTINGS_KEYS = [
   "azure_tenant_id",
   "azure_client_id",
   "azure_client_secret",
+  "raw_snapshot_retention_days",
+  "api_usage_log_retention_days",
+  "agent_tool_call_retention_days",
+  "policy_denial_retention_days",
+  "proxy_health_retention_days",
+  "scan_result_retention_days",
+  "claude_code_telemetry_retention_days",
+  "cursor_telemetry_retention_days",
 ] as const;
+
+export interface RetentionSettingValue {
+  /** Value saved in the Settings UI (AppSetting), null when unset. */
+  configured: string | null;
+  /** Env-var fallback that applies when no DB value is set. */
+  envValue: string | null;
+}
 
 export async function getSettingsPageData() {
   let isAdmin = false;
@@ -140,9 +160,20 @@ export async function getSettingsPageData() {
     hasClientSecret: !!settingsMap.azure_client_secret,
   };
 
+  const retention = Object.fromEntries(
+    RETENTION_SETTING_KEYS.map((key) => [
+      key,
+      {
+        configured: settingsMap[key] ?? null,
+        envValue: isAdmin ? process.env[RETENTION_ENV_VARS[key]] ?? null : null,
+      },
+    ])
+  ) as Record<RetentionSettingKey, RetentionSettingValue>;
+
   return {
     isAdmin,
     users,
+    retention,
     settingsMap,
     proxySecret,
     platformUrl,

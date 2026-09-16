@@ -276,8 +276,20 @@ Shared secrets for the OpenTelemetry ingest routes that feed the Claude Code, Co
 |----------|---------|
 | `CLAUDE_CODE_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/claude-code`. |
 | `CURSOR_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/cursor`. |
-| `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` | Retention window enforced by the prune cron. |
+| `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` | Retention window (days) enforced by the Claude Code prune cron. Default 30. |
+| `CURSOR_TELEMETRY_RETENTION_DAYS` | Retention window (days) enforced by the Cursor prune cron. Default 30. |
 | `TELEMETRY_MAX_ROWS` | Ceiling on flattened rows per ingest request (default `5000`); larger bodies get `413`. |
+
+Retention for the other collection tables is enforced by `/api/cron/prune-collection` (§9.2). Set it in **Settings → General → Data Retention**, or via these env fallbacks (days; `0` disables pruning for that table). Usage and cost buckets are the long-term aggregate and are never pruned.
+
+| Variable | Table | Default |
+|----------|-------|---------|
+| `API_USAGE_LOG_RETENTION_DAYS` | `APIUsageLog` (per-request proxy log; buckets keep the totals) | 180 |
+| `AGENT_TOOL_CALL_RETENTION_DAYS` | `AgentToolCall` (tool profiles keep the counts) | 180 |
+| `POLICY_DENIAL_RETENTION_DAYS` | `PolicyDenial` | 365 |
+| `RAW_SNAPSHOT_RETENTION_DAYS` | `ProviderRawSnapshot` | 14 |
+| `PROXY_HEALTH_RETENTION_DAYS` | `ProxyHealthSnapshot` | 90 |
+| `SCAN_RESULT_RETENTION_DAYS` | `SensitiveScan`, `ProviderSecurityScan` (newest run per provider is always kept) | 365 |
 
 ### 3.13 Scheduled report delivery
 
@@ -715,7 +727,7 @@ These dashboards are fed by an OpenTelemetry pipeline posting to UrNammu, not by
 
 1. Set `CLAUDE_CODE_TELEMETRY_SECRET` and/or `CURSOR_TELEMETRY_SECRET`.
 2. Configure your OTel collector to forward to `POST /api/telemetry/claude-code` or `POST /api/telemetry/cursor` with that secret as a Bearer token.
-3. Set `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` and make sure the prune crons from §9.2 are scheduled.
+3. Set `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` / `CURSOR_TELEMETRY_RETENTION_DAYS` (or the Data Retention card in Settings → General) and make sure the prune crons from §9.2 are scheduled.
 
 All of this is metadata only — no prompt text and no code content is transmitted or stored. Note that the Cursor OTel hook carries no token or cost data; Cursor tokens and spend come from the Cursor Admin API sync (§8.6a), without which the Cursor dashboard shows activity metrics only.
 
@@ -770,8 +782,9 @@ These run on their own schedules rather than through the maintenance pass:
 | `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy configuration. |
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
 | `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
+| `/api/cron/prune-collection` | daily | Enforces retention for the proxy request log, agent tool calls, policy denials, provider raw snapshots, proxy health snapshots, and scan runs (see §3.12). |
 
-The two prune jobs matter more than they look: the developer-AI telemetry tables are high-volume, and without retention they grow without bound.
+The prune jobs matter more than they look: the developer-AI telemetry tables and the proxy request log are high-volume, and without retention they grow without bound. `prune-collection` deletes oldest-first in batches of 5,000 inside a fixed time budget and reports `deleted` / `remaining` per table, so a large backlog drains over several nights rather than timing out.
 
 ### 9.3 Vercel Cron (recommended if deploying to Vercel)
 
@@ -783,6 +796,7 @@ All of the above are already configured in `vercel.json`:
     { "path": "/api/scheduler/maintenance", "schedule": "0 * * * *" },
     { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
     { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
+    { "path": "/api/cron/prune-collection", "schedule": "45 3 * * *" },
     { "path": "/api/cron/run-report-schedules", "schedule": "*/15 * * * *" },
     { "path": "/api/cron/sensitive-scan", "schedule": "0 6 * * *" },
     { "path": "/api/cron/provider-security-scan", "schedule": "0 7 * * *" },

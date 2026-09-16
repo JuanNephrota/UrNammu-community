@@ -739,7 +739,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 ## Sections
 
 - **Overview** — jump-off page to every settings area.
-- **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization). The global **policy enforcement mode** for the proxy — Off / Dry run / Enforce — is also set here.
+- **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization). The global **policy enforcement mode** for the proxy — Off / Dry run / Enforce — is also set here, along with Azure Monitor access for Proxy Health and the **Data Retention** card.
 - **Provider Admin APIs** — admin keys for org telemetry: Anthropic (which also feeds Claude Code analytics), OpenAI, Google Gemini billing export, and the Cursor Admin API. One global sync toggle and interval covers every provider (per-provider settings are planned). Anomaly thresholds, governance-automation notice days, and attribution tuning live here too.
 - **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`. For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile.
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts.
@@ -759,6 +759,20 @@ For a catalog view of every external service and whether it is connected, use th
 Identity enforcement disables a federated app at the IdP; the network feed publishes blocked domains for a DNS, proxy, firewall, or CASB to consume. Both are optional, but with neither configured a block is only a recorded decision. Microsoft app-disable additionally needs admin consent for the relevant Graph permission — the readiness card reports it as \`failed\` rather than silently doing nothing.
 
 The blocklist feed token can be generated here (64 random characters). The feed fails closed: with no token set it returns \`503\` instead of serving unauthenticated.
+
+## Data retention
+
+**Settings → General → Data Retention** sets how many days of raw collection rows the nightly prune crons keep. Each table has its own window; blank means "use the environment variable or built-in default", and \`0\` disables pruning for that table.
+
+- **Proxy request log** (\`APIUsageLog\`) — default 180 days. The hourly and daily usage / cost buckets keep the totals, so dashboards do not change when raw rows are pruned.
+- **Agent tool calls** (\`AgentToolCall\`) — default 180 days. Agent tool profiles keep the counts.
+- **Policy denials** (\`PolicyDenial\`) — default 365 days.
+- **Provider raw snapshots** (\`ProviderRawSnapshot\`) — default 14 days. Raw admin-API payloads captured during provider syncs, kept only for debugging.
+- **Proxy health snapshots** (\`ProxyHealthSnapshot\`) — default 90 days.
+- **Scan runs** (\`SensitiveScan\`, \`ProviderSecurityScan\`) — default 365 days. The newest run overall and the newest run covering each provider are always kept, so the latest posture per provider never disappears.
+- **Claude Code telemetry** and **Cursor telemetry** — default 30 days each; these are the existing OTel prune crons.
+
+Usage and cost buckets are the long-term aggregate and are **never** pruned. The prune runs daily at 03:45 UTC (\`/api/cron/prune-collection\`), deletes oldest-first in batches of 5,000, and reports per-table \`deleted\` / \`remaining\` counts. A backlog too large for one run drains over consecutive nights.
 
 ## Roles
 

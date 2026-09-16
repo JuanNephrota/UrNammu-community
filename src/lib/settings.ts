@@ -1,5 +1,9 @@
 import { prisma } from "./prisma";
 import { decryptSettingValue, encryptSettingValue } from "./settings-crypto";
+import {
+  COLLECTION_RETENTION_SETTINGS_KEYS,
+  RETENTION_ENV_VARS,
+} from "./collection-retention";
 
 /**
  * Get a setting by key. Falls back to env var if not in DB.
@@ -73,8 +77,15 @@ export async function getSetting(key: string): Promise<string | null> {
     datadog_site: process.env.DATADOG_SITE,
     datadog_enabled: process.env.DATADOG_ENABLED,
     claude_code_telemetry_secret: process.env.CLAUDE_CODE_TELEMETRY_SECRET,
-    claude_code_telemetry_retention_days:
-      process.env.CLAUDE_CODE_TELEMETRY_RETENTION_DAYS,
+    // Retention windows for every prune cron (OTel telemetry plus the
+    // collection tables). One list in collection-retention.ts feeds both this
+    // fallback map and the Settings → General retention card.
+    ...Object.fromEntries(
+      Object.entries(RETENTION_ENV_VARS).map(([key, envVar]) => [
+        key,
+        process.env[envVar],
+      ])
+    ),
     platform_url: process.env.NEXTAUTH_URL,
     enable_local_auth: process.env.ENABLE_LOCAL_AUTH,
     enable_dev_login: process.env.ENABLE_DEV_LOGIN,
@@ -224,6 +235,11 @@ export const REPORT_SETTINGS_KEYS = {
   RESEND_API_KEY: "resend_api_key",
   EMAIL_FROM: "report_email_from",
 } as const;
+
+// Retention windows (days, 0 = disabled) enforced by /api/cron/prune-collection.
+// UsageBucket/CostBucket are never pruned. Defaults and env fallbacks live in
+// collection-retention.ts.
+export { COLLECTION_RETENTION_SETTINGS_KEYS };
 
 export const PLATFORM_SETTINGS_KEYS = {
   PROXY_SECRET: "proxy_secret",

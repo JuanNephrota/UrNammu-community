@@ -13,6 +13,10 @@
       "schedule": "31 3 * * *"
     },
     {
+      "path": "/api/cron/prune-collection",
+      "schedule": "45 3 * * *"
+    },
+    {
       "path": "/api/cron/run-report-schedules",
       "schedule": "*/15 * * * *"
     },
