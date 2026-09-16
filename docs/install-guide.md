@@ -737,6 +737,8 @@ Optional. Adds function-app platform metrics — invocations, error rate, respon
 
 Configure the subscription ID, resource group, and function app name in **Settings**. This integration has **no env-var fallback**; the Settings UI is the only place to set it.
 
+Once configured, `/api/cron/proxy-health` (§9.2) pulls a snapshot every 15 minutes; the board's **Sync now** button runs the same sync on demand. Until it is configured the cron returns a skip response and writes nothing.
+
 ### 8.18 Datadog
 
 Optional observability export. Set `DATADOG_API_KEY`, `DATADOG_APP_KEY`, `DATADOG_SITE`, and `DATADOG_ENABLED`, or configure them in Settings.
@@ -763,6 +765,7 @@ These run on their own schedules rather than through the maintenance pass:
 | Endpoint | Schedule | Purpose |
 |----------|----------|---------|
 | `/api/cron/run-report-schedules` | every 15 min | Sends due scheduled reports. |
+| `/api/cron/proxy-health` | every 15 min | Pulls an Azure Monitor window into `ProxyHealthSnapshot` for the Proxy Health board. Skips when Azure Monitor is unconfigured. |
 | `/api/cron/sensitive-scan` | daily | Probes configured gateways for data leakage. |
 | `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy configuration. |
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
@@ -782,7 +785,8 @@ All of the above are already configured in `vercel.json`:
     { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
     { "path": "/api/cron/run-report-schedules", "schedule": "*/15 * * * *" },
     { "path": "/api/cron/sensitive-scan", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/provider-security-scan", "schedule": "0 7 * * *" }
+    { "path": "/api/cron/provider-security-scan", "schedule": "0 7 * * *" },
+    { "path": "/api/cron/proxy-health", "schedule": "*/15 * * * *" }
   ]
 }
 ```

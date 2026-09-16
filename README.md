@@ -327,7 +327,7 @@ Adds Cursor tokens, requests, spend (`provider="cursor"`), and per-user "lines p
 
 ### Azure Monitor (proxy health)
 
-Pulls Function App metrics (invocations, response time, HTTP status distribution) into `ProxyHealthSnapshot` records for the Proxy Health board. Configure subscription / resource group / function app / region plus a service principal in `Settings > Integrations`.
+Pulls Function App metrics (invocations, response time, HTTP status distribution) into `ProxyHealthSnapshot` records for the Proxy Health board, every 15 minutes via `/api/cron/proxy-health` and on demand from the board. Configure subscription / resource group / function app / region plus a service principal in `Settings > Integrations`.
 
 ### Datadog
 
@@ -353,7 +353,7 @@ It handles:
 - governance renewal and exception notice alerts
 - overdue, blocked, and ownership escalation alerts
 
-Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRET`, wired in `vercel.json`): `/api/cron/run-report-schedules` (scheduled report email delivery) and `/api/cron/prune-claude-code-metrics` + `/api/cron/prune-cursor-metrics` (OTel telemetry retention).
+Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRET`, wired in `vercel.json`): `/api/cron/run-report-schedules` (scheduled report email delivery), `/api/cron/proxy-health` (Azure Monitor snapshot every 15 minutes), and `/api/cron/prune-claude-code-metrics` + `/api/cron/prune-cursor-metrics` (OTel telemetry retention).
 
 Cadence is controlled in Settings:
 

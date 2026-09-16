@@ -23,6 +23,10 @@
     {
       "path": "/api/cron/provider-security-scan",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/proxy-health",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

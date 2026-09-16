@@ -100,7 +100,7 @@ export default async function ProxyHealthPage() {
     <div className="space-y-6">
       <PageHeader
         title="Proxy Health"
-        description="Live ops view of the nammu-ai-proxy Azure Function. Heartbeat tiles update every 15s; Azure Monitor metrics update on demand."
+        description="Live ops view of the nammu-ai-proxy Azure Function. Heartbeat tiles update every 15s; Azure Monitor metrics sync every 15 minutes and on demand."
       />
       <ProxyHealthBoard initial={initial} />
     </div>

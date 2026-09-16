@@ -11,6 +11,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatSyncAge, syncStaleness } from "@/lib/proxy-health-age";
+import { PROXY_HEALTH_SYNC_INTERVAL_MINUTES } from "@/lib/proxy-health-constants";
 
 type LatestResponse = {
   configured: boolean;
@@ -181,11 +183,25 @@ export function ProxyHealthBoard({ initial }: Props) {
     });
   }
 
-  // Re-bind to `now` so this derivation re-runs on the 1-second ticker.
+  // Re-bind to `now` so these derivations re-run on the 1-second ticker.
   const heartbeat = heartbeatTone(data.live.latestUsageLogAt ?? null);
   const heartbeatLabel = formatAge(data.live.latestUsageLogAt ?? null);
-  // Silence unused `now` linter — we want the re-render but don't format it here.
-  void now;
+  const syncAge = data.latestSnapshot
+    ? formatSyncAge(data.latestSnapshot.capturedAt, now)
+    : null;
+  const syncFreshness = syncStaleness(data.latestSnapshot?.capturedAt, now);
+  const syncAgeColor =
+    syncFreshness === "fresh"
+      ? "var(--text-muted)"
+      : syncFreshness === "overdue"
+        ? "var(--warning)"
+        : "var(--critical)";
+  const syncAgeTitle =
+    syncFreshness === "fresh"
+      ? `Scheduled sync runs every ${PROXY_HEALTH_SYNC_INTERVAL_MINUTES} minutes`
+      : syncFreshness === "overdue"
+        ? `No snapshot in over ${PROXY_HEALTH_SYNC_INTERVAL_MINUTES * 2} minutes — the scheduled sync may have missed a run`
+        : "No snapshot in over an hour — check the /api/cron/proxy-health job and CRON_SECRET";
 
   if (!data.configured) {
     return (
@@ -284,10 +300,15 @@ export function ProxyHealthBoard({ initial }: Props) {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-[var(--text-muted)]">
-              {snap
-                ? `Last sync ${formatAge(snap.capturedAt)}`
-                : "Never synced"}
+            <span
+              className="text-xs"
+              style={{ color: syncAgeColor }}
+              title={syncAgeTitle}
+            >
+              {syncAge ? `Last synced ${syncAge}` : "Never synced"}
+              <span className="text-[var(--text-faint)]">
+                {` · auto every ${PROXY_HEALTH_SYNC_INTERVAL_MINUTES} min`}
+              </span>
             </span>
             <Button size="sm" onClick={handleSync} disabled={syncPending}>
               {syncPending ? (

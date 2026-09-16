@@ -218,6 +218,7 @@ Each job checks its own saved enable/interval settings before doing work, so the
 **Dedicated crons**, each on its own schedule:
 
 - `/api/cron/run-report-schedules` — every 15 minutes
+- `/api/cron/proxy-health` — every 15 minutes; calls `runProxyHealthSync` in `src/lib/proxy-health-sync.ts` (shared with the manual `POST /api/proxy-health/sync`) with the `system` actor, and skips when Azure Monitor is unconfigured
 - `/api/cron/sensitive-scan` — daily
 - `/api/cron/provider-security-scan` — daily
 - `/api/cron/prune-claude-code-metrics` — daily

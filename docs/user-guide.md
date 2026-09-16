@@ -997,7 +997,7 @@ Name and department come from the person's UrNammu user profile when one exists 
 - **Sparklines** of invocations, 5xx errors, and response time over the last hour.
 - **Recent API logs** — the 10 most recent proxy requests with provider, model, department, tokens, cost, flag status, and user.
 
-Azure Monitor snapshots are pulled on demand (admin button) or on the maintenance cron; configure the subscription/resource group/function-app/region and service-principal credentials in **Settings → Integrations → Azure Monitor**.
+Azure Monitor snapshots are pulled every 15 minutes by the `/api/cron/proxy-health` job and on demand with the admin **Sync now** button. The metrics card header shows **Last synced N min ago**, turning amber when a scheduled run appears to have been missed and red after an hour without a snapshot. Configure the subscription/resource group/function-app/region and service-principal credentials in **Settings → Integrations → Azure Monitor**; until all three identifiers are set the scheduled job skips.
 
 ### Provider Posture Comparison
 
@@ -1354,6 +1354,7 @@ Two implementation details you may notice in practice: scans stuck in `running` 
 | Endpoint | Schedule | Purpose |
 |----------|----------|---------|
 | `/api/cron/run-report-schedules` | every 15 min | Sends due scheduled reports. |
+| `/api/cron/proxy-health` | every 15 min | Refreshes the [Proxy Health](#proxy-health) Azure Monitor snapshot. Skips when Azure Monitor is unconfigured. |
 | `/api/cron/sensitive-scan` | daily | Probes gateways for data leakage (see [Sensitive Scan](#10a-sensitive-scan)). |
 | `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy config. |
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |

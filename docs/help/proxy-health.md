@@ -16,7 +16,9 @@ A genuinely quiet period looks identical to an outage on these tiles. Confirm ag
 
 ## Azure Monitor metrics
 
-Optional, and refreshed with the **Sync now** button rather than on the 15-second poll. When an Azure Monitor connection is configured, the board pulls the function app's own platform metrics — **Invocations**, **Error Rate**, **Avg Response**, and a 2xx / 4xx / 5xx breakdown — over the last hour.
+Optional, and refreshed on its own schedule rather than on the 15-second poll. When an Azure Monitor connection is configured, a scheduled sync runs every 15 minutes and the **Sync now** button runs the same sync immediately. The board pulls the function app's own platform metrics — **Invocations**, **Error Rate**, **Avg Response**, and a 2xx / 4xx / 5xx breakdown — over the last 15-minute window.
+
+The card header shows **Last synced N min ago** so you can tell whether the scheduled sync is keeping up. It stays neutral while the newest snapshot is under about 35 minutes old, turns amber once a scheduled run appears to have been missed, and turns red after an hour without a snapshot. A red indicator with a healthy heartbeat means the sync job is broken, not the proxy: check that `/api/cron/proxy-health` is scheduled and that `CRON_SECRET` is set.
 
 This is the half of the picture the heartbeat tiles cannot see: invocations that failed **before** writing anything. Invocations arriving but no proxy writes landing usually means a database or credential problem inside the proxy; no invocations at all points upstream, at routing or client configuration.
 
@@ -30,8 +32,8 @@ Use this table to confirm attribution headers are populated. Rows with no user o
 
 ## Sync errors
 
-If the last Azure Monitor sync failed, the metrics card reports **Last sync failed**; a connection that has never run shows **Never synced**. Neither affects proxy operation or logging — they only mean this board cannot show platform metrics right now.
+If the last Azure Monitor sync failed, the metrics card reports **Last sync failed** with the error from Azure; a connection that has never run shows **Never synced**. Scheduled and manual syncs both record a snapshot whether they succeed or fail, so the **Last hour of syncs** table shows every attempt. Neither state affects proxy operation or logging — they only mean this board cannot show platform metrics right now.
 
 ## When configuration is missing
 
-Azure Monitor requires a subscription ID, resource group, and function app name. Without all three the metrics card reports that it is unconfigured, and the heartbeat tiles keep working on their own.
+Azure Monitor requires a subscription ID, resource group, and function app name. Without all three the metrics card reports that it is unconfigured, the scheduled sync skips without writing anything, and the heartbeat tiles keep working on their own.
