@@ -7,6 +7,7 @@ import {
   isAnthropicAdminConfigured,
   listAPIKeys,
   listMembers,
+  listWorkspaces,
 } from "./anthropic-admin";
 import {
   fetchOpenAIOrgData,
@@ -64,13 +65,23 @@ import {
   getCursorSpend,
   getCursorUsageEvents,
 } from "./cursor-admin";
-import { getSetting, PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS } from "./settings";
+import {
+  getSetting,
+  PROVIDER_KEY_SYSTEM_MAP_SETTING_KEY,
+  PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS,
+} from "./settings";
 import { logger } from "./observability";
 import {
   claudeCodeEntryToDailyStat,
   cursorDailyRowToStat,
   type AssistantDailyStatValues,
 } from "./assistant-daily-stats";
+import {
+  buildSystemResolver,
+  collectReferencedSystemIds,
+  parseProviderKeySystemMap,
+  type SystemResolver,
+} from "./system-attribution";
 
 type SyncSummary = {
   syncRunId: string;
@@ -129,22 +140,140 @@ function makeDimensionKey(parts: Record<string, string | null | undefined>): str
     .join("|") || "all";
 }
 
-async function resolveManagedSystemId(settingKey: string): Promise<string | null> {
-  const configuredId = await getSetting(settingKey);
-  if (!configuredId) return null;
-
-  const system = await prisma.aISystem.findUnique({
-    where: { id: configuredId },
-    select: { id: true },
-  });
-  if (!system) {
+/**
+ * Load the governed-system attribution for one provider: the provider-wide
+ * `<provider>_managed_system_id` default plus the per-API-key overrides in
+ * `provider_key_system_map`. Mappings that point at a system that no longer
+ * exists are dropped (and logged) so the FK on UsageBucket/CostBucket never
+ * fails mid-sync. See src/lib/system-attribution.ts.
+ */
+async function loadSystemResolver(provider: SyncProvider, settingKey: string): Promise<SystemResolver> {
+  const [configuredDefault, rawKeyMap] = await Promise.all([
+    getSetting(settingKey),
+    getSetting(PROVIDER_KEY_SYSTEM_MAP_SETTING_KEY),
+  ]);
+  const keyMap = parseProviderKeySystemMap(rawKeyMap);
+  const referenced = collectReferencedSystemIds(
+    { [provider]: keyMap[provider] ?? {} },
+    [configuredDefault]
+  );
+  const existing = referenced.length
+    ? await prisma.aISystem.findMany({
+        where: { id: { in: referenced } },
+        select: { id: true },
+      })
+    : [];
+  const validIds = new Set(existing.map((system) => system.id));
+  const missing = referenced.filter((id) => !validIds.has(id));
+  if (missing.length > 0) {
     logger.warn("provider_sync.managed_system_not_found", {
+      provider,
       settingKey,
-      configuredId,
+      missingSystemIds: missing,
     });
-    return null;
   }
-  return system.id;
+  return buildSystemResolver({
+    provider,
+    defaultSystemId: configuredDefault,
+    keyMap,
+    validSystemIds: validIds,
+  });
+}
+
+/**
+ * Label stored in `workspaceName` for Anthropic rows whose `workspace_id` is
+ * null. The Admin API reports the organization's default workspace that way;
+ * it has no id and does not appear in `listWorkspaces`.
+ */
+export const ANTHROPIC_DEFAULT_WORKSPACE_NAME = "Default workspace";
+
+export type AnthropicCostBucketPlan = {
+  bucketStart: Date;
+  bucketEnd: Date;
+  dimensionKey: string;
+  amount: number; // USD
+  currency: string;
+  model: string | null;
+  lineItem: string;
+  workspaceExternalId: string | null;
+  workspaceName: string | null;
+};
+
+/**
+ * Turn the Anthropic cost report (grouped by workspace_id + description) into
+ * one CostBucket per (day, workspace, model, cost_type).
+ *
+ * The report returns many granular line items per (workspace, model, day):
+ * `{ workspace_id, model, cost_type, token_type, context_window, amount }`,
+ * e.g. opus may have 6+ entries for the same day (uncached input, cache read,
+ * cache creation 5m/1h, output, across context windows). They are summed in
+ * cents first and converted to USD once, because `amount` is in CENTS —
+ * verified empirically against the published price book.
+ *
+ * The workspace only enters the dimension key when it is non-null, so an org
+ * with no named workspaces keeps exactly the pre-workspace keys and re-syncing
+ * the overlap window updates rows in place instead of duplicating them.
+ */
+export function planAnthropicCostBuckets(args: {
+  costReport: unknown;
+  fallbackStart: string;
+  fallbackEnd: string;
+  workspaceNameById: Map<string, string>;
+}): AnthropicCostBucketPlan[] {
+  const plans: AnthropicCostBucketPlan[] = [];
+  for (const bucket of asArray(asRecord(args.costReport).data)) {
+    const bucketStart = new Date(asString(bucket.starting_at) ?? args.fallbackStart);
+    const bucketEnd = new Date(asString(bucket.ending_at) ?? args.fallbackEnd);
+    const date = bucketStart.toISOString().split("T")[0];
+
+    const agg = new Map<
+      string,
+      { model: string | null; lineItem: string; workspaceId: string | null; amountCents: number; currency: string }
+    >();
+    for (const entry of asArray(bucket.results)) {
+      const amountCents = parseFloat(String(entry.amount) || "0");
+      if (!(amountCents > 0)) continue;
+
+      const model = asString(entry.model);
+      const lineItem = asString(entry.cost_type) ?? "tokens";
+      const workspaceId = asString(entry.workspace_id);
+      const aggKey = `${workspaceId ?? ""}|${model ?? ""}|${lineItem}`;
+      const existing = agg.get(aggKey);
+      if (existing) {
+        existing.amountCents += amountCents;
+      } else {
+        agg.set(aggKey, {
+          model,
+          lineItem,
+          workspaceId,
+          amountCents,
+          currency: asString(entry.currency) ?? "usd",
+        });
+      }
+    }
+
+    for (const row of agg.values()) {
+      plans.push({
+        bucketStart,
+        bucketEnd,
+        dimensionKey: makeDimensionKey({
+          model: row.model,
+          lineItem: row.lineItem,
+          date,
+          workspaceId: row.workspaceId,
+        }),
+        amount: row.amountCents / 100,
+        currency: row.currency,
+        model: row.model,
+        lineItem: row.lineItem,
+        workspaceExternalId: row.workspaceId,
+        workspaceName: row.workspaceId
+          ? (args.workspaceNameById.get(row.workspaceId) ?? null)
+          : ANTHROPIC_DEFAULT_WORKSPACE_NAME,
+      });
+    }
+  }
+  return plans;
 }
 
 async function createSyncRun(provider: SyncProvider, triggeredByUserId: string) {
@@ -311,23 +440,26 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
     const startingAt = sevenDaysAgo.toISOString();
     const endingAt = today.toISOString();
 
-    const managedSystemId = await resolveManagedSystemId(
-      PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.ANTHROPIC
-    );
+    const systems = await loadSystemResolver("anthropic", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.ANTHROPIC);
 
-    const [org, keys, members, usageByModelAndKey, usageByKey, costReport] = await Promise.all([
+    const [org, keys, members, workspaces, usageByModelAndKey, usageByKey, costReport] = await Promise.all([
       fetchAnthropicOrgData(),
       listAPIKeys({ status: "active", limit: 100 }).catch(() => null),
       listMembers({ limit: 100 }).catch(() => null),
+      listWorkspaces({ limit: 100 }).catch(() => null),
       // Multi-dim group_by so each UsageBucket row is attributable to a
-      // specific (model, api_key) pair. Without api_key_id in the grouping,
-      // the api_key_id field on results comes back null and all keys'
-      // traffic collides into one row per (model, day).
-      getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["model", "api_key_id"] }),
+      // specific (model, api_key, workspace) triple. Fields missing from the
+      // grouping come back null on every result row, so all keys' traffic
+      // would collide into one row per (model, day) without api_key_id here.
+      // workspace_id is added for the workspace columns; it does not enter the
+      // dimension key because a key belongs to exactly one workspace.
+      getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["model", "api_key_id", "workspace_id"] }),
       // Kept for forensics / raw snapshot only — the flattened attribution
       // above supersedes this for UsageBucket writes.
       getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["api_key_id"] }).catch(() => null),
-      getCostReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["description"] }).catch(() => null),
+      // The cost report cannot be grouped by api_key_id; workspace is the
+      // finest attribution the API offers for spend.
+      getCostReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["workspace_id", "description"] }).catch(() => null),
     ]);
 
     // Build id → name lookup for API keys so each UsageBucket row carries a
@@ -338,12 +470,21 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       const name = asString(key.name);
       if (id && name) apiKeyNameById.set(id, name);
     }
+    const workspaceNameById = new Map<string, string>();
+    for (const workspace of asArray(asRecord(workspaces).data)) {
+      const id = asString(workspace.id);
+      const name = asString(workspace.name);
+      if (id && name) workspaceNameById.set(id, name);
+    }
+    const workspaceLabel = (workspaceId: string | null): string | null =>
+      workspaceId ? (workspaceNameById.get(workspaceId) ?? null) : ANTHROPIC_DEFAULT_WORKSPACE_NAME;
 
     let rawSnapshotsStored = 0;
     for (const [resourceType, payload] of Object.entries({
       org,
       keys,
       members,
+      workspaces,
       usage_by_model: usageByModelAndKey,
       usage_by_key: usageByKey,
       cost_report: costReport,
@@ -382,31 +523,45 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       actorsUpserted++;
     }
 
+    // ProviderProject rows for Anthropic are WORKSPACES (the Console's spend
+    // and isolation boundary). Earlier releases stored API keys here; those
+    // rows (ids prefixed `apikey_`) are removed so the table has one meaning.
+    // API-key inventory and status live in the `keys` raw snapshot, which the
+    // Claude Platform dashboard reads.
     let projectsUpserted = 0;
-    for (const key of asArray(asRecord(keys).data)) {
-      const externalId = asString(key.id);
+    await prisma.providerProject.deleteMany({
+      where: { provider: "anthropic", externalId: { startsWith: "apikey_" } },
+    });
+    for (const workspace of asArray(asRecord(workspaces).data)) {
+      const externalId = asString(workspace.id);
       if (!externalId) continue;
 
+      const archived = !!asString(workspace.archived_at);
       await prisma.providerProject.upsert({
         where: { provider_externalId: { provider: "anthropic", externalId } },
         update: {
-          name: asString(key.name),
-          status: asString(key.status),
-          metadata: toJsonValue(key),
+          name: asString(workspace.name),
+          status: archived ? "archived" : "active",
+          metadata: toJsonValue({ type: "workspace", ...workspace }),
           lastSeenAt: new Date(),
           syncRunId: syncRun.id,
         },
         create: {
           provider: "anthropic",
           externalId,
-          name: asString(key.name),
-          status: asString(key.status),
-          metadata: toJsonValue(key),
+          name: asString(workspace.name),
+          status: archived ? "archived" : "active",
+          metadata: toJsonValue({ type: "workspace", ...workspace }),
           syncRunId: syncRun.id,
         },
       });
       projectsUpserted++;
     }
+
+    // Which API keys were seen in which workspace this window — lets cost rows
+    // (reported per workspace, never per key) inherit a governed system when
+    // every key in the workspace maps to the same one.
+    const keysByWorkspace = new Map<string, Set<string>>();
 
     let usageBucketsUpserted = 0;
     let costBucketsUpserted = 0;
@@ -421,6 +576,14 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       for (const entry of asArray(bucket.results)) {
         const model = asString(entry.model);
         const apiKeyId = asString(entry.api_key_id);
+        const workspaceId = asString(entry.workspace_id);
+        const workspaceKey = workspaceId ?? "";
+        if (apiKeyId) {
+          const set = keysByWorkspace.get(workspaceKey) ?? new Set<string>();
+          set.add(apiKeyId);
+          keysByWorkspace.set(workspaceKey, set);
+        }
+        const aiSystemId = systems.forKey(apiKeyId);
 
         // Token breakdown from the Anthropic usage report:
         //   uncached_input_tokens  — standard (non-cached) input tokens
@@ -458,6 +621,8 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             model,
             apiKeyExternalId: apiKeyId,
             apiKeyName: apiKeyId ? (apiKeyNameById.get(apiKeyId) ?? null) : null,
+            workspaceExternalId: workspaceId,
+            workspaceName: workspaceLabel(workspaceId),
             inputTokens,
             outputTokens,
             totalTokens,
@@ -465,7 +630,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             cacheCreationTokens,
             metadata: toJsonValue(entry),
             syncRunId: syncRun.id,
-            aiSystemId: managedSystemId,
+            aiSystemId,
           },
           create: {
             provider: "anthropic",
@@ -476,6 +641,8 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             model,
             apiKeyExternalId: apiKeyId,
             apiKeyName: apiKeyId ? (apiKeyNameById.get(apiKeyId) ?? null) : null,
+            workspaceExternalId: workspaceId,
+            workspaceName: workspaceLabel(workspaceId),
             inputTokens,
             outputTokens,
             totalTokens,
@@ -483,7 +650,7 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
             cacheCreationTokens,
             metadata: toJsonValue(entry),
             syncRunId: syncRun.id,
-            aiSystemId: managedSystemId,
+            aiSystemId,
           },
         });
         usageBucketsUpserted++;
@@ -508,85 +675,81 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
     }
 
     // Process cost report (separate API endpoint in new Anthropic API).
-    //
-    // The cost report returns many granular line items per (model, day):
-    //   { model, cost_type, token_type, context_window, amount, ... }
-    // e.g. opus may have 6+ entries for the same day (uncached input,
-    // cache_read, cache_creation 5m/1h, output, across context windows).
-    //
-    // We aggregate these into one CostBucket row per (model, cost_type,
-    // date) because the bucket table is for rollup reporting — line-item
-    // detail is preserved in the raw ProviderRawSnapshot.
-    //
-    // IMPORTANT: `amount` is in CENTS (not USD). Verified empirically by
-    // comparing API-reported costs against manual price-book calculations
-    // on live token-count data: dividing by 100 yields an exact match with
-    // published Anthropic pricing.
-    for (const bucket of asArray(asRecord(costReport).data)) {
-      const bucketStart = new Date(asString(bucket.starting_at) ?? startingAt);
-      const bucketEnd = new Date(asString(bucket.ending_at) ?? endingAt);
-      const date = bucketStart.toISOString().split("T")[0];
-
-      // Aggregate entries by (model, cost_type) to avoid dimension-key
-      // collisions where later entries silently overwrote earlier ones.
-      // Sum in cents first, then convert to dollars once at the end.
-      const costAgg = new Map<string, { model: string | null; lineItem: string; amountCents: number; currency: string }>();
-      for (const entry of asArray(bucket.results)) {
-        const amountCents = parseFloat(String(entry.amount) || "0");
-        if (amountCents <= 0) continue;
-
-        const model = asString(entry.model);
-        const lineItem = asString(entry.cost_type) ?? "tokens";
-        const aggKey = `${model ?? ""}|${lineItem}`;
-        const existing = costAgg.get(aggKey);
-        if (existing) {
-          existing.amountCents += amountCents;
-        } else {
-          costAgg.set(aggKey, {
-            model,
-            lineItem,
-            amountCents,
-            currency: asString(entry.currency) ?? "usd",
-          });
-        }
-      }
-
-      for (const agg of costAgg.values()) {
-        const dimensionKey = makeDimensionKey({ model: agg.model, lineItem: agg.lineItem, date });
-        const amount = agg.amountCents / 100;
-
-        await prisma.costBucket.upsert({
-          where: {
-            provider_bucketStart_bucketEnd_granularity_dimensionKey: {
-              provider: "anthropic",
-              bucketStart,
-              bucketEnd,
-              granularity: "day",
-              dimensionKey,
-            },
-          },
-          update: {
-            amount,
-            currency: agg.currency,
-            model: agg.model,
-            lineItem: agg.lineItem,
-            syncRunId: syncRun.id,
-          },
-          create: {
+    // See planAnthropicCostBuckets for the aggregation and unit rules. Cost is
+    // reported per workspace, never per key, so the governed system comes from
+    // the keys seen in that workspace (all agree → that system; else default).
+    const costPlans = planAnthropicCostBuckets({
+      costReport,
+      fallbackStart: startingAt,
+      fallbackEnd: endingAt,
+      workspaceNameById,
+    });
+    const writtenCostKeysByDay = new Map<string, { bucketStart: Date; bucketEnd: Date; keys: string[] }>();
+    for (const plan of costPlans) {
+      const aiSystemId = systems.forKeys(keysByWorkspace.get(plan.workspaceExternalId ?? "") ?? []);
+      await prisma.costBucket.upsert({
+        where: {
+          provider_bucketStart_bucketEnd_granularity_dimensionKey: {
             provider: "anthropic",
-            bucketStart,
-            bucketEnd,
+            bucketStart: plan.bucketStart,
+            bucketEnd: plan.bucketEnd,
             granularity: "day",
-            dimensionKey,
-            amount,
-            currency: agg.currency,
-            model: agg.model,
-            lineItem: agg.lineItem,
-            syncRunId: syncRun.id,
+            dimensionKey: plan.dimensionKey,
           },
-        });
-        costBucketsUpserted++;
-      }
+        },
+        update: {
+          amount: plan.amount,
+          currency: plan.currency,
+          model: plan.model,
+          lineItem: plan.lineItem,
+          workspaceExternalId: plan.workspaceExternalId,
+          workspaceName: plan.workspaceName,
+          aiSystemId,
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "anthropic",
+          bucketStart: plan.bucketStart,
+          bucketEnd: plan.bucketEnd,
+          granularity: "day",
+          dimensionKey: plan.dimensionKey,
+          amount: plan.amount,
+          currency: plan.currency,
+          model: plan.model,
+          lineItem: plan.lineItem,
+          workspaceExternalId: plan.workspaceExternalId,
+          workspaceName: plan.workspaceName,
+          aiSystemId,
+          syncRunId: syncRun.id,
+        },
+      });
+      costBucketsUpserted++;
+
+      const dayKey = plan.bucketStart.toISOString();
+      const day = writtenCostKeysByDay.get(dayKey) ?? {
+        bucketStart: plan.bucketStart,
+        bucketEnd: plan.bucketEnd,
+        keys: [],
+      };
+      day.keys.push(plan.dimensionKey);
+      writtenCostKeysByDay.set(dayKey, day);
+    }
+
+    // The cost report is authoritative for a day, so remove admin-sync cost
+    // rows for that day whose dimension key was not re-written. This retires
+    // pre-workspace rows (keyed without workspaceId) once the same day is
+    // re-pulled grouped by workspace, instead of leaving both and
+    // double-counting the overlap window.
+    for (const day of writtenCostKeysByDay.values()) {
+      await prisma.costBucket.deleteMany({
+        where: {
+          provider: "anthropic",
+          granularity: "day",
+          bucketStart: day.bucketStart,
+          bucketEnd: day.bucketEnd,
+          dimensionKey: { notIn: day.keys },
+        },
+      });
     }
 
     const summary = {
@@ -602,6 +765,11 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       coverage: {
         keys: asArray(asRecord(keys).data).length,
         members: asArray(asRecord(members).data).length,
+        workspaces: asArray(asRecord(workspaces).data).length,
+      },
+      attribution: {
+        defaultSystemId: systems.defaultSystemId,
+        costGroupedByWorkspace: true,
       },
     });
 
@@ -815,9 +983,9 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
     const startMs = startOfDayUtc(sevenDaysAgo).getTime();
     const endMs = today.getTime();
 
-    const managedSystemId = await resolveManagedSystemId(
-      PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.CURSOR,
-    );
+    const managedSystemId = (
+      await loadSystemResolver("cursor", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.CURSOR)
+    ).defaultSystemId;
 
     const [dailyRows, spend, events] = await Promise.all([
       getCursorDailyUsage(startMs, endMs),
@@ -1045,6 +1213,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
           model: c.model,
           lineItem: "usage_based",
           syncRunId: syncRun.id,
+          aiSystemId: managedSystemId,
         },
         create: {
           provider: "cursor",
@@ -1057,6 +1226,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
           model: c.model,
           lineItem: "usage_based",
           syncRunId: syncRun.id,
+          aiSystemId: managedSystemId,
         },
       });
       costBucketsUpserted++;
@@ -1284,6 +1454,11 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
       listAssistants({ limit: 100, order: "desc" }).catch(() => null),
     ]);
     const truncated = usage.truncated || (costs?.truncated ?? false);
+    const systems = await loadSystemResolver("openai", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.OPENAI);
+    // Keys seen per project this window: the costs endpoint groups by project
+    // (never by key), so a project's cost inherits a governed system when all
+    // of its keys map to the same one.
+    const keysByProject = new Map<string, Set<string>>();
 
     let rawSnapshotsStored = 0;
     for (const [resourceType, payload] of Object.entries({
@@ -1334,6 +1509,12 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
           apiKeyExternalId,
           date: bucketStart.toISOString(),
         });
+        const aiSystemId = systems.forKey(apiKeyExternalId);
+        if (projectExternalId && apiKeyExternalId) {
+          const set = keysByProject.get(projectExternalId) ?? new Set<string>();
+          set.add(apiKeyExternalId);
+          keysByProject.set(projectExternalId, set);
+        }
 
         await prisma.usageBucket.upsert({
           where: {
@@ -1360,6 +1541,7 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             requestCount,
             metadata: toJsonValue({ ...result, cachedTokensIncludedInInput: true }),
             syncRunId: syncRun.id,
+            aiSystemId,
           },
           create: {
             provider: "openai",
@@ -1381,6 +1563,7 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             requestCount,
             metadata: toJsonValue({ ...result, cachedTokensIncludedInInput: true }),
             syncRunId: syncRun.id,
+            aiSystemId,
           },
         });
         usageBucketsUpserted++;
@@ -1463,6 +1646,9 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
           lineItem,
           date: bucketStart.toISOString(),
         });
+        const aiSystemId = projectExternalId
+          ? systems.forKeys(keysByProject.get(projectExternalId) ?? [])
+          : systems.defaultSystemId;
 
         await prisma.costBucket.upsert({
           where: {
@@ -1482,6 +1668,7 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             lineItem,
             metadata: toJsonValue(result),
             syncRunId: syncRun.id,
+            aiSystemId,
           },
           create: {
             provider: "openai",
@@ -1496,6 +1683,7 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
             lineItem,
             metadata: toJsonValue(result),
             syncRunId: syncRun.id,
+            aiSystemId,
           },
         });
         costBucketsUpserted++;
@@ -2496,6 +2684,7 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
       endDate: end.toISOString().slice(0, 10),
     });
     const rows = normalizeLiteLLMSpendRows(payload);
+    const systems = await loadSystemResolver("litellm", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.LITELLM);
 
     await storeSnapshot(syncRun.id, "litellm", "spend_logs", {
       rowCount: rows.length,
@@ -2623,6 +2812,7 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
     for (const [dimensionKey, aggregate] of aggregates.entries()) {
       const bucketStart = new Date(`${aggregate.date}T00:00:00.000Z`);
       const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+      const aiSystemId = systems.forKey(aggregate.apiKeyExternalId);
 
       await prisma.usageBucket.upsert({
         where: {
@@ -2651,6 +2841,7 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
             upstream_provider: aggregate.upstreamProvider,
           }),
           syncRunId: syncRun.id,
+          aiSystemId,
         },
         create: {
           provider: "litellm",
@@ -2674,6 +2865,7 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
             upstream_provider: aggregate.upstreamProvider,
           }),
           syncRunId: syncRun.id,
+          aiSystemId,
         },
       });
       usageBucketsUpserted++;
@@ -2695,13 +2887,17 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
             model: aggregate.model,
             projectExternalId: aggregate.teamId,
             projectName: aggregate.teamName,
+            actorExternalId: aggregate.actorId,
             actorName: aggregate.actorName,
+            apiKeyExternalId: aggregate.apiKeyExternalId,
+            apiKeyName: aggregate.apiKeyName,
             lineItem: "proxy",
             metadata: toJsonValue({
               source: "litellm_spend_logs",
               upstream_provider: aggregate.upstreamProvider,
             }),
             syncRunId: syncRun.id,
+            aiSystemId,
           },
           create: {
             provider: "litellm",
@@ -2714,13 +2910,17 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
             model: aggregate.model,
             projectExternalId: aggregate.teamId,
             projectName: aggregate.teamName,
+            actorExternalId: aggregate.actorId,
             actorName: aggregate.actorName,
+            apiKeyExternalId: aggregate.apiKeyExternalId,
+            apiKeyName: aggregate.apiKeyName,
             lineItem: "proxy",
             metadata: toJsonValue({
               source: "litellm_spend_logs",
               upstream_provider: aggregate.upstreamProvider,
             }),
             syncRunId: syncRun.id,
+            aiSystemId,
           },
         });
         costBucketsUpserted++;

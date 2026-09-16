@@ -61,11 +61,32 @@ export async function listMembers(params?: { limit?: number }) {
   return adminFetch(`/v1/organizations/users${qs ? `?${qs}` : ""}`);
 }
 
-/** Get usage report — tokens and costs by model/workspace/key */
+/**
+ * List organization workspaces. Workspaces are the Anthropic Console's
+ * spend/isolation boundary: every API key belongs to exactly one workspace
+ * (or the org's default workspace, which the reports return as
+ * `workspace_id: null`). Items: { id, name, archived_at, display_color, ... }.
+ */
+export async function listWorkspaces(params?: { limit?: number; include_archived?: boolean }) {
+  const query = new URLSearchParams();
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.include_archived) query.set("include_archived", "true");
+  const qs = query.toString();
+  return adminFetch(`/v1/organizations/workspaces${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Get usage report — tokens by model / workspace / API key.
+ *
+ * Supported `group_by[]` values: `api_key_id`, `workspace_id`, `model`,
+ * `service_tier`, `context_window`. Fields not requested in `group_by` come
+ * back as null on every result row, so ask for every dimension you intend to
+ * store.
+ */
 export async function getUsageReport(params: {
   starting_at: string; // ISO 8601 timestamp, e.g. 2025-01-08T00:00:00Z
   ending_at: string;
-  group_by?: string[]; // model, workspace, api_key
+  group_by?: string[]; // api_key_id, workspace_id, model, service_tier, context_window
   bucket_width?: string; // 1m, 1h, 1d (default 1d)
 }) {
   const query = new URLSearchParams();
@@ -78,7 +99,13 @@ export async function getUsageReport(params: {
   return adminFetch(`/v1/organizations/usage_report/messages?${query}`);
 }
 
-/** Get cost report — USD costs by workspace/description */
+/**
+ * Get cost report — costs (in cents) by workspace / description.
+ *
+ * Supported `group_by[]` values: `workspace_id`, `description`. The cost
+ * report cannot be grouped by API key, so per-key cost for Anthropic is only
+ * available at workspace granularity.
+ */
 export async function getCostReport(params: {
   starting_at: string; // ISO 8601 timestamp
   ending_at: string;

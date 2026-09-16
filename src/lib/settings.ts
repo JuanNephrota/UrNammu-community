@@ -216,13 +216,23 @@ export const PROVIDER_SECURITY_SCAN_SETTINGS_KEYS = {
   INTERVAL_HOURS: "provider_security_scan_interval_hours",
 } as const;
 
-// Maps each provider's admin-sync'd UsageBucket rows to a registered AISystem
-// so the Usage Trend and Activity views attribute telemetry to that system
-// instead of falling back to api-key-level labels.
+// Maps each provider's admin-sync'd UsageBucket AND CostBucket rows to a
+// registered AISystem so the Usage Trend, Activity, and cost-by-system views
+// attribute telemetry to that system instead of falling back to api-key-level
+// labels. These are provider-wide defaults; PROVIDER_KEY_SYSTEM_MAP_SETTING_KEY
+// refines them per API key. See src/lib/system-attribution.ts.
 export const PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS = {
   ANTHROPIC: "anthropic_managed_system_id",
   CURSOR: "cursor_managed_system_id",
+  OPENAI: "openai_managed_system_id",
+  LITELLM: "litellm_managed_system_id",
 } as const;
+
+// JSON `{ [provider]: { [apiKeyExternalId]: aiSystemId } }` mapping individual
+// provider API keys (Anthropic api_key_id, OpenAI api_key_id, LiteLLM key
+// hash) to a registered AISystem. A key mapping wins over the provider-wide
+// default above. Applied to both UsageBucket and CostBucket by the sync.
+export const PROVIDER_KEY_SYSTEM_MAP_SETTING_KEY = "provider_key_system_map";
 
 export const OVERSIGHT_ANOMALY_SETTINGS_KEYS = {
   RECENT_WINDOW_DAYS: "anomaly_recent_window_days",

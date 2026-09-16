@@ -65,6 +65,11 @@ function runStatusVariant(status: string): "success" | "critical" | "info" | "de
   if (status === "RUNNING") return "info";
   return "default";
 }
+import {
+  serializeProviderKeySystemMap,
+  type KeyMappableProvider,
+  type ProviderKeySystemMap,
+} from "@/lib/system-attribution";
 
 export interface ProviderConfig {
   id: string;
@@ -234,8 +239,20 @@ interface Props {
   governanceExceptionNoticeDays: number;
   governanceEscalationOverdueDays: number;
   anthropicManagedSystemId: string;
+  openaiManagedSystemId: string;
+  litellmManagedSystemId: string;
+  /** `{ [provider]: { [apiKeyExternalId]: aiSystemId } }` — per-key overrides. */
+  keySystemMap: ProviderKeySystemMap;
+  /** Provider API keys seen in recent telemetry, for the per-key editor. */
+  knownApiKeys: { provider: string; apiKeyExternalId: string; apiKeyName: string | null }[];
   aiSystems: { id: string; name: string; vendor: string | null }[];
 }
+
+const KEY_MAPPABLE_PROVIDER_LABELS: Record<KeyMappableProvider, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  litellm: "LiteLLM",
+};
 
 export function AdminAPISettings({
   hasAnthropicAdminKey,
@@ -264,6 +281,10 @@ export function AdminAPISettings({
   governanceExceptionNoticeDays: initialGovernanceExceptionNoticeDays,
   governanceEscalationOverdueDays: initialGovernanceEscalationOverdueDays,
   anthropicManagedSystemId: initialAnthropicManagedSystemId,
+  openaiManagedSystemId: initialOpenaiManagedSystemId,
+  litellmManagedSystemId: initialLitellmManagedSystemId,
+  keySystemMap: initialKeySystemMap,
+  knownApiKeys,
   aiSystems,
 }: Props) {
   const router = useRouter();
@@ -306,6 +327,9 @@ export function AdminAPISettings({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleResult, setScheduleResult] = useState<string | null>(null);
   const [anthropicManagedSystemId, setAnthropicManagedSystemId] = useState(initialAnthropicManagedSystemId);
+  const [openaiManagedSystemId, setOpenaiManagedSystemId] = useState(initialOpenaiManagedSystemId);
+  const [litellmManagedSystemId, setLitellmManagedSystemId] = useState(initialLitellmManagedSystemId);
+  const [keySystemMap, setKeySystemMap] = useState<ProviderKeySystemMap>(initialKeySystemMap);
   const [savingAttribution, setSavingAttribution] = useState(false);
   const [attributionResult, setAttributionResult] = useState<string | null>(null);
 
@@ -414,6 +438,33 @@ export function AdminAPISettings({
     }
   }
 
+  // Known keys from telemetry, plus any mapped key no longer seen (so a stale
+  // mapping can still be cleared), grouped by provider.
+  const keyMappingRows = (() => {
+    const rows = knownApiKeys.map((key) => ({ ...key, stale: false }));
+    const seen = new Set(rows.map((row) => `${row.provider}:${row.apiKeyExternalId}`));
+    for (const [provider, keys] of Object.entries(keySystemMap)) {
+      for (const apiKeyExternalId of Object.keys(keys)) {
+        if (seen.has(`${provider}:${apiKeyExternalId}`)) continue;
+        rows.push({ provider, apiKeyExternalId, apiKeyName: null, stale: true });
+      }
+    }
+    return rows.sort((a, b) => a.provider.localeCompare(b.provider));
+  })();
+
+  function setKeyMapping(provider: string, apiKeyExternalId: string, aiSystemId: string) {
+    setKeySystemMap((current) => {
+      const next: ProviderKeySystemMap = { ...current, [provider]: { ...(current[provider] ?? {}) } };
+      if (aiSystemId) {
+        next[provider][apiKeyExternalId] = aiSystemId;
+      } else {
+        delete next[provider][apiKeyExternalId];
+        if (Object.keys(next[provider]).length === 0) delete next[provider];
+      }
+      return next;
+    });
+  }
+
   async function handleSaveAttribution() {
     setSavingAttribution(true);
     setAttributionResult(null);
@@ -424,6 +475,9 @@ export function AdminAPISettings({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           anthropic_managed_system_id: anthropicManagedSystemId || null,
+          openai_managed_system_id: openaiManagedSystemId || null,
+          litellm_managed_system_id: litellmManagedSystemId || null,
+          provider_key_system_map: serializeProviderKeySystemMap(keySystemMap),
         }),
       });
 
@@ -712,20 +766,88 @@ export function AdminAPISettings({
             </div>
           </div>
 
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                ["anthropic", anthropicManagedSystemId, setAnthropicManagedSystemId],
+                ["openai", openaiManagedSystemId, setOpenaiManagedSystemId],
+                ["litellm", litellmManagedSystemId, setLitellmManagedSystemId],
+              ] as const
+            ).map(([provider, value, setValue]) => (
+              <div key={provider} className="space-y-2">
+                <Label className="text-xs">{KEY_MAPPABLE_PROVIDER_LABELS[provider]} default system</Label>
+                <select
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
+                >
+                  <option value="">— Not set (unattributed) —</option>
+                  {aiSystems.map((sys) => (
+                    <option key={sys.id} value={sys.id}>
+                      {sys.name}{sys.vendor ? ` (${sys.vendor})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+
           <div className="space-y-2">
-            <Label className="text-xs">Anthropic managed system</Label>
-            <select
-              value={anthropicManagedSystemId}
-              onChange={(e) => setAnthropicManagedSystemId(e.target.value)}
-              className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
-            >
-              <option value="">— Not set (unattributed) —</option>
-              {aiSystems.map((sys) => (
-                <option key={sys.id} value={sys.id}>
-                  {sys.name}{sys.vendor ? ` (${sys.vendor})` : ""}
-                </option>
-              ))}
-            </select>
+            <div>
+              <Label className="text-xs">Per-key overrides</Label>
+              <p className="text-xs text-[var(--text-muted)]">
+                Map an individual provider API key to a registered system. A key mapping wins over the provider
+                default and applies to both usage and cost rows. Keys appear here once a provider sync has seen them
+                (last 90 days).
+              </p>
+            </div>
+            {keyMappingRows.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-[var(--border-subtle)] p-3 text-xs text-[var(--text-muted)]">
+                No provider API keys seen yet — run a provider sync first.
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-[var(--border-subtle)]">
+                <table className="w-full text-sm">
+                  <thead className="bg-[var(--bg-elevated)] text-left text-xs text-[var(--text-muted)]">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Provider</th>
+                      <th className="px-3 py-2 font-medium">API key</th>
+                      <th className="px-3 py-2 font-medium">Governed system</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {keyMappingRows.map((row) => (
+                      <tr key={`${row.provider}:${row.apiKeyExternalId}`} className="border-t border-[var(--border-subtle)]">
+                        <td className="px-3 py-2 text-xs text-[var(--text-secondary)]">
+                          {KEY_MAPPABLE_PROVIDER_LABELS[row.provider as KeyMappableProvider] ?? row.provider}
+                        </td>
+                        <td className="px-3 py-2">
+                          <p className="text-sm text-[var(--text-primary)]">{row.apiKeyName ?? row.apiKeyExternalId}</p>
+                          <p className="font-mono text-[11px] text-[var(--text-muted)]">
+                            {row.apiKeyExternalId}
+                            {row.stale ? " · not seen recently" : ""}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2">
+                          <select
+                            value={keySystemMap[row.provider]?.[row.apiKeyExternalId] ?? ""}
+                            onChange={(e) => setKeyMapping(row.provider, row.apiKeyExternalId, e.target.value)}
+                            className="flex h-8 w-full min-w-[12rem] rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 py-1 text-xs text-[var(--text-primary)] appearance-none"
+                          >
+                            <option value="">— Provider default —</option>
+                            {aiSystems.map((sys) => (
+                              <option key={sys.id} value={sys.id}>
+                                {sys.name}{sys.vendor ? ` (${sys.vendor})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

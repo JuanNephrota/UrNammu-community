@@ -165,6 +165,13 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
         },
         update: {
           amount: { increment: params.cost },
+          // Same late-attribution rule as the usage row above: an identified
+          // request fills in actor/system on a bucket first written anonymously.
+          ...(params.userEmail ? {
+            actorName: params.userEmail,
+            actorExternalId: params.userEmail,
+          } : {}),
+          ...(params.aiSystemId ? { aiSystemId: params.aiSystemId } : {}),
         },
         create: {
           provider: params.provider,
@@ -176,8 +183,10 @@ export async function writeProxyUsageBucket(params: WriteParams): Promise<void> 
           currency: "usd",
           model: params.model,
           actorName: params.userEmail ?? undefined,
+          actorExternalId: params.userEmail ?? undefined,
           lineItem: "proxy",
           syncRunId,
+          aiSystemId: params.aiSystemId ?? undefined,
           metadata: {
             source: "proxy",
             department: params.department ?? undefined,

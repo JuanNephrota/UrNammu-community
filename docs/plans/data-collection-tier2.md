@@ -101,6 +101,16 @@ Helicone page range produces an alert.
 
 ## 2.3 Cost attribution columns and Anthropic workspace grouping
 
+**Status: done** — `feat/cost-attribution-workspaces` (migration
+`20260916150000_cost_attribution_workspaces`; apply with `prisma migrate
+deploy` and redeploy the Azure proxy, whose schema mirror changed). Delivered
+as scoped below, plus: `provider_key_system_map` per-key overrides with a
+Settings editor, OpenAI cost inherits a system via project→keys inference,
+Anthropic `ProviderProject` rows are now workspaces (Claude Platform reads key
+inventory from the `keys` raw snapshot), and a Cost by Workspace card on
+Claude Platform. Not possible: per-key Anthropic cost — the cost report has no
+`api_key_id` grouping, so Anthropic spend stops at workspace granularity.
+
 **Problem.** `CostBucket` has no `apiKeyExternalId`, `apiKeyName`, or
 `aiSystemId` (`prisma/schema.prisma:612-635`) while `UsageBucket` has all
 three, so cost stops at model + project. The Anthropic usage and cost reports
@@ -260,6 +270,6 @@ path; reports cannot filter or sum them.
 | 2 | 2.4 Retention cron | no | S |
 | 3 | 2.5 Proxy-health cron | no | S |
 | 4 | 2.2 Watermarks + backfill + truncation alerts | yes | L |
-| 5 | 2.3 Cost attribution + workspace grouping | yes (both schemas) | M |
+| 5 | ~~2.3 Cost attribution + workspace grouping~~ (done) | yes (both schemas) | M |
 | 6 | 2.6 Assistant daily stats | yes | M |
 | 7 | 2.7 Docs | no | S |

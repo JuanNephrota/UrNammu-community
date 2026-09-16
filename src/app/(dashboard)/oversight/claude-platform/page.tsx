@@ -113,7 +113,11 @@ export default async function ClaudePlatformPage() {
         <StatCard
           title="Active API Keys"
           value={summary.activeApiKeys}
-          description="From the organization key list"
+          description={
+            summary.workspaces > 0
+              ? `Across ${summary.workspaces} workspace${summary.workspaces === 1 ? "" : "s"}`
+              : "From the organization key list"
+          }
           iconName="FileCheck"
           variant="info"
         />
@@ -135,7 +139,7 @@ export default async function ClaudePlatformPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-3">
         <Card>
           <CardHeader>
             <CardTitle>Cost by Model</CardTitle>
@@ -174,6 +178,39 @@ export default async function ClaudePlatformPage() {
                     className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3"
                   >
                     <p className="text-sm font-medium">{lineItemLabel(row.lineItem)}</p>
+                    <p className="text-sm font-semibold">${row.amount.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Cost by Workspace</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data.costByWorkspace.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No workspace cost yet — populated by the next Anthropic sync.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {data.costByWorkspace.map((row) => (
+                  <div
+                    key={row.workspaceExternalId ?? "default"}
+                    className="flex items-center justify-between rounded-md border border-[var(--border-subtle)] p-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {row.workspaceName ?? row.workspaceExternalId ?? "Default workspace"}
+                      </p>
+                      <p className="truncate text-xs text-[var(--text-muted)]">
+                        {row.workspaceExternalId ?? "Organization default"}
+                        {row.status ? ` · ${row.status}` : ""}
+                      </p>
+                    </div>
                     <p className="text-sm font-semibold">${row.amount.toFixed(2)}</p>
                   </div>
                 ))}

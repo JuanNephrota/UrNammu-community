@@ -201,9 +201,9 @@ Phase 2 introduces a normalized telemetry foundation alongside the legacy `APIUs
 - `ProviderSyncRun`: tracks each sync attempt
 - `ProviderRawSnapshot`: stores raw provider payloads for audit/debug
 - `UsageBucket`: normalized usage aggregates
-- `CostBucket`: normalized cost aggregates
+- `CostBucket`: normalized cost aggregates, carrying the same attribution columns as `UsageBucket` (`apiKeyExternalId`, `apiKeyName`, `workspaceExternalId`, `workspaceName`, `aiSystemId`) so spend rolls up by governed system and by key
 - `AssistantDailyStat`: per-person, per-day coding-assistant stats (Claude Code analytics, Cursor Admin API) as columns — sessions, requests, lines, commits, PRs, tool accept/reject, tokens, cost
-- `ProviderProject`: discovered provider-side projects/workspaces
+- `ProviderProject`: discovered provider-side projects/workspaces (for Anthropic these are Console workspaces)
 - `ProviderActor`: discovered provider-side users/members
 
 The current admin sync route still backfills derived `APIUsageLog` rows for compatibility, but the main oversight views now read normalized telemetry from `UsageBucket` and `CostBucket`.
@@ -213,6 +213,8 @@ Proxy traffic writes to both surfaces. Every request through the Anthropic or Op
 All four proxy paths account tokens the same way: `inputTokens` / `promptTokens` is all input (uncached + cache read + cache creation), with `cacheReadTokens` / `cacheCreationTokens` as the breakdown, and cost = uncached × input + cacheRead × cacheReadPrice + cacheCreation × cacheWritePrice + output × outputPrice. Prices come from one table (`src/lib/model-pricing.ts`, mirrored to `ai-proxy/src/lib/pricing.ts`) matched by exact model id, then family prefix; an unknown model is stored at cost `0` with `pricingMatched: false` in the row metadata rather than billed a default. OpenAI streaming calls record usage and run response DLP (the proxy injects `stream_options.include_usage` when the client omits it and strips the extra trailing chunk). Rows carry `requestId` and `aiSystemId` for session-trace joins; Anthropic `count_tokens` and `batches` calls pass through without usage rows.
 
 Provider sync runs on one global switch and cadence — `provider_sync_enabled` / `provider_sync_interval_hours` in **Settings > Provider Admin APIs** — covering Anthropic, OpenAI, Claude Code analytics, Cursor, Gemini, and every AI gateway. Per-provider settings are planned in [docs/plans/data-collection-tier2.md](docs/plans/data-collection-tier2.md).
+
+**Cost attribution.** Admin-sync'd usage *and* cost rows resolve to a registered AI system through two settings on **Settings > Provider Admin APIs**: a per-provider default (`anthropic_managed_system_id`, `openai_managed_system_id`, `litellm_managed_system_id`, `cursor_managed_system_id`) and a per-API-key override map (`provider_key_system_map`, JSON `{ provider: { apiKeyId: aiSystemId } }`). A key mapping wins over the provider default. Where a provider reports cost per workspace or project rather than per key (Anthropic, OpenAI), the cost row inherits the system when every key seen in that workspace/project maps to the same one, otherwise the provider default. The Oversight overview shows **Cost by Governed System** (with an attribution-coverage percentage) and **Cost by API Key** (Anthropic rows are workspaces, because its cost report has no key dimension). Logic lives in `src/lib/system-attribution.ts` and `src/lib/cost-attribution.ts`.
 
 When traffic flows through the built-in proxy, Oversight can also raise dangerous-prompt alerts from redacted prompt-risk signals without storing full prompt bodies by default.
 

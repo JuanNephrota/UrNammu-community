@@ -150,3 +150,62 @@ test("planPortkeyDayBuckets keeps model and actor partitions distinct for the sa
   assert.ok(keys.some((key) => key.includes("model=m") && !key.includes("partition=actor")));
   assert.ok(keys.some((key) => key.includes("actorExternalId=u") && key.includes("partition=actor")));
 });
+
+import { ANTHROPIC_DEFAULT_WORKSPACE_NAME, planAnthropicCostBuckets } from "./provider-telemetry";
+
+test("planAnthropicCostBuckets sums cents per (workspace, model, cost_type) and converts to USD once", () => {
+  const plans = planAnthropicCostBuckets({
+    costReport: {
+      data: [
+        {
+          starting_at: "2026-09-15T00:00:00Z",
+          ending_at: "2026-09-16T00:00:00Z",
+          results: [
+            { workspace_id: "wrkspc_1", model: "claude-opus-4", cost_type: "tokens", token_type: "uncached_input_tokens", amount: "100.5", currency: "USD" },
+            { workspace_id: "wrkspc_1", model: "claude-opus-4", cost_type: "tokens", token_type: "output_tokens", amount: "49.5", currency: "USD" },
+            { workspace_id: "wrkspc_1", model: "claude-opus-4", cost_type: "web_search", amount: "10", currency: "USD" },
+            { workspace_id: null, model: "claude-sonnet-4", cost_type: "tokens", amount: "25", currency: "USD" },
+            { workspace_id: "wrkspc_2", model: "claude-sonnet-4", cost_type: "tokens", amount: "0", currency: "USD" },
+          ],
+        },
+      ],
+    },
+    fallbackStart: "2026-09-09T00:00:00Z",
+    fallbackEnd: "2026-09-16T00:00:00Z",
+    workspaceNameById: new Map([["wrkspc_1", "Production"]]),
+  });
+
+  assert.equal(plans.length, 3);
+  const opusTokens = plans.find((p) => p.model === "claude-opus-4" && p.lineItem === "tokens")!;
+  assert.equal(opusTokens.amount, 1.5);
+  assert.equal(opusTokens.currency, "USD");
+  assert.equal(opusTokens.workspaceExternalId, "wrkspc_1");
+  assert.equal(opusTokens.workspaceName, "Production");
+  assert.equal(
+    opusTokens.dimensionKey,
+    "date=2026-09-15|lineItem=tokens|model=claude-opus-4|workspaceId=wrkspc_1"
+  );
+  assert.equal(opusTokens.bucketStart.toISOString(), "2026-09-15T00:00:00.000Z");
+
+  const webSearch = plans.find((p) => p.lineItem === "web_search")!;
+  assert.equal(webSearch.amount, 0.1);
+
+  // Default workspace: null id, labelled, and the key stays workspace-free so
+  // orgs without named workspaces keep their pre-existing dimension keys.
+  const sonnet = plans.find((p) => p.model === "claude-sonnet-4")!;
+  assert.equal(sonnet.workspaceExternalId, null);
+  assert.equal(sonnet.workspaceName, ANTHROPIC_DEFAULT_WORKSPACE_NAME);
+  assert.equal(sonnet.dimensionKey, "date=2026-09-15|lineItem=tokens|model=claude-sonnet-4");
+});
+
+test("planAnthropicCostBuckets falls back to the window bounds when a bucket has no timestamps", () => {
+  const plans = planAnthropicCostBuckets({
+    costReport: { data: [{ results: [{ model: "m", cost_type: "tokens", amount: "1" }] }] },
+    fallbackStart: "2026-09-09T00:00:00Z",
+    fallbackEnd: "2026-09-16T00:00:00Z",
+    workspaceNameById: new Map(),
+  });
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0]!.bucketStart.toISOString(), "2026-09-09T00:00:00.000Z");
+  assert.equal(plans[0]!.bucketEnd.toISOString(), "2026-09-16T00:00:00.000Z");
+});

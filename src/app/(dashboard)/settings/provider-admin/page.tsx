@@ -2,6 +2,7 @@ import { requireRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { getProviderSyncStatuses } from "@/lib/background-jobs";
 import { AdminAPISettings, type ProviderSyncStatusView } from "../admin-api-settings";
+import { KEY_MAPPABLE_PROVIDERS, parseProviderKeySystemMap } from "@/lib/system-attribution";
 import { getSettingsPageData } from "../data";
 
 export default async function ProviderAdminSettingsPage() {
@@ -50,6 +51,29 @@ export default async function ProviderAdminSettingsPage() {
       lastSucceededAt: status.lastSucceededAt?.toISOString() ?? null,
     })
   );
+  // Provider API keys seen in the last 90 days of admin-sync telemetry, so the
+  // per-key attribution editor can offer real keys instead of free text.
+  const now = new Date();
+  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const knownKeyRows = await prisma.usageBucket.groupBy({
+    by: ["provider", "apiKeyExternalId", "apiKeyName"],
+    where: {
+      provider: { in: [...KEY_MAPPABLE_PROVIDERS] },
+      apiKeyExternalId: { not: null },
+      bucketStart: { gte: ninetyDaysAgo },
+    },
+    _sum: { totalTokens: true },
+    orderBy: [{ provider: "asc" }, { _sum: { totalTokens: "desc" } }],
+    take: 300,
+  });
+  const seenKeys = new Set<string>();
+  const knownApiKeys = knownKeyRows.flatMap((row) => {
+    if (!row.apiKeyExternalId) return [];
+    const dedupeKey = `${row.provider}:${row.apiKeyExternalId}`;
+    if (seenKeys.has(dedupeKey)) return [];
+    seenKeys.add(dedupeKey);
+    return [{ provider: row.provider, apiKeyExternalId: row.apiKeyExternalId, apiKeyName: row.apiKeyName }];
+  });
 
   return (
     <AdminAPISettings
@@ -79,6 +103,10 @@ export default async function ProviderAdminSettingsPage() {
       governanceExceptionNoticeDays={parseInt(settingsMap.governance_exception_notice_days ?? "14")}
       governanceEscalationOverdueDays={parseInt(settingsMap.governance_escalation_overdue_days ?? "7")}
       anthropicManagedSystemId={settingsMap.anthropic_managed_system_id ?? ""}
+      openaiManagedSystemId={settingsMap.openai_managed_system_id ?? ""}
+      litellmManagedSystemId={settingsMap.litellm_managed_system_id ?? ""}
+      keySystemMap={parseProviderKeySystemMap(settingsMap.provider_key_system_map ?? null)}
+      knownApiKeys={knownApiKeys}
       aiSystems={aiSystems}
     />
   );

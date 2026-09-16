@@ -237,6 +237,9 @@ export async function ingestThirdPartyProxyTelemetry({
             projectName: entry.projectName,
             actorExternalId: entry.actorExternalId,
             actorName: entry.actorName,
+            apiKeyExternalId: entry.apiKeyExternalId,
+            apiKeyName: entry.apiKeyName,
+            aiSystemId: entry.aiSystemId,
             lineItem: entry.lineItem ?? "proxy",
             metadata: toJsonValue({
               source,
@@ -258,6 +261,9 @@ export async function ingestThirdPartyProxyTelemetry({
             projectName: entry.projectName,
             actorExternalId: entry.actorExternalId,
             actorName: entry.actorName,
+            apiKeyExternalId: entry.apiKeyExternalId,
+            apiKeyName: entry.apiKeyName,
+            aiSystemId: entry.aiSystemId,
             lineItem: entry.lineItem ?? "proxy",
             metadata: toJsonValue({
               source,

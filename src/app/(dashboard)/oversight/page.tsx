@@ -26,6 +26,7 @@ import {
 } from "@/lib/oversight-telemetry";
 import { SpendBudgetManager } from "@/components/oversight/spend-budget-manager";
 import { getTopCostDrivers, summarizeSpendBudgets } from "@/lib/spend-governance";
+import { loadCostByKey, loadCostBySystem } from "@/lib/cost-attribution";
 import { getOversightRecommendations } from "@/lib/oversight-recommendations";
 import { getSettings, OVERSIGHT_ANOMALY_SETTINGS_KEYS } from "@/lib/settings";
 
@@ -188,6 +189,13 @@ export default async function OversightPage() {
     prisma.riskAssessmentIssue.count({
       where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
     }),
+  ]);
+
+  // Cost attribution rollups read CostBucket's own aiSystemId / apiKey /
+  // workspace columns (SQL aggregates, not capped by the 200-row sample above).
+  const [costBySystem, costByKey] = await Promise.all([
+    loadCostBySystem(thirtyDaysAgo, 8),
+    loadCostByKey(thirtyDaysAgo, 8),
   ]);
 
   const costByProvider = costBuckets.reduce<Record<string, number>>((acc: Record<string, number>, bucket) => {
@@ -999,6 +1007,101 @@ export default async function OversightPage() {
                     <p className="text-xs text-[var(--text-muted)] capitalize">{driver.scopeType}</p>
                   </div>
                   <p className="text-sm font-semibold">${driver.amount.toFixed(2)}</p>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card id="cost-by-system">
+          <CardHeader>
+            <CardTitle>Cost by Governed System (30 days)</CardTitle>
+            <p className="text-xs text-[var(--text-muted)]">
+              Provider-reported spend attributed through the Settings → Provider Admin APIs mapping.
+              {costBySystem.totalAmount > 0
+                ? ` ${costBySystem.coveragePct}% of $${costBySystem.totalAmount.toFixed(2)} is attributed.`
+                : ""}
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {costBySystem.rows.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No attributed cost yet. Map a provider or API key to a registered system in{" "}
+                <Link href="/settings/provider-admin" className="text-[var(--accent)] hover:underline">
+                  Settings → Provider Admin APIs
+                </Link>
+                .
+              </p>
+            ) : (
+              costBySystem.rows.map((row) => (
+                <div
+                  key={row.aiSystemId ?? row.systemName ?? "system"}
+                  className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] p-3"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/registry/${row.aiSystemId}`}
+                      className="block truncate text-sm font-medium text-[var(--text-primary)] hover:text-[var(--accent)]"
+                    >
+                      {row.systemName}
+                    </Link>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      {row.department ?? "—"} · {row.providers.join(", ") || "—"}
+                    </p>
+                  </div>
+                  <p className="text-sm font-semibold">${row.amount.toFixed(2)}</p>
+                </div>
+              ))
+            )}
+            {costBySystem.unattributedAmount > 0 && (
+              <div className="flex items-center justify-between rounded-lg border border-dashed border-[var(--border-subtle)] p-3">
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-secondary)]">Unattributed</p>
+                  <p className="text-xs text-[var(--text-muted)]">Spend with no governed-system mapping</p>
+                </div>
+                <p className="text-sm font-semibold text-[var(--text-secondary)]">
+                  ${costBySystem.unattributedAmount.toFixed(2)}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card id="cost-by-key">
+          <CardHeader>
+            <CardTitle>Cost by API Key (30 days)</CardTitle>
+            <p className="text-xs text-[var(--text-muted)]">
+              Per-key spend where the provider reports it (OpenAI, LiteLLM, gateways). Anthropic reports spend
+              per workspace, so its rows are workspaces.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {costByKey.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">
+                No per-key or per-workspace cost yet. It appears after the next provider sync.
+              </p>
+            ) : (
+              costByKey.map((row) => (
+                <div
+                  key={`${row.provider}:${row.scope}:${row.externalId}`}
+                  className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium text-[var(--text-primary)]">{row.label}</p>
+                      <Badge variant="outline" className="text-[10px] uppercase">
+                        {row.scope === "workspace" ? "workspace" : "key"}
+                      </Badge>
+                    </div>
+                    <p className="truncate text-xs text-[var(--text-muted)]">
+                      {row.provider}
+                      {row.scope === "api_key" && row.workspaceName ? ` · ${row.workspaceName}` : ""}
+                      {row.systemName ? ` · ${row.systemName}` : " · unmapped"}
+                    </p>
+                  </div>
+                  <p className="text-sm font-semibold">${row.amount.toFixed(2)}</p>
                 </div>
               ))
             )}

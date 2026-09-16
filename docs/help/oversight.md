@@ -7,16 +7,16 @@ Provider-level usage, cost, anomaly, vendor, and investigation telemetry.
 With an Anthropic admin key, an OpenAI admin key, a Cursor admin key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (gateway keys live under **Settings → Integrations**), each provider has its own hourly cron that syncs once that provider's own interval has elapsed since its last successful run, and writes into:
 
 - `UsageBucket` — tokens / requests per provider / model / project / actor / time bucket.
-- `CostBucket` — amount and line-item cost.
+- `CostBucket` — amount and line-item cost, with the same attribution columns as `UsageBucket` (API key, workspace, governed system).
 - `AssistantDailyStat` — one row per person per day for the coding assistants (Claude Code via the Anthropic Admin API analytics report, Cursor via the Cursor Admin API): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as real columns rather than JSON.
-- `ProviderProject` / `ProviderActor` — workspace membership discovered upstream.
+- `ProviderProject` / `ProviderActor` — workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members discovered upstream.
 - `ProviderSyncRun` — a record of each sync attempt.
 
 **If a provider's admin key is not configured, that provider is skipped cleanly** — no sync-run row, no upstream call. The manual-sync panel reports this as "Skipped (not configured): …" so it is clear which providers are actually active.
 
 What each sync records, beyond the shared bucket shape:
 
-- **Anthropic** — organization usage and cost per model and API key, plus the Claude Code analytics feed (sessions, lines, commits, estimated cost per developer) that backs Usage by Person when a machine is not instrumented with OTel.
+- **Anthropic** — organization usage per model, API key, and workspace; cost per workspace, model, and cost type (the cost report has no API-key dimension, so Anthropic spend is attributed at workspace granularity); the workspace list; plus the Claude Code analytics feed (sessions, lines, commits, estimated cost per developer) that backs Usage by Person when a machine is not instrumented with OTel.
 - **OpenAI** — usage per model and project, including prompt-cache hits as `cacheReadTokens`, and request counts. Usage and cost results are paginated; if the page cap is hit the sync-run metadata records `truncated: true` so a partial day is never mistaken for a quiet one.
 - **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. This is where Cursor tokens and cost come from; the Cursor OTel hook carries neither.
 - **Portkey** — one usage and cost bucket per day per model, and one usage bucket per day per user. Portkey reports cost in cents; the sync divides by 100 and records a `reconciliation` block in the sync-run metadata comparing the org-level graph total with the summed per-model and per-user totals so the unit assumption is auditable.
@@ -26,7 +26,7 @@ Because every provider runs in its own function, a slow or failing provider does
 
 ## Pages
 
-- **Overview** — totals, breakdowns, top cost drivers, anomaly findings.
+- **Overview** — totals, breakdowns, top cost drivers, anomaly findings, and two attribution panels: **Cost by Governed System** (spend per registered AI system, with the attributed share of total spend and an unattributed remainder) and **Cost by API Key** (per-key spend where the provider reports it; Anthropic rows are workspaces). Both read the mapping configured under **Settings → Provider Admin APIs → Usage Attribution**: a default system per provider plus per-key overrides, applied to usage and cost alike on the next sync.
 - **Usage** — drill into normalized buckets; link usage to a system for attribution.
 - **Vendors** — vendor profiles with contract lifecycle, security review, data residency, subprocessors, approved use cases.
 - **Investigations** — follow-up queue for alerts and incidents.

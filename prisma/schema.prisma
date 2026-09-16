@@ -295,6 +295,7 @@ model AISystem {
   agents             AIAgent[]
   auditLogs          AuditLog[]       @relation("SystemAuditLogs")
   usageBuckets       UsageBucket[]
+  costBuckets        CostBucket[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -600,6 +601,9 @@ model UsageBucket {
   actorName        String?
   apiKeyExternalId String?
   apiKeyName       String?
+  // Provider-side workspace (Anthropic workspaces; other providers leave null).
+  workspaceExternalId String?
+  workspaceName       String?
   inputTokens      Int             @default(0)
   outputTokens     Int             @default(0)
   totalTokens      Int             @default(0)
@@ -692,15 +696,26 @@ model CostBucket {
   projectName      String?
   actorExternalId  String?
   actorName        String?
+  // Cost attribution (mirrors UsageBucket): the API key that incurred the
+  // spend where the provider reports it (gateways, LiteLLM, proxy), the
+  // provider-side workspace (Anthropic), and the governed system resolved
+  // through the Settings > Provider Admin APIs attribution mapping.
+  apiKeyExternalId String?
+  apiKeyName       String?
+  workspaceExternalId String?
+  workspaceName       String?
   lineItem         String?
   metadata         Json?
   syncRun          ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
   syncRunId        String
+  aiSystem         AISystem?       @relation(fields: [aiSystemId], references: [id], onDelete: SetNull)
+  aiSystemId       String?
   createdAt        DateTime        @default(now())
 
   @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
   @@index([provider, bucketStart, granularity])
   @@index([syncRunId])
+  @@index([aiSystemId, bucketStart])
 }
 
 model ProviderProject {

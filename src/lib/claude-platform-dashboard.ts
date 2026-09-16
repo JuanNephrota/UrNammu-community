@@ -9,10 +9,12 @@ import {
 
 // Data layer for the Claude Platform oversight page. Sourced entirely from the
 // Anthropic Admin API sync (syncAnthropicTelemetry → provider="anthropic"):
-//   - UsageBucket   tokens per (model × API key), daily
-//   - CostBucket    USD per (model × cost-type line-item), daily
+//   - UsageBucket   tokens per (model × API key × workspace), daily
+//   - CostBucket    USD per (workspace × model × cost-type line-item), daily
 //   - ProviderActor org members
-//   - ProviderProject  API keys (active, from listAPIKeys status="active")
+//   - ProviderProject  WORKSPACES (from listWorkspaces; API keys used to live
+//                      here — key inventory now comes from the `keys` raw
+//                      snapshot of the latest sync)
 //   - ProviderSyncRun  telemetry sync health
 //
 // All aggregate queries exclude proxy-duplicated rows so totals reconcile with
@@ -40,10 +42,17 @@ export interface ClaudePlatformDashboard {
     requests: number | null;
     activeApiKeys: number;
     orgMembers: number;
+    workspaces: number;
   };
   dailyUsage: { date: string; tokens: number; cost: number }[];
   costByModel: { model: string; amount: number }[];
   costByLineItem: { lineItem: string; amount: number }[];
+  costByWorkspace: {
+    workspaceExternalId: string | null;
+    workspaceName: string | null;
+    amount: number;
+    status: string | null;
+  }[];
   tokensByModel: {
     model: string;
     inputTokens: number;
@@ -88,15 +97,16 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
     configured,
     usageAgg,
     costAgg,
-    activeApiKeys,
+    keysSnapshot,
     orgMembers,
     dailyTokensRaw,
     dailyCostRaw,
     costByModelRows,
     costByLineItemRows,
+    costByWorkspaceRows,
     tokensByModelRows,
     usageByApiKeyRows,
-    apiKeyProjects,
+    workspaceProjects,
     members,
     syncRuns,
   ] = await Promise.all([
@@ -116,7 +126,13 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
       where: costWhere,
       _sum: { amount: true },
     }),
-    prisma.providerProject.count({ where: { provider } }),
+    // API-key inventory: the `keys` payload the last sync stored. The sync
+    // requests status="active", so the list length is the active-key count.
+    prisma.providerRawSnapshot.findFirst({
+      where: { provider, resourceType: "keys" },
+      orderBy: { capturedAt: "desc" },
+      select: { payload: true },
+    }),
     prisma.providerActor.count({ where: { provider } }),
     // Cast DATE() to text so Postgres returns 'YYYY-MM-DD' strings, not JS
     // Date objects — string keys are required for the day-merge below to
@@ -153,6 +169,13 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
       orderBy: { _sum: { amount: "desc" } },
       take: 12,
     }),
+    prisma.costBucket.groupBy({
+      by: ["workspaceExternalId", "workspaceName"],
+      where: costWhere,
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: "desc" } },
+      take: 12,
+    }),
     prisma.usageBucket.groupBy({
       by: ["model"],
       where: usageWhere,
@@ -175,7 +198,7 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
     }),
     prisma.providerProject.findMany({
       where: { provider },
-      select: { externalId: true, status: true },
+      select: { externalId: true, name: true, status: true },
     }),
     prisma.providerActor.findMany({
       where: { provider },
@@ -212,7 +235,22 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
       cost: costByDate.get(date) ?? 0,
     }));
 
-  const statusByKeyId = new Map(apiKeyProjects.map((p) => [p.externalId, p.status]));
+  const snapshotKeys = (() => {
+    const payload = keysSnapshot?.payload;
+    const data = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { data?: unknown }).data
+      : undefined;
+    return Array.isArray(data)
+      ? data.filter((k): k is { id?: unknown; status?: unknown } => !!k && typeof k === "object")
+      : [];
+  })();
+  const activeApiKeys = snapshotKeys.length;
+  const statusByKeyId = new Map<string, string | null>(
+    snapshotKeys
+      .filter((k) => typeof k.id === "string")
+      .map((k) => [k.id as string, typeof k.status === "string" ? k.status : null])
+  );
+  const workspaceStatusById = new Map(workspaceProjects.map((p) => [p.externalId, p.status]));
   const lastSuccessAt = syncRuns.find((r) => r.status === "SUCCEEDED")?.completedAt ?? null;
 
   return {
@@ -230,6 +268,7 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
       requests: requestSum > 0 ? requestSum : null,
       activeApiKeys,
       orgMembers,
+      workspaces: workspaceProjects.length,
     },
     dailyUsage,
     costByModel: costByModelRows.map((r) => ({
@@ -239,6 +278,12 @@ export async function loadClaudePlatformDashboard(): Promise<ClaudePlatformDashb
     costByLineItem: costByLineItemRows.map((r) => ({
       lineItem: r.lineItem ?? "tokens",
       amount: r._sum.amount ?? 0,
+    })),
+    costByWorkspace: costByWorkspaceRows.map((r) => ({
+      workspaceExternalId: r.workspaceExternalId,
+      workspaceName: r.workspaceName,
+      amount: r._sum.amount ?? 0,
+      status: r.workspaceExternalId ? workspaceStatusById.get(r.workspaceExternalId) ?? null : null,
     })),
     tokensByModel: tokensByModelRows.map((r) => ({
       model: r.model ?? "Unknown",

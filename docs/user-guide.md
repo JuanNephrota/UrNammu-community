@@ -741,16 +741,16 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
-- **`CostBucket`** — amount and line-item cost, same dimension keys.
+- **`CostBucket`** — amount and line-item cost, same dimension keys, plus the same attribution columns as `UsageBucket` (API key, workspace, governed system) so cost can be rolled up by system and by key.
 - **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code and Cursor dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
-- **`ProviderProject`** / **`ProviderActor`** — discovered workspace membership.
+- **`ProviderProject`** / **`ProviderActor`** — discovered workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
 
 Each provider is gated on its own credentials. **If a provider's admin key (or billing-export config, for Gemini) is not set, that provider is skipped** — no `ProviderSyncRun` row is created and no upstream API call is made. The manual-sync panel surfaces this explicitly as "Skipped (not configured): …" so it is clear which providers are active and which are simply not configured yet.
 
 What each sync contributes:
 
-- **Anthropic Admin API** — organization usage and cost per model and API key, plus the **Claude Code analytics** feed (per-developer sessions, lines, commits, estimated cost) used by Usage by Person when a machine has no OTel data.
+- **Anthropic Admin API** — organization usage per model, API key, and **workspace**, cost per workspace, model, and cost type (the Anthropic cost report cannot be grouped by API key, so per-key spend is available only at workspace granularity; the organization's default workspace is labelled "Default workspace"), the workspace list (stored as `ProviderProject` rows), plus the **Claude Code analytics** feed (per-developer sessions, lines, commits, estimated cost) used by Usage by Person when a machine has no OTel data.
 - **OpenAI Admin API** — usage per model / project with prompt-cache hits recorded as `cacheReadTokens` (OpenAI's `input_cached_tokens`), request counts (`num_model_requests`), and cost. Both the usage and cost endpoints are paginated; the sync follows the cursor up to a page cap and records `truncated: true` in the sync-run metadata if the cap was hit.
 - **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. Cursor's OTel hook does not carry tokens or cost; this sync is where they come from.
 - **Portkey** — one `UsageBucket` + `CostBucket` per day per model, and one `UsageBucket` per day per user (dimension key `partition=actor`). Portkey reports cost in cents; the sync converts to USD and stores a `reconciliation` block (graph total vs. summed per-model and per-user totals) in the sync-run metadata so the unit assumption can be checked against the Portkey console.
@@ -771,6 +771,8 @@ If traffic also flows through the built-in OpenAI or Anthropic proxy, Oversight 
 - Anomaly, model-drift, and dangerous-prompt findings with recommendations.
 - Budget status cards.
 - Remediation rollups across alerts, incidents, investigations, and corrective follow-up.
+- **Cost by Governed System (30 days)** — provider-reported spend rolled up by the registered AI system it resolves to, with the share of total spend that is attributed and an "Unattributed" remainder. Mappings are configured in Settings → Provider Admin APIs → Usage Attribution (see [13.2](#132-provider-admin-apis)).
+- **Cost by API Key (30 days)** — per-key spend where the provider reports it (OpenAI, LiteLLM, and the gateways). Anthropic reports spend per workspace, so its rows are workspaces (badge `workspace`). Each row shows the governed system it maps to, or `unmapped`.
 
 ### Usage Page
 
@@ -918,6 +920,7 @@ Create an investigation from an alert (preferred) or manually:
 - Daily usage & cost trend (30 days).
 - Cost by model and cost by line item (uncached input, cache read, cache creation, output).
 - Tokens by model table.
+- **Cost by workspace** — spend per Anthropic Console workspace (the default workspace appears as "Default workspace"); the **Active API Keys** card notes how many workspaces the keys span.
 - **Usage by API key** — per-key token counts, requests, and active/inactive status.
 - **Organization members** list with roles.
 - A sync-health banner (last successful sync, fresh/stale, errors).
@@ -1200,6 +1203,10 @@ Configure organization-level telemetry pulls.
 - **OpenAI admin key** (encrypted) + **Test Connection** + enable toggle + sync interval.
 - **Anomaly detection**: recent window days, baseline window days, min-token threshold, min-cost threshold, per-dimension multipliers.
 - **Governance automation**: review-notice days, exception-notice days, escalation-overdue days.
+- **Usage Attribution**: maps admin-sync'd telemetry (usage *and* cost) to registered AI systems.
+  - **Default system** per provider (Anthropic, OpenAI, LiteLLM; Cursor is set on its own card): every row that provider writes is attributed to this system unless a key override applies.
+  - **Per-key overrides**: a table of provider API keys seen in the last 90 days of telemetry (Anthropic `api_key_id`, OpenAI `api_key_id`, LiteLLM key hash), each with a system selector. A key mapping wins over the provider default. Keys that have a mapping but have not been seen recently are listed as "not seen recently" so the mapping can be cleared.
+  - Cost rows that providers report per workspace or project rather than per key (Anthropic, OpenAI) inherit the system when all keys seen in that workspace/project map to the same one; otherwise they fall back to the provider default. Attribution takes effect on the next provider sync; historical rows are re-attributed as the rolling sync window re-pulls them.
 
 ### 13.3 Proxy Setup
 

@@ -272,6 +272,8 @@ model UsageBucket {
   actorName         String?
   apiKeyExternalId  String?
   apiKeyName        String?
+  workspaceExternalId String?
+  workspaceName       String?
   inputTokens       Int             @default(0)
   outputTokens      Int             @default(0)
   totalTokens       Int             @default(0)
@@ -301,10 +303,15 @@ model CostBucket {
   projectName       String?
   actorExternalId   String?
   actorName         String?
+  apiKeyExternalId  String?
+  apiKeyName        String?
+  workspaceExternalId String?
+  workspaceName       String?
   lineItem          String?
   metadata          Json?
   syncRun           ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
   syncRunId         String
+  aiSystemId        String?
   createdAt         DateTime        @default(now())
 
   @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
