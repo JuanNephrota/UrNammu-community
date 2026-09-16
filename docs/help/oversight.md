@@ -8,6 +8,7 @@ With an Anthropic admin key, an OpenAI admin key, a Cursor admin key, and/or Goo
 
 - `UsageBucket` — tokens / requests per provider / model / project / actor / time bucket.
 - `CostBucket` — amount and line-item cost.
+- `AssistantDailyStat` — one row per person per day for the coding assistants (Claude Code via the Anthropic Admin API analytics report, Cursor via the Cursor Admin API): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as real columns rather than JSON.
 - `ProviderProject` / `ProviderActor` — workspace membership discovered upstream.
 - `ProviderSyncRun` — a record of each sync attempt.
 
@@ -37,16 +38,16 @@ Because every provider runs in its own function, a slow or failing provider does
 One page per AI surface, because the telemetry each one emits is different:
 
 - **Claude Platform** — Anthropic Console / API usage, cost, and access, from the Anthropic Admin API sync. Includes active API keys and organization members. Last 30 days.
-- **Claude Code** — per-user developer productivity and usage from live OpenTelemetry data. Last 7 days. Has two drilldowns: an **Audit Log** of per-event records, and **Session Traces** (below).
+- **Claude Code** — per-user developer productivity and usage from live OpenTelemetry data. Last 7 days. People with no OTel data are filled in from the Anthropic Admin API analytics sync and marked "est." Has two drilldowns: an **Audit Log** of per-event records, and **Session Traces** (below).
 - **Cowork** — productivity, cost, and governance metrics for Claude Cowork (Claude Desktop VM) sessions, from OTel. Last 7 days.
-- **Cursor** — developer activity from Cursor via OTel spans. Last 7 days. **Cursor's OTel hook carries no token or cost data**; tokens and spend on this page come from the Cursor Admin API sync when it is configured. Without that sync these are activity metrics only — do not read the absence of spend here as zero spend.
+- **Cursor** — developer activity from Cursor via OTel spans. Last 7 days. **Cursor's hook carries no token or cost data**, so the span metrics are activity only; spend and per-user lines come from the Cursor Admin API sync when its team key is configured — do not read the absence of spend here as zero spend.
 
 ## Usage by Person
 
 **Oversight → Usage by Person** answers "who is using what, and what does it cost?" with one row per human across every surface UrNammu observes:
 
-- **Claude Code** and **Cowork** — live OTel metrics (Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two never overlap). When a person has no OTel data, the Anthropic Admin API analytics sync fills in sessions, lines, commits, and an estimated cost, marked "est."
-- **Cursor** — the Cursor Admin API sync. Per-user spend is recorded from the usage-events feed on each sync; days synced before that field existed show Cursor cost as "n/a" rather than zero.
+- **Claude Code** and **Cowork** — live OTel metrics (Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two never overlap). When a person has no OTel data, the Anthropic Admin API analytics sync (`AssistantDailyStat`) fills in sessions, lines, commits, and an estimated cost, marked "est."
+- **Cursor** — the Cursor Admin API sync (`AssistantDailyStat`). Active days count only days Cursor marks the seat active. Per-user spend comes from the usage-events feed; when that feed returned nothing for the synced window, Cursor cost shows as "n/a" rather than zero.
 - **API (proxy)** — Anthropic and OpenAI calls through the governance proxy, attributed by the `x-user-email` header, with a count of flagged requests.
 
 People are matched by lower-cased email. Name and department come from the UrNammu user profile when one exists, otherwise from the provider's member directory. Anything without an email identity (anonymous proxy calls, API-key actors, un-tagged OTel clients) is kept out of the table and totalled in the **Unattributed cost** card so totals stay honest. Anthropic Console usage is reported per API key, not per person, and is intentionally excluded — see **Claude Platform** for that view.

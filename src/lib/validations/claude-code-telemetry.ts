@@ -38,9 +38,39 @@ const numberDataPointSchema = z.object({
 const histogramDataPointSchema = z.object({
   attributes: z.array(keyValueSchema).optional(),
   timeUnixNano: z.union([z.string(), z.number()]).optional(),
+  startTimeUnixNano: z.union([z.string(), z.number()]).optional(),
   count: z.union([z.string(), z.number()]).optional(),
   sum: z.number().optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  bucketCounts: z.array(z.union([z.string(), z.number()])).optional(),
+  explicitBounds: z.array(z.number()).optional(),
 });
+
+type HistogramDataPoint = z.infer<typeof histogramDataPointSchema>;
+
+/**
+ * Collapse an OTLP histogram data point to the scalar we store in
+ * ClaudeCodeMetric.value. The sum is what every dashboard rolls up
+ * (SUM(value) over cost/token metrics), so it wins; a histogram that omits
+ * `sum` falls back to its observation count. The count and min/max ride along
+ * in `attributes` (histogram.count / .sum / .min / .max) so nothing is lost.
+ */
+export function readHistogramDataPoint(dp: HistogramDataPoint): {
+  value: number;
+  extra: Record<string, unknown>;
+} {
+  const count =
+    dp.count == null ? null : typeof dp.count === "string" ? Number(dp.count) : dp.count;
+  const sum = typeof dp.sum === "number" ? dp.sum : null;
+  const value = sum ?? (count != null && Number.isFinite(count) ? count : 0);
+  const extra: Record<string, unknown> = { "otel.aggregation": "histogram" };
+  if (count != null && Number.isFinite(count)) extra["histogram.count"] = count;
+  if (sum != null) extra["histogram.sum"] = sum;
+  if (typeof dp.min === "number") extra["histogram.min"] = dp.min;
+  if (typeof dp.max === "number") extra["histogram.max"] = dp.max;
+  return { value, extra };
+}
 
 const metricSchema = z.object({
   name: z.string(),
@@ -125,18 +155,37 @@ export function flattenOtlpMetrics(
     for (const sm of rm.scopeMetrics ?? []) {
       for (const m of sm.metrics ?? []) {
         if (!m.name.startsWith("claude_code.")) continue;
-        const dataPoints = [
-          ...(m.sum?.dataPoints ?? []),
-          ...(m.gauge?.dataPoints ?? []),
+        // Sum and gauge points carry a scalar; histogram points are
+        // collapsed to their sum (see readHistogramDataPoint) so a metric the
+        // Collector re-aggregated as a histogram still lands as rows instead
+        // of being dropped.
+        const dataPoints: {
+          attributes?: z.infer<typeof keyValueSchema>[];
+          timeUnixNano?: string | number;
+          value: number;
+          extra: Record<string, unknown>;
+        }[] = [
+          ...[...(m.sum?.dataPoints ?? []), ...(m.gauge?.dataPoints ?? [])].map((dp) => ({
+            attributes: dp.attributes,
+            timeUnixNano: dp.timeUnixNano,
+            value: readDataPointValue(dp),
+            extra: {},
+          })),
+          ...(m.histogram?.dataPoints ?? []).map((dp) => ({
+            attributes: dp.attributes,
+            timeUnixNano: dp.timeUnixNano,
+            ...readHistogramDataPoint(dp),
+          })),
         ];
         for (const dp of dataPoints) {
           const pointAttrs = attributesToMap(dp.attributes);
           const merged: Record<string, unknown> = {
             ...resourceAttrs,
             ...pointAttrs,
+            ...dp.extra,
           };
           const timestamp = nanoToDate(dp.timeUnixNano, now);
-          const value = readDataPointValue(dp);
+          const value = dp.value;
           const unit = m.unit ?? null;
           rows.push({
             dedupeKey: metricDedupeKey({

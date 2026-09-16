@@ -79,6 +79,8 @@ The most important Prisma models are:
   Stores contract posture, lifecycle dates, review status, residency, subprocessors, approved use cases, and renewal notes.
 - `UsageBucket` and `CostBucket`
   The normalized telemetry layer for provider oversight.
+- `AssistantDailyStat`
+  Per-person, per-day coding-assistant stats (provider `claude_code` from the Anthropic Admin API analytics report, `cursor` from the Cursor Admin API daily-usage + usage-events feeds) as columns: sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, cost, `isActive`. Written by `syncClaudeCodeAnalytics` / `syncCursorTelemetry` in `src/lib/provider-telemetry.ts` via the pure mappers in `src/lib/assistant-daily-stats.ts`. Read by `claude-code-dashboard.ts`, `cursor-dashboard.ts`, and `people-usage.ts` (which feeds the `PEOPLE_USAGE` report source). The syncs still write the legacy per-day `UsageBucket` rows (same data in `metadata` JSON) for one release; new readers should not depend on them.
 - `DiscoveredAITool`
   Normalized shadow AI discoveries. `externalAppId` / `externalAppProvider` are the IdP handles that make identity enforcement possible — a discovery without them cannot be enforced at the identity layer.
 - `KeyUsageRule` and `ApiKeyProfile`
@@ -187,6 +189,7 @@ There are two distinct telemetry pipelines, and mixing them is the most common m
 - `src/app/(dashboard)/oversight/page.tsx`
 - `src/app/(dashboard)/oversight/usage/page.tsx`
 - `src/app/(dashboard)/oversight/people/page.tsx` — Usage by Person (cross-surface per-person rollup; data in `src/lib/people-usage.ts`)
+- `src/lib/assistant-daily-stats.ts` + `AssistantDailyStat` — the per-person, per-day columnar layer for the Claude Code (Admin API) and Cursor (Admin API) syncs; Usage by Person and both assistant dashboards read it instead of `UsageBucket.metadata`.
 
 Prefer `UsageBucket` and `CostBucket` over reading `APIUsageLog` directly. `APIUsageLog` is the proxy's own write path and is the right source only for proxy-specific views such as Proxy Health.
 

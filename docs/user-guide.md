@@ -742,6 +742,7 @@ With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys.
+- **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code and Cursor dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
 - **`ProviderProject`** / **`ProviderActor`** — discovered workspace membership.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
 
@@ -929,6 +930,7 @@ Create an investigation from an alert (preferred) or manually:
 - **Usage & event activity** — tool accept/reject rate, completions, and a decision breakdown.
 - **Cost attribution** — per-user and per-model cost summaries estimated from token metrics.
 - **OTel event log** — recent user prompts, tool invocations, completions, and API errors.
+- **Users (last 7 days)** — per-developer sessions, lines, commits, PRs, accept rate, tokens, and estimated cost from OTel. Developers with no OTel data in the window are filled in from the Anthropic Admin API analytics sync (`AssistantDailyStat`) and marked *est.*, so people whose machines are not instrumented still appear. OTel wins whenever both exist for a person.
 - **User filter** — scope the whole page to a single developer (`?user=email`); the dropdown is populated from the last 7 days.
 
 Prompt and code text are stripped at ingest — only metadata, decisions, and dangerous-prompt verdicts are stored. Click through to the full audit log below.
@@ -968,14 +970,14 @@ Two caveats worth knowing before you use durations as evidence:
 - **Lines produced (7d)** — per-user accepted/added/deleted lines and active days (requires the Cursor Admin API team key).
 - Recent spans list.
 
-The Cursor Admin API sync also records each developer's charged spend per day (from the usage-events feed) on their daily usage row, which is what **Usage by Person** reports as Cursor cost.
+The Cursor Admin API sync writes one `AssistantDailyStat` row per developer per day — requests, lines added / deleted / accepted, whether Cursor marked the seat active, tokens, and charged spend from the usage-events feed. **Lines produced** and **Usage by Person** read those columns; a seat with no active days in the window is left out rather than shown as zeros.
 
 ### Usage by Person
 
 **Governance → Usage by Person** is the cross-surface answer to "who is using what, and what does it cost?" — one row per human, merged by lower-cased email, across:
 
-- **Claude Code** and **Cowork** — live OTel metrics. Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two columns never overlap. When a person has no OTel data in the window, the Anthropic Admin API analytics sync fills in sessions, lines, commits, and an estimated cost (marked *est.*), so people whose machines are not instrumented still appear.
-- **Cursor** — the Cursor Admin API sync: requests, tokens, accepted lines, active days, and per-user spend. Days synced before per-user spend was recorded show Cursor cost as *n/a* rather than zero.
+- **Claude Code** and **Cowork** — live OTel metrics. Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two columns never overlap. When a person has no OTel data in the window, the Anthropic Admin API analytics sync (`AssistantDailyStat`) fills in sessions, lines, commits, and an estimated cost (marked *est.*), so people whose machines are not instrumented still appear.
+- **Cursor** — the Cursor Admin API sync (`AssistantDailyStat`): requests, tokens, accepted lines, active days (only days Cursor marks the seat active), and per-user spend. When the usage-events feed returned nothing for the synced window, Cursor cost shows as *n/a* rather than zero.
 - **API (proxy)** — Anthropic and OpenAI calls made through the governance proxy, attributed by the `x-user-email` header, plus a count of flagged requests.
 
 The page shows:

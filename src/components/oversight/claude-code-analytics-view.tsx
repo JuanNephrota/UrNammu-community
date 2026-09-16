@@ -10,6 +10,8 @@ import {
   loadEventActivity,
   loadRecentEvents,
   loadOtelUsage,
+  loadAssistantUsage,
+  mergeUsageSources,
   loadOtelUserList,
   hasAttributedData,
   UNATTRIBUTED,
@@ -78,17 +80,21 @@ export async function ClaudeCodeAnalyticsView({
   showUserFilter?: boolean;
 }) {
   const since = getSevenDaysAgo();
-  const [live, attribution, activity, recentEvents, usage, userList] =
+  const [live, attribution, activity, recentEvents, otelUsage, adminUsage, userList] =
     await Promise.all([
       loadLiveTelemetry(userEmail, surface),
       loadCostAttribution(since, userEmail, surface),
       loadEventActivity(since, userEmail, surface),
       loadRecentEvents(since, userEmail, surface),
       loadOtelUsage(since, userEmail, surface),
+      loadAssistantUsage(since, userEmail, surface),
       loadOtelUserList(since, surface),
     ]);
 
-  const { users, totals } = usage;
+  // OTel wins per person; the Admin API analytics sync fills in seats with
+  // no OTel data so uninstrumented users still appear (marked "est.").
+  const { users, totals } = mergeUsageSources(otelUsage.users, adminUsage);
+  const adminOnlyUsers = users.filter((u) => u.source === "admin_api").length;
   const toolAcceptRate =
     totals.toolAccepted + totals.toolRejected > 0
       ? ((totals.toolAccepted / (totals.toolAccepted + totals.toolRejected)) * 100).toFixed(1)
@@ -312,7 +318,8 @@ export async function ClaudeCodeAnalyticsView({
         <CardContent>
           {users.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)] py-8 text-center">
-              No Claude Code telemetry in the last 7 days for this view.
+              No Claude Code telemetry in the last 7 days for this view — neither OTel
+              metrics nor Anthropic Admin API analytics.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -333,7 +340,17 @@ export async function ClaudeCodeAnalyticsView({
                       : "—";
                     return (
                       <tr key={u.email} className="border-t border-[var(--border-subtle)]">
-                        <td className="px-3 py-3 font-medium text-[var(--text-primary)]">{u.email}</td>
+                        <td className="px-3 py-3 font-medium text-[var(--text-primary)]">
+                          {u.email}
+                          {u.source === "admin_api" && (
+                            <span
+                              className="ml-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]"
+                              title="From the Anthropic Admin API analytics sync — no OTel data for this person in the window"
+                            >
+                              est.
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-3 tabular-nums">{u.sessions}</td>
                         <td className="px-3 py-3 tabular-nums">
                           <span className="text-[var(--success)]">+{u.linesAdded.toLocaleString("en-US")}</span>
@@ -359,6 +376,13 @@ export async function ClaudeCodeAnalyticsView({
                   })}
                 </tbody>
               </table>
+              {adminOnlyUsers > 0 && (
+                <p className="mt-3 text-xs text-[var(--text-muted)]">
+                  Rows marked <span className="font-semibold uppercase">est.</span> come from the
+                  Anthropic Admin API analytics sync (no OTel telemetry for that person in the
+                  last 7 days); their cost is the provider&apos;s estimate.
+                </p>
+              )}
             </div>
           )}
         </CardContent>

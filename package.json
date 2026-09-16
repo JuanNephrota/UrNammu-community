@@ -16,7 +16,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "check:secrets": "bash scripts/check-secrets.sh",
     "check:schema-drift": "node scripts/check-schema-drift.mjs",
     "check:help-drift": "node scripts/gen-help-content.mjs --check",

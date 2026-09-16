@@ -12,12 +12,14 @@ import { prisma } from "@/lib/prisma";
 //   • Claude Code / Cowork — live OTel metrics (ClaudeCodeMetric). Cowork is
 //     the `local-agent` entrypoint; everything else counts as Claude Code so
 //     the two columns are disjoint and sum cleanly. When a person has no OTel
-//     data in the window, the Anthropic Admin API analytics sync (UsageBucket
-//     provider="claude_code") fills in sessions / lines / commits / estimated
-//     cost so people whose machines are not instrumented still appear.
-//   • Cursor — Cursor Admin API sync (UsageBucket provider="cursor", one row
-//     per user per day). Per-user spend comes from `metadata.chargedCents`,
-//     which syncCursorTelemetry records from the usage-events feed.
+//     data in the window, the Anthropic Admin API analytics sync
+//     (AssistantDailyStat provider="claude_code") fills in sessions / lines /
+//     commits / estimated cost so people whose machines are not instrumented
+//     still appear.
+//   • Cursor — Cursor Admin API sync (AssistantDailyStat provider="cursor",
+//     one row per member per day). Per-user spend is the `estimatedCost`
+//     column, which syncCursorTelemetry fills from the usage-events feed and
+//     leaves null when that feed returned nothing.
 //   • API (proxy) — the transparent Anthropic/OpenAI proxy writes hourly
 //     UsageBucket/CostBucket rows tagged source=proxy with the `x-user-email`
 //     header as the actor. Flag counts come from APIUsageLog (which only
@@ -413,75 +415,98 @@ async function loadOtelSurfaceUsage(since: Date, until: Date): Promise<OtelSurfa
   return [...map.values()];
 }
 
-async function loadClaudeCodeAdminUsage(since: Date, until: Date): Promise<ClaudeCodeAdminUsage[]> {
-  const rows = await prisma.$queryRaw<
-    { email: string | null; sessions: number; lines_added: number; commits: number; tokens: number; cost: number; last: Date | null }[]
-  >(Prisma.sql`
-    SELECT
-      "actorExternalId" AS email,
-      COALESCE(SUM((metadata->'core_metrics'->>'num_sessions')::float8), 0)::float8 AS sessions,
-      COALESCE(SUM((metadata->'core_metrics'->'lines_of_code'->>'added')::float8), 0)::float8 AS lines_added,
-      COALESCE(SUM((metadata->'core_metrics'->>'commits_by_claude_code')::float8), 0)::float8 AS commits,
-      COALESCE(SUM((
-        SELECT COALESCE(SUM(
-          COALESCE((mb->'tokens'->>'input')::float8, 0) + COALESCE((mb->'tokens'->>'output')::float8, 0)
-        ), 0)
-        FROM jsonb_array_elements(
-          CASE WHEN jsonb_typeof(metadata->'model_breakdown') = 'array'
-               THEN metadata->'model_breakdown' ELSE '[]'::jsonb END) mb
-      )), 0)::float8 AS tokens,
-      COALESCE(SUM((metadata->>'estimated_cost_cents')::float8), 0)::float8 / 100 AS cost,
-      MAX("bucketStart") AS last
-    FROM "UsageBucket"
-    WHERE provider = 'claude_code'
-      AND "bucketStart" >= ${since} AND "bucketStart" < ${until}
-    GROUP BY 1`);
-  return rows.map((r) => ({
-    email: r.email,
-    sessions: n(r.sessions),
-    linesAdded: n(r.lines_added),
-    commits: n(r.commits),
-    tokens: n(r.tokens),
-    cost: n(r.cost),
-    lastActiveAt: r.last ? new Date(r.last) : null,
-  }));
+/** The AssistantDailyStat columns Usage by Person reads (one row per provider × day × person). */
+export interface AssistantDailyStatRow {
+  provider: string;
+  day: Date;
+  actorExternalId: string;
+  isActive: boolean | null;
+  sessions: number | null;
+  requests: number | null;
+  linesAdded: number | null;
+  linesAccepted: number | null;
+  commits: number | null;
+  estimatedCost: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
 }
 
-async function loadCursorUsage(since: Date, until: Date): Promise<CursorUsage[]> {
-  const rows = await prisma.$queryRaw<
-    {
-      email: string | null;
-      requests: number;
-      tokens: number;
-      lines_accepted: number;
-      active_days: number;
-      cost_rows: number;
-      cost: number | null;
-      last: Date | null;
-    }[]
-  >(Prisma.sql`
-    SELECT
-      "actorExternalId" AS email,
-      COALESCE(SUM("requestCount"), 0)::float8 AS requests,
-      COALESCE(SUM("totalTokens"), 0)::float8 AS tokens,
-      COALESCE(SUM((metadata->>'acceptedLinesAdded')::float8), 0)::float8 AS lines_accepted,
-      COUNT(*)::int AS active_days,
-      COUNT(metadata->>'chargedCents')::int AS cost_rows,
-      (SUM((metadata->>'chargedCents')::float8) / 100)::float8 AS cost,
-      MAX("bucketStart") AS last
-    FROM "UsageBucket"
-    WHERE provider = 'cursor'
-      AND "bucketStart" >= ${since} AND "bucketStart" < ${until}
-    GROUP BY 1`);
-  return rows.map((r) => ({
-    email: r.email,
-    requests: n(r.requests),
-    tokens: n(r.tokens),
-    linesAccepted: n(r.lines_accepted),
-    activeDays: n(r.active_days),
-    cost: n(r.cost_rows) > 0 ? n(r.cost) : null,
-    lastActiveAt: r.last ? new Date(r.last) : null,
-  }));
+/**
+ * Roll AssistantDailyStat rows up to one Claude Code (Admin API) and one
+ * Cursor aggregate per actor. Pure, so the column semantics are testable:
+ *   - tokens are input + output (cache tokens are reported separately and
+ *     would inflate the cross-surface total);
+ *   - a Cursor day counts as active unless the provider marked it inactive,
+ *     and "last active" only advances on active days;
+ *   - Cursor cost stays null until at least one day carried charged spend;
+ *   - Cursor members with nothing to report in the window are dropped (the
+ *     daily-usage feed lists every seat every day, active or not).
+ */
+export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
+  claudeCodeAdmin: ClaudeCodeAdminUsage[];
+  cursor: CursorUsage[];
+} {
+  const claudeCode = new Map<string, ClaudeCodeAdminUsage>();
+  const cursor = new Map<string, CursorUsage>();
+  for (const row of rows) {
+    const tokens = n(row.inputTokens) + n(row.outputTokens);
+    if (row.provider === "claude_code") {
+      let agg = claudeCode.get(row.actorExternalId);
+      if (!agg) {
+        agg = { email: row.actorExternalId, sessions: 0, linesAdded: 0, commits: 0, tokens: 0, cost: 0, lastActiveAt: null };
+        claudeCode.set(row.actorExternalId, agg);
+      }
+      agg.sessions += n(row.sessions);
+      agg.linesAdded += n(row.linesAdded);
+      agg.commits += n(row.commits);
+      agg.tokens += tokens;
+      agg.cost += n(row.estimatedCost);
+      agg.lastActiveAt = later(agg.lastActiveAt, row.day);
+    } else if (row.provider === "cursor") {
+      let agg = cursor.get(row.actorExternalId);
+      if (!agg) {
+        agg = { email: row.actorExternalId, requests: 0, tokens: 0, linesAccepted: 0, activeDays: 0, cost: null, lastActiveAt: null };
+        cursor.set(row.actorExternalId, agg);
+      }
+      agg.requests += n(row.requests);
+      agg.tokens += tokens;
+      agg.linesAccepted += n(row.linesAccepted);
+      if (row.isActive !== false) {
+        agg.activeDays += 1;
+        agg.lastActiveAt = later(agg.lastActiveAt, row.day);
+      }
+      if (row.estimatedCost != null) agg.cost = (agg.cost ?? 0) + n(row.estimatedCost);
+    }
+  }
+  return {
+    claudeCodeAdmin: [...claudeCode.values()],
+    cursor: [...cursor.values()].filter(
+      (c) => c.activeDays > 0 || c.requests > 0 || c.tokens > 0 || c.linesAccepted > 0 || (c.cost ?? 0) > 0,
+    ),
+  };
+}
+
+async function loadAssistantDailyStatRows(since: Date, until: Date): Promise<AssistantDailyStatRow[]> {
+  return prisma.assistantDailyStat.findMany({
+    where: {
+      provider: { in: ["claude_code", "cursor"] },
+      day: { gte: since, lt: until },
+    },
+    select: {
+      provider: true,
+      day: true,
+      actorExternalId: true,
+      isActive: true,
+      sessions: true,
+      requests: true,
+      linesAdded: true,
+      linesAccepted: true,
+      commits: true,
+      estimatedCost: true,
+      inputTokens: true,
+      outputTokens: true,
+    },
+  });
 }
 
 async function loadProxyUsage(since: Date, until: Date): Promise<ProxyUsage[]> {
@@ -569,12 +594,12 @@ export interface PeopleUsageResult {
 /** Load and merge per-person usage for a time window. */
 export async function loadPeopleUsage(window: { since: Date; until: Date }): Promise<PeopleUsageResult> {
   const { since, until } = window;
-  const [otel, claudeCodeAdmin, cursor, proxy] = await Promise.all([
+  const [otel, assistantRows, proxy] = await Promise.all([
     loadOtelSurfaceUsage(since, until),
-    loadClaudeCodeAdminUsage(since, until),
-    loadCursorUsage(since, until),
+    loadAssistantDailyStatRows(since, until),
     loadProxyUsage(since, until),
   ]);
+  const { claudeCodeAdmin, cursor } = rollupAssistantDailyStats(assistantRows);
 
   const emails = new Set<string>();
   for (const s of [...otel, ...claudeCodeAdmin, ...cursor, ...proxy]) {

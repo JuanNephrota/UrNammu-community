@@ -66,6 +66,11 @@ import {
 } from "./cursor-admin";
 import { getSetting, PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS } from "./settings";
 import { logger } from "./observability";
+import {
+  claudeCodeEntryToDailyStat,
+  cursorDailyRowToStat,
+  type AssistantDailyStatValues,
+} from "./assistant-daily-stats";
 
 type SyncSummary = {
   syncRunId: string;
@@ -196,6 +201,18 @@ async function storeSnapshot(syncRunId: string, provider: string, resourceType: 
       payload: toJsonValue(payload),
       syncRunId,
     },
+  });
+}
+
+// One AssistantDailyStat row per (provider, day, actor). Columns come from
+// the mappers in ./assistant-daily-stats; this only owns the upsert.
+async function upsertAssistantDailyStat(syncRunId: string, values: AssistantDailyStatValues) {
+  const { provider, day, actorExternalId, metadata, ...columns } = values;
+  const data = { ...columns, metadata: toJsonValue(metadata), syncRunId };
+  await prisma.assistantDailyStat.upsert({
+    where: { provider_day_actorExternalId: { provider, day, actorExternalId } },
+    update: data,
+    create: { provider, day, actorExternalId, ...data },
   });
 }
 
@@ -634,6 +651,7 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
 
     let actorsUpserted = 0;
     let usageBucketsUpserted = 0;
+    let assistantStatsUpserted = 0;
     const seenActors = new Set<string>();
 
     for (const entry of entries) {
@@ -686,9 +704,17 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
         estimatedCostCents += mb.estimated_cost?.amount ?? 0;
       }
 
-      // ONE bucket per user+day with productivity metrics only.
-      // Token and cost data is NOT stored here — the regular Anthropic usage
-      // sync already captures that. This avoids double-counting.
+      // Columnar per-user-per-day stats — what dashboards and reports read.
+      await upsertAssistantDailyStat(
+        syncRun.id,
+        claudeCodeEntryToDailyStat(entry, { externalId: actorId, name: actorName }, bucketStart),
+      );
+      assistantStatsUpserted++;
+
+      // LEGACY: the same numbers as metadata JSON on a UsageBucket, kept for
+      // one release so nothing that still reads it breaks. Token and cost
+      // data is NOT stored on the bucket — the regular Anthropic usage sync
+      // already captures that. This avoids double-counting.
       const dimensionKey = makeDimensionKey({ actorId, date });
       await prisma.usageBucket.upsert({
         where: {
@@ -746,6 +772,7 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
 
     await completeSyncRun(syncRun.id, summary, {
       entriesProcessed: entries.length,
+      assistantDailyStatsUpserted: assistantStatsUpserted,
       uniqueUsers: seenActors.size,
       dateRange: { startDate, endDate },
       daysRequested: rangeResult.daysRequested,
@@ -764,10 +791,12 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
 // ─── Cursor (Admin API cost + usage) ─────────────────────
 // Complements the OTel span pipeline (CursorSpan = activity, no cost). The
 // Cursor hook carries no tokens/cost, so authoritative spend comes from the
-// team Admin API. Daily-usage-data → per-user activity UsageBuckets;
-// filtered-usage-events → per-day/model CostBuckets (chargedCents) + token
-// enrichment; spend → per-member ProviderActor + cycle spend metadata. ~30-day
-// API retention, so the scheduled sync builds history over time.
+// team Admin API. Daily-usage-data → per-user-per-day AssistantDailyStat
+// rows (plus legacy activity UsageBuckets for one release);
+// filtered-usage-events → per-day/model CostBuckets (chargedCents) + per-user
+// token/spend enrichment; spend → per-member ProviderActor + cycle spend
+// metadata. ~30-day API retention, so the scheduled sync builds history over
+// time.
 export async function syncCursorTelemetry(triggeredByUserId: string): Promise<SyncResult> {
   if (!(await isCursorAdminConfigured())) {
     return {
@@ -858,8 +887,9 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
       }
     }
 
-    // ── UsageBucket per (user, day) from daily-usage-data ──
+    // ── AssistantDailyStat + legacy UsageBucket per (user, day) from daily-usage-data ──
     let usageBucketsUpserted = 0;
+    let assistantStatsUpserted = 0;
     let actorsUpserted = 0;
     const seenActors = new Set<string>();
 
@@ -878,13 +908,30 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
         asNumber(row.cmdkUsages);
 
       const tokenAgg = email ? tokensByUserDay.get(`${email}|${day}`) : undefined;
-      // Only annotate spend when the events feed actually returned data;
-      // otherwise leave the field absent so readers can tell "unknown" from
+      // Only record spend when the events feed actually returned data;
+      // otherwise leave it null/absent so readers can tell "unknown" from
       // "zero" (Usage by Person shows Cursor cost as n/a when no row has it).
+      const chargedCents =
+        events.length > 0 && email ? centsByUserDay.get(`${email}|${day}`) ?? 0 : null;
+      const actorName = email ? email.split("@")[0] : actorId;
+
+      // Columnar per-user-per-day stats — what dashboards and reports read.
+      // Rows with no email and no user id cannot be keyed to a person.
+      if (actorId) {
+        await upsertAssistantDailyStat(
+          syncRun.id,
+          cursorDailyRowToStat(row, { externalId: actorId, name: actorName }, bucketStart, {
+            tokens: tokenAgg ?? null,
+            chargedCents,
+          }),
+        );
+        assistantStatsUpserted++;
+      }
+
+      // LEGACY: the same row as metadata JSON on a UsageBucket, kept for one
+      // release so nothing that still reads it breaks.
       const bucketMetadata = toJsonValue(
-        events.length > 0 && email
-          ? { ...row, chargedCents: centsByUserDay.get(`${email}|${day}`) ?? 0 }
-          : row,
+        chargedCents != null ? { ...row, chargedCents } : row,
       );
       const dimensionKey = makeDimensionKey({ actorId, date: day });
 
@@ -901,7 +948,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
         update: {
           model: asString(row.mostUsedModel),
           actorExternalId: actorId,
-          actorName: email ? email.split("@")[0] : actorId,
+          actorName,
           inputTokens: tokenAgg?.input ?? 0,
           outputTokens: tokenAgg?.output ?? 0,
           totalTokens: tokenAgg ? tokenAgg.input + tokenAgg.output : 0,
@@ -920,7 +967,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
           dimensionKey,
           model: asString(row.mostUsedModel),
           actorExternalId: actorId,
-          actorName: email ? email.split("@")[0] : actorId,
+          actorName,
           inputTokens: tokenAgg?.input ?? 0,
           outputTokens: tokenAgg?.output ?? 0,
           totalTokens: tokenAgg ? tokenAgg.input + tokenAgg.output : 0,
@@ -1026,6 +1073,7 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
 
     await completeSyncRun(syncRun.id, summary, {
       dailyRows: dailyRows.length,
+      assistantDailyStatsUpserted: assistantStatsUpserted,
       usageEvents: events.length,
       members: spend.members.length,
       dateRange: { startMs, endMs },

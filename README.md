@@ -202,6 +202,7 @@ Phase 2 introduces a normalized telemetry foundation alongside the legacy `APIUs
 - `ProviderRawSnapshot`: stores raw provider payloads for audit/debug
 - `UsageBucket`: normalized usage aggregates
 - `CostBucket`: normalized cost aggregates
+- `AssistantDailyStat`: per-person, per-day coding-assistant stats (Claude Code analytics, Cursor Admin API) as columns — sessions, requests, lines, commits, PRs, tool accept/reject, tokens, cost
 - `ProviderProject`: discovered provider-side projects/workspaces
 - `ProviderActor`: discovered provider-side users/members
 

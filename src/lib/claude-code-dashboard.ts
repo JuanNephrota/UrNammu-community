@@ -315,9 +315,13 @@ export async function loadRecentEvents(
   });
 }
 
-// ── Per-user usage rollup (OTel metrics) ─────────────────────────────────
+// ── Per-user usage rollup (OTel metrics + Admin API fallback) ────────────
 export interface CCUserRow {
   email: string;
+  // Where the numbers came from: live OTel metrics, or the Anthropic Admin
+  // API Claude Code analytics sync (AssistantDailyStat) for people whose
+  // machines are not instrumented.
+  source: "otel" | "admin_api";
   sessions: number;
   linesAdded: number;
   linesRemoved: number;
@@ -330,11 +334,12 @@ export interface CCUserRow {
   toolAccepted: number;
   toolRejected: number;
 }
-export type CCTotals = Omit<CCUserRow, "email">;
+export type CCTotals = Omit<CCUserRow, "email" | "source">;
 
-function emptyUser(email: string): CCUserRow {
+function emptyUser(email: string, source: CCUserRow["source"] = "otel"): CCUserRow {
   return {
     email,
+    source,
     sessions: 0,
     linesAdded: 0,
     linesRemoved: 0,
@@ -421,9 +426,14 @@ export async function loadOtelUsage(
   }
 
   const users = [...map.values()].sort((a, b) => b.cost - a.cost);
-  const { email: _omit, ...zero } = emptyUser("");
+  return { users, totals: sumUsageTotals(users) };
+}
+
+export function sumUsageTotals(users: CCUserRow[]): CCTotals {
+  const { email: _omit, source: _source, ...zero } = emptyUser("");
   void _omit;
-  const totals = users.reduce<CCTotals>((acc, u) => {
+  void _source;
+  return users.reduce<CCTotals>((acc, u) => {
     acc.sessions += u.sessions;
     acc.linesAdded += u.linesAdded;
     acc.linesRemoved += u.linesRemoved;
@@ -437,8 +447,76 @@ export async function loadOtelUsage(
     acc.toolRejected += u.toolRejected;
     return acc;
   }, { ...zero });
+}
 
-  return { users, totals };
+// Per-user usage from the Anthropic Admin API Claude Code analytics sync
+// (AssistantDailyStat provider="claude_code"). Covers every seat in the org,
+// instrumented or not, but knows nothing about launch surface — so it only
+// applies to the all-surfaces view and returns nothing for a surface filter.
+export async function loadAssistantUsage(
+  since: Date,
+  userEmail?: string | null,
+  surface?: string | null,
+): Promise<CCUserRow[]> {
+  if (surface) return [];
+  const rows = await prisma.assistantDailyStat.findMany({
+    where: {
+      provider: "claude_code",
+      day: { gte: since },
+      ...(userEmail ? { actorExternalId: userEmail } : {}),
+    },
+    select: {
+      actorExternalId: true,
+      sessions: true,
+      linesAdded: true,
+      linesRemoved: true,
+      commits: true,
+      pullRequests: true,
+      inputTokens: true,
+      outputTokens: true,
+      cacheReadTokens: true,
+      cacheCreationTokens: true,
+      estimatedCost: true,
+      toolAccepted: true,
+      toolRejected: true,
+    },
+  });
+  const map = new Map<string, CCUserRow>();
+  for (const r of rows) {
+    let u = map.get(r.actorExternalId);
+    if (!u) {
+      u = emptyUser(r.actorExternalId, "admin_api");
+      map.set(r.actorExternalId, u);
+    }
+    u.sessions += r.sessions ?? 0;
+    u.linesAdded += r.linesAdded ?? 0;
+    u.linesRemoved += r.linesRemoved ?? 0;
+    u.commits += r.commits ?? 0;
+    u.prs += r.pullRequests ?? 0;
+    u.inputTokens += r.inputTokens ?? 0;
+    u.outputTokens += r.outputTokens ?? 0;
+    u.cacheTokens += (r.cacheReadTokens ?? 0) + (r.cacheCreationTokens ?? 0);
+    u.cost += r.estimatedCost ?? 0;
+    u.toolAccepted += r.toolAccepted ?? 0;
+    u.toolRejected += r.toolRejected ?? 0;
+  }
+  return [...map.values()];
+}
+
+/**
+ * Combine the two per-user sources. OTel is authoritative wherever it has a
+ * row for a person; Admin API rows fill in everyone else (same rule as Usage
+ * by Person, so the two pages agree). Sorted by cost, desc.
+ */
+export function mergeUsageSources(
+  otel: CCUserRow[],
+  adminApi: CCUserRow[],
+): { users: CCUserRow[]; totals: CCTotals } {
+  const seen = new Set(otel.map((u) => u.email.toLowerCase()));
+  const users = [...otel, ...adminApi.filter((u) => !seen.has(u.email.toLowerCase()))].sort(
+    (a, b) => b.cost - a.cost,
+  );
+  return { users, totals: sumUsageTotals(users) };
 }
 
 // Distinct users for the filter dropdown. When a surface is set, derive from

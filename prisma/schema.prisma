@@ -569,6 +569,7 @@ model ProviderSyncRun {
   costBuckets      CostBucket[]
   providerProjects ProviderProject[]
   providerActors   ProviderActor[]
+  assistantDailyStats AssistantDailyStat[]
 }
 
 model ProviderRawSnapshot {
@@ -619,6 +620,62 @@ model UsageBucket {
   // Serves the KeyUsageRule evaluator: the per-key telemetry window scan and
   // the min(bucketStart) first-seen backfill both filter on provider + key.
   @@index([provider, apiKeyExternalId, bucketStart])
+}
+
+// Per-person, per-day coding-assistant productivity stats, promoted out of
+// UsageBucket.metadata JSON so dashboards and reports can filter and sum them
+// as columns. One row per (provider, day, actor).
+//   provider="claude_code" — Anthropic Admin API Claude Code analytics report
+//     (syncClaudeCodeAnalytics): sessions, lines, commits, PRs, tool
+//     accept/reject, per-model tokens and estimated cost.
+//   provider="cursor"      — Cursor Admin API daily-usage + usage-events
+//     (syncCursorTelemetry): requests, lines added/deleted/accepted, isActive,
+//     tokens and charged spend per developer.
+// The same syncs still write the legacy UsageBucket rows (metadata JSON) for
+// one release; readers should use this table.
+model AssistantDailyStat {
+  id                  String          @id @default(cuid())
+  provider            String
+  // UTC midnight of the reported day.
+  day                 DateTime
+  // Email when the provider reports one; otherwise the API key name
+  // (Claude Code api_actor) or `user:<id>` (Cursor member without email).
+  actorExternalId     String
+  actorName           String?
+  // Cursor reports whether the member used the editor that day. Null when
+  // the provider does not report activity (Claude Code).
+  isActive            Boolean?
+  sessions            Int?
+  // Cursor: composer + chat + agent + cmd-k requests for the day.
+  requests            Int?
+  linesAdded          Int?
+  linesRemoved        Int?
+  // Cursor acceptedLinesAdded. Claude Code does not report acceptance.
+  linesAccepted       Int?
+  commits             Int?
+  pullRequests        Int?
+  toolAccepted        Int?
+  toolRejected        Int?
+  // USD. Claude Code: provider-estimated cost summed over model_breakdown.
+  // Cursor: charged spend from the usage-events feed; null when that feed
+  // returned nothing for the sync window (unknown, not zero).
+  estimatedCost       Float?
+  inputTokens         Int?
+  outputTokens        Int?
+  cacheReadTokens     Int?
+  cacheCreationTokens Int?
+  // Provider-specific detail not worth a column (Claude Code model_breakdown
+  // and tool_actions; Cursor request mix and most-used model).
+  metadata            Json?
+  syncRun             ProviderSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  syncRunId           String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([provider, day, actorExternalId])
+  @@index([provider, day])
+  @@index([actorExternalId, day])
+  @@index([syncRunId])
 }
 
 model CostBucket {

@@ -50,7 +50,7 @@ export interface CursorDashboard {
   // Independent of the current filter so the dropdown always lists everyone.
   allUsers: string[];
   // Per-user lines of code, from the Cursor Admin API daily-usage sync
-  // (UsageBucket provider="cursor" metadata). Empty until a sync has run —
+  // (AssistantDailyStat provider="cursor"). Empty until a sync has run —
   // the OTel span pipeline does not carry line counts.
   userLines: {
     user: string;
@@ -209,45 +209,54 @@ export async function loadCursorDashboard(
       select: { userEmail: true },
       orderBy: { userEmail: "asc" },
     }),
-    // Lines of code per user, from the Admin API daily-usage sync. The line
-    // counts live in UsageBucket.metadata; aggregate in JS (small N: users×7d).
-    // actorExternalId is the user's email (set by syncCursorTelemetry).
-    prisma.usageBucket.findMany({
+    // Lines of code per user, from the Admin API daily-usage sync — one
+    // AssistantDailyStat row per member per day; aggregate in JS (small N:
+    // users×7d). actorExternalId is the member's email (set by
+    // syncCursorTelemetry).
+    prisma.assistantDailyStat.findMany({
       where: {
         provider: "cursor",
-        bucketStart: { gte: since },
+        day: { gte: since },
         ...(userEmail ? { actorExternalId: userEmail } : {}),
       },
-      select: { actorExternalId: true, actorName: true, metadata: true },
+      select: {
+        actorExternalId: true,
+        actorName: true,
+        isActive: true,
+        linesAccepted: true,
+        linesAdded: true,
+        linesRemoved: true,
+      },
     }),
   ]);
 
   const live = liveAgg[0];
   const distinct = distinctAgg[0];
 
-  // ── Aggregate per-user lines from UsageBucket metadata ──
+  // ── Aggregate per-user lines from AssistantDailyStat columns ──
   const linesByUser = new Map<
     string,
     { acceptedLinesAdded: number; totalLinesAdded: number; totalLinesDeleted: number; activeDays: number }
   >();
   for (const row of usageRows) {
-    const md = (row.metadata ?? {}) as Record<string, unknown>;
-    const user = row.actorExternalId ?? row.actorName ?? "(unattributed)";
-    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    const user = row.actorExternalId || row.actorName || "(unattributed)";
     const agg = linesByUser.get(user) ?? {
       acceptedLinesAdded: 0,
       totalLinesAdded: 0,
       totalLinesDeleted: 0,
       activeDays: 0,
     };
-    agg.acceptedLinesAdded += n(md.acceptedLinesAdded);
-    agg.totalLinesAdded += n(md.totalLinesAdded);
-    agg.totalLinesDeleted += n(md.totalLinesDeleted);
-    agg.activeDays += 1;
+    agg.acceptedLinesAdded += row.linesAccepted ?? 0;
+    agg.totalLinesAdded += row.linesAdded ?? 0;
+    agg.totalLinesDeleted += row.linesRemoved ?? 0;
+    // Cursor lists every seat every day; only days it marks active count.
+    if (row.isActive !== false) agg.activeDays += 1;
     linesByUser.set(user, agg);
   }
   const userLines = [...linesByUser.entries()]
     .map(([user, v]) => ({ user, ...v }))
+    // Seats with no activity in the window would otherwise show as all-zero rows.
+    .filter((u) => u.activeDays > 0 || u.acceptedLinesAdded > 0 || u.totalLinesAdded > 0 || u.totalLinesDeleted > 0)
     .sort((a, b) => b.acceptedLinesAdded - a.acceptedLinesAdded);
 
   return {

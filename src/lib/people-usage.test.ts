@@ -5,7 +5,9 @@ import {
   normalizeEmail,
   parsePeopleUsageRange,
   resolvePeopleUsageWindow,
+  rollupAssistantDailyStats,
   summarizePeopleUsage,
+  type AssistantDailyStatRow,
   type PeopleUsageInputs,
 } from "./people-usage";
 
@@ -206,4 +208,157 @@ test("rows sort by total cost and the summary rolls up by surface", () => {
   const cursor = summary.bySurface.find((s) => s.surface === "cursor")!;
   assert.equal(cursor.people, 1);
   assert.equal(cursor.cost, 2);
+});
+
+// ── AssistantDailyStat rollup ─────────────────────────────────────────────
+
+const statRow = (over: Partial<AssistantDailyStatRow> & Pick<AssistantDailyStatRow, "provider" | "actorExternalId" | "day">): AssistantDailyStatRow => ({
+  isActive: null,
+  sessions: null,
+  requests: null,
+  linesAdded: null,
+  linesAccepted: null,
+  commits: null,
+  estimatedCost: null,
+  inputTokens: null,
+  outputTokens: null,
+  ...over,
+});
+
+test("rollup sums Claude Code admin stats per actor and keeps cache tokens out of the token total", () => {
+  const { claudeCodeAdmin, cursor } = rollupAssistantDailyStats([
+    statRow({
+      provider: "claude_code",
+      actorExternalId: "ada@example.com",
+      day: new Date("2026-09-10T00:00:00Z"),
+      sessions: 3,
+      linesAdded: 100,
+      commits: 2,
+      inputTokens: 1_000,
+      outputTokens: 500,
+      estimatedCost: 1.25,
+    }),
+    statRow({
+      provider: "claude_code",
+      actorExternalId: "ada@example.com",
+      day: new Date("2026-09-12T00:00:00Z"),
+      sessions: 1,
+      linesAdded: 20,
+      commits: 0,
+      inputTokens: 200,
+      outputTokens: 100,
+      estimatedCost: 0.5,
+    }),
+    statRow({
+      provider: "claude_code",
+      actorExternalId: "ci-key",
+      day: new Date("2026-09-11T00:00:00Z"),
+      sessions: 9,
+      estimatedCost: 4,
+    }),
+  ]);
+  assert.equal(cursor.length, 0);
+  assert.equal(claudeCodeAdmin.length, 2);
+  const ada = claudeCodeAdmin.find((a) => a.email === "ada@example.com")!;
+  assert.equal(ada.sessions, 4);
+  assert.equal(ada.linesAdded, 120);
+  assert.equal(ada.commits, 2);
+  assert.equal(ada.tokens, 1_800);
+  assert.equal(ada.cost, 1.75);
+  assert.equal(ada.lastActiveAt?.toISOString(), "2026-09-12T00:00:00.000Z");
+  // Non-email actors (API keys) are passed through; mergePeopleUsage sends
+  // them to unattributed.
+  const key = claudeCodeAdmin.find((a) => a.email === "ci-key")!;
+  assert.equal(key.sessions, 9);
+  const { rows, unattributed } = mergePeopleUsage({ otel: [], claudeCodeAdmin, cursor, proxy: [], identities: [] });
+  assert.equal(rows.length, 1);
+  assert.equal(unattributed.bySurface.claude_code.cost, 4);
+});
+
+test("rollup counts Cursor active days from isActive and only advances last-active on active days", () => {
+  const { cursor } = rollupAssistantDailyStats([
+    statRow({
+      provider: "cursor",
+      actorExternalId: "dev@example.com",
+      day: new Date("2026-09-08T00:00:00Z"),
+      isActive: true,
+      requests: 12,
+      linesAccepted: 40,
+      inputTokens: 300,
+      outputTokens: 100,
+      estimatedCost: 0.8,
+    }),
+    statRow({
+      provider: "cursor",
+      actorExternalId: "dev@example.com",
+      day: new Date("2026-09-09T00:00:00Z"),
+      isActive: false,
+      requests: 0,
+      linesAccepted: 0,
+      estimatedCost: 0,
+    }),
+    statRow({
+      provider: "cursor",
+      actorExternalId: "dev@example.com",
+      day: new Date("2026-09-07T00:00:00Z"),
+      isActive: null, // provider did not say — counts as active
+      requests: 3,
+      linesAccepted: 5,
+      estimatedCost: 0.2,
+    }),
+  ]);
+  assert.equal(cursor.length, 1);
+  const dev = cursor[0];
+  assert.equal(dev.requests, 15);
+  assert.equal(dev.tokens, 400);
+  assert.equal(dev.linesAccepted, 45);
+  assert.equal(dev.activeDays, 2);
+  assert.equal(dev.cost, 1);
+  assert.equal(dev.lastActiveAt?.toISOString(), "2026-09-08T00:00:00.000Z");
+});
+
+test("rollup keeps Cursor cost null until a day carried spend, and drops idle seats", () => {
+  const { cursor } = rollupAssistantDailyStats([
+    statRow({
+      provider: "cursor",
+      actorExternalId: "quiet@example.com",
+      day: new Date("2026-09-08T00:00:00Z"),
+      isActive: true,
+      requests: 4,
+      linesAccepted: 10,
+      estimatedCost: null,
+    }),
+    statRow({
+      provider: "cursor",
+      actorExternalId: "quiet@example.com",
+      day: new Date("2026-09-09T00:00:00Z"),
+      isActive: true,
+      requests: 2,
+      estimatedCost: null,
+    }),
+    // Every seat appears in Cursor's daily-usage feed every day; an idle
+    // member with nothing to report must not become a zero row.
+    statRow({
+      provider: "cursor",
+      actorExternalId: "idle@example.com",
+      day: new Date("2026-09-08T00:00:00Z"),
+      isActive: false,
+      requests: 0,
+      linesAccepted: 0,
+      estimatedCost: null,
+    }),
+  ]);
+  assert.deepEqual(cursor.map((c) => c.email), ["quiet@example.com"]);
+  assert.equal(cursor[0].cost, null);
+  assert.equal(cursor[0].activeDays, 2);
+  const { rows } = mergePeopleUsage({ otel: [], claudeCodeAdmin: [], cursor, proxy: [], identities: [] });
+  assert.equal(rows[0].cursorCost, null);
+  assert.deepEqual(rows[0].surfaces, ["cursor"]);
+});
+
+test("rollup ignores providers it does not know", () => {
+  const out = rollupAssistantDailyStats([
+    statRow({ provider: "copilot", actorExternalId: "x@example.com", day: new Date(), sessions: 1 }),
+  ]);
+  assert.deepEqual(out, { claudeCodeAdmin: [], cursor: [] });
 });
