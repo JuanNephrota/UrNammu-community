@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { writeProxyUsageBucket } from "./proxy-bucket-writer";
+import { bucketProviderFor } from "./proxy-providers";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -105,12 +106,7 @@ export async function logUsage(params: {
     // Mirror to normalized UsageBucket/CostBucket so proxy traffic appears on
     // the main Oversight dashboard immediately. See ./proxy-bucket-writer.ts.
     if (params.totalTokens > 0) {
-      const normalizedProvider =
-        params.provider === "claude"
-          ? "anthropic"
-          : params.provider === "chatgpt"
-            ? "openai"
-            : null;
+      const normalizedProvider = bucketProviderFor(params.provider);
       if (normalizedProvider) {
         await writeProxyUsageBucket({
           provider: normalizedProvider,

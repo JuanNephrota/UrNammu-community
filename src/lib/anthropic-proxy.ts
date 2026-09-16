@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
-import { prisma } from "./prisma";
-import { getSetting } from "./settings";
 import {
   analyzePromptRisk,
   analyzeText,
@@ -10,8 +8,14 @@ import {
 } from "./prompt-risk";
 import { recordSensitiveFinding } from "./sensitive-alerts";
 import { applyMcpPassthrough } from "./mcp-passthrough";
-import { writeProxyUsageBucket } from "./proxy-bucket-writer";
-import { secretsMatch } from "./secret-compare";
+import {
+  authenticateProxyRequest,
+  logProxyUsage as logUsage,
+  resolveProxyAttribution,
+  runMcpServerGate,
+} from "./proxy-common";
+import { runPolicyGate } from "./proxy-policy-gate";
+import { canonicalizeRequest, policyViewOf } from "./proxy-providers";
 import {
   accountTokens,
   calculateCost,
@@ -22,21 +26,14 @@ import {
   type TokenUsage,
 } from "./model-pricing";
 import {
-  evaluateServers,
   extractAnthropicStreamToolUse,
   extractAnthropicToolUses,
   extractDeclaredMcpServers,
-  restrictAllowedTools,
   summarizeMcpForMetadata,
   type DeclaredMcpServer,
   type ObservedToolUse,
 } from "./mcp-tool-governance";
-import {
-  loadAgentGovernance,
-  logMcpServerDenial,
-  recordToolActivity,
-  type AgentGovernance,
-} from "./mcp-tool-activity";
+import { recordToolActivity, type AgentGovernance } from "./mcp-tool-activity";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 const MESSAGES_ENDPOINT = "/v1/messages";
@@ -72,23 +69,8 @@ export async function handleAnthropicProxy(
   subpath: string
 ): Promise<NextResponse | Response> {
   // Authenticate proxy request
-  const proxyKey = req.headers.get("x-proxy-key");
-  const proxySecret =
-    (await getSetting("proxy_secret")) ?? process.env.PROXY_SECRET;
-
-  if (!proxySecret) {
-    return NextResponse.json(
-      { error: "Proxy not configured. Set PROXY_SECRET env var or configure in Settings." },
-      { status: 500 }
-    );
-  }
-
-  if (!secretsMatch(proxyKey, proxySecret)) {
-    return NextResponse.json(
-      { error: "Invalid x-proxy-key header" },
-      { status: 401 }
-    );
-  }
+  const authError = await authenticateProxyRequest(req);
+  if (authError) return authError;
 
   // Get the Anthropic API key
   const apiKey =
@@ -101,21 +83,11 @@ export async function handleAnthropicProxy(
     );
   }
 
-  // Tracking metadata
-  const department = req.headers.get("x-department") ?? null;
-  const userEmail = req.headers.get("x-user-email") ?? null;
-  const requestedSystemId = req.headers.get("x-ai-system-id");
-  const linkedSystem = requestedSystemId
-    ? await prisma.aISystem.findUnique({
-        where: { id: requestedSystemId },
-        select: { id: true },
-      })
-    : null;
-  // x-agent-id attributes the call to a registered agent (and, through it,
-  // to its parent system when x-ai-system-id is absent). The agent's MCP
-  // allowlists govern which servers/tools the call may use.
-  const agent = await loadAgentGovernance(req.headers.get("x-agent-id"));
-  const attributedSystemId = linkedSystem?.id ?? agent?.aiSystemId ?? null;
+  // Tracking metadata. x-agent-id attributes the call to a registered agent
+  // (and, through it, to its parent system when x-ai-system-id is absent);
+  // the agent's MCP allowlists govern which servers/tools the call may use.
+  const { department, userEmail, aiSystemId: attributedSystemId, agent } =
+    await resolveProxyAttribution(req);
 
   // Build the target URL
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
@@ -157,48 +129,41 @@ export async function handleAnthropicProxy(
   const promptRisk = await analyzePromptRisk(bodyJson);
   const isStreaming = bodyJson?.stream === true;
 
-  // ── MCP server allowlist gate ──
+  // ── MCP server allowlist gate ── (shared with the other providers)
   // Monitor mode records a dry-run denial and forwards; enforce mode returns
   // 403 for unlisted servers and narrows each server's allowed_tools so the
   // provider only exposes allowlisted tools to the model.
   const declaredServers: DeclaredMcpServer[] = extractDeclaredMcpServers(bodyJson);
-  if (agent && declaredServers.length > 0) {
-    const denied = evaluateServers(declaredServers, agent.config).filter((v) => !v.allowed);
-    if (denied.length > 0) {
-      await logMcpServerDenial({
-        provider: "claude",
-        model,
-        agent,
-        aiSystemId: attributedSystemId,
-        userEmail,
-        department,
-        deniedServers: denied.map((v) => v.server),
-        isStreaming,
-      });
-      if (agent.config.enforcement === "enforce") {
-        return NextResponse.json(
-          {
-            error: {
-              type: "policy_denied",
-              message: "Request blocked: an MCP server is not on this agent's allowlist. See `violations`.",
-              violations: denied.map((v) => ({
-                rule: "mcp_server_not_allowed",
-                message: `MCP server "${v.server.name}" is not allowlisted for agent "${agent.name}".`,
-                policy: `Agent MCP allowlist: ${agent.name}`,
-              })),
-            },
-          },
-          { status: 403 }
-        );
-      }
-    }
-    if (agent.config.enforcement === "enforce") {
-      const restricted = restrictAllowedTools(bodyJson, agent.config);
-      if (restricted.changed && restricted.body) {
-        bodyJson = restricted.body;
-        bodyText = JSON.stringify(restricted.body);
-      }
-    }
+  const mcpGate = await runMcpServerGate({
+    agent,
+    declaredServers,
+    provider: "claude",
+    model,
+    aiSystemId: attributedSystemId,
+    userEmail,
+    department,
+    isStreaming,
+    bodyJson,
+    bodyText,
+  });
+  if (mcpGate.response) return mcpGate.response;
+  bodyJson = mcpGate.bodyJson;
+  bodyText = mcpGate.bodyText;
+
+  // ── Policy-as-code gate ── same rule set the Azure proxy enforces, keyed on
+  // the global policy_enforcement_mode setting (off by default).
+  if (subpath === MESSAGES_ENDPOINT) {
+    const denied = await runPolicyGate({
+      provider: "claude",
+      model,
+      aiSystemId: attributedSystemId,
+      userEmail,
+      department,
+      policyBody: policyViewOf({ ...canonicalizeRequest("anthropic", bodyJson), model }),
+      isStreaming,
+      requestMetadata: { endpoint: subpath },
+    });
+    if (denied) return denied;
   }
 
   const startTime = Date.now();
@@ -572,100 +537,5 @@ async function extractStreamUsage(
     });
   } catch (err) {
     console.error("Failed to extract stream usage:", err);
-  }
-}
-
-async function logUsage(params: {
-  provider: string;
-  model: string;
-  department: string | null;
-  userEmail: string | null;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  /** Cache breakdown — already included in promptTokens; see model-pricing.ts. */
-  cacheReadTokens?: number;
-  cacheCreationTokens?: number;
-  cost: number;
-  flagged: boolean;
-  flagCategory?:
-    | "upstream_error"
-    | "proxy_error"
-    | "prompt_risk"
-    | "sensitive_response"
-    | null;
-  flagReason?: string | null;
-  /**
-   * Upstream `request-id` header. Null when the call never reached Anthropic.
-   * Joins the row to a Claude Code session trace — see the schema comment.
-   */
-  requestId?: string | null;
-  metadata?: Record<string, unknown>;
-}) {
-  try {
-    let userId: string | null = null;
-    if (params.userEmail) {
-      const user = await prisma.user.findUnique({
-        where: { email: params.userEmail },
-        select: { id: true },
-      });
-      userId = user?.id ?? null;
-    }
-
-    // aiSystemId is a real column (indexed with createdAt) as well as a
-    // metadata key — the Azure proxy sets both, so must we.
-    const aiSystemId =
-      typeof params.metadata?.aiSystemId === "string" ? params.metadata.aiSystemId : null;
-
-    await prisma.aPIUsageLog.create({
-      data: {
-        provider: params.provider,
-        model: params.model,
-        department: params.department,
-        aiSystemId,
-        userId,
-        promptTokens: params.promptTokens,
-        completionTokens: params.completionTokens,
-        totalTokens: params.totalTokens,
-        cost: params.cost,
-        flagged: params.flagged,
-        flagCategory: params.flagCategory ?? null,
-        flagReason: params.flagReason,
-        requestId: params.requestId ?? null,
-        promptMetadata: params.metadata
-          ? JSON.parse(JSON.stringify(params.metadata))
-          : undefined,
-      },
-    });
-
-    // Mirror to normalized UsageBucket/CostBucket so proxy traffic appears on
-    // the main Oversight dashboard immediately (not only on the legacy
-    // /oversight/usage page). Skip when no tokens were actually charged — the
-    // error-path logUsage calls pass zeros and should not create buckets.
-    if (params.totalTokens > 0) {
-      const normalizedProvider =
-        params.provider === "claude"
-          ? "anthropic"
-          : params.provider === "chatgpt"
-            ? "openai"
-            : null;
-      if (normalizedProvider) {
-        await writeProxyUsageBucket({
-          provider: normalizedProvider,
-          model: params.model,
-          userEmail: params.userEmail,
-          department: params.department,
-          promptTokens: params.promptTokens,
-          completionTokens: params.completionTokens,
-          totalTokens: params.totalTokens,
-          cacheReadTokens: params.cacheReadTokens ?? 0,
-          cacheCreationTokens: params.cacheCreationTokens ?? 0,
-          cost: params.cost,
-          aiSystemId,
-        });
-      }
-    }
-  } catch (err) {
-    console.error("Failed to log API usage:", err);
   }
 }

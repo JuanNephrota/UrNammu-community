@@ -303,3 +303,195 @@ test("usageMetadata exposes the breakdown and pricing status", () => {
   const matched = calculateCost("anthropic", "claude-haiku-4-5-20251001", usage);
   assert.equal(usageMetadata(usage, matched).pricingModel, "claude-haiku-4-5-20251001");
 });
+
+// ── Tier 3.7: Gemini, OpenAI Responses/Embeddings, Azure, Bedrock ──────────
+
+import {
+  mergeBedrockStreamUsage,
+  mergeGeminiStreamUsage,
+  mergeOpenAIResponsesStreamUsage,
+  normalizePricingProvider,
+  usageFromBedrockMetrics,
+  usageFromGemini,
+  usageFromOpenAIResponses,
+} from "./model-pricing";
+
+test("provider aliases pick the right pricing table", () => {
+  assert.equal(normalizePricingProvider("bedrock"), "anthropic");
+  assert.equal(normalizePricingProvider("azure_openai"), "openai");
+  assert.equal(normalizePricingProvider("gemini"), "google");
+  assert.equal(normalizePricingProvider("google"), "google");
+  assert.equal(resolveModelPrice("gemini", "gemini-2.5-pro")?.key, "gemini-2.5-pro");
+  assert.equal(resolveModelPrice("azure_openai", "gpt-4o-mini")?.key, "gpt-4o-mini");
+  assert.equal(
+    resolveModelPrice("bedrock", "anthropic.claude-sonnet-4-5-20250929-v1:0")?.key,
+    "claude-sonnet-4-5"
+  );
+  // Wrong table → no match.
+  assert.equal(resolveModelPrice("gemini", "gpt-4o"), null);
+  assert.equal(resolveModelPrice("openai", "gemini-2.5-pro"), null);
+});
+
+test("gemini and bedrock ids are canonicalised", () => {
+  assert.equal(normalizeModelId("models/gemini-2.5-flash"), "gemini-2.5-flash");
+  assert.equal(normalizeModelId("global.anthropic.claude-opus-4-6-v1:0"), "claude-opus-4-6");
+  assert.equal(normalizeModelId("apac.anthropic.claude-3-5-sonnet-20241022-v2:0"), "claude-3-5-sonnet-20241022");
+  assert.equal(resolveModelPrice("gemini", "models/gemini-2.5-flash-preview-05-20")?.key, "gemini-2.5-flash");
+  // `gemini-2.5-flash-lite` must not fall back to `gemini-2.5-flash`.
+  assert.equal(resolveModelPrice("gemini", "gemini-2.5-flash-lite-preview")?.key, "gemini-2.5-flash-lite");
+  // gpt-5.1 is its own key, never a `gpt-5` prefix match (no `-` boundary).
+  assert.equal(resolveModelPrice("openai", "gpt-5.1")?.key, "gpt-5.1");
+  assert.equal(resolveModelPrice("openai", "gpt-5.1-2025-11-13")?.key, "gpt-5.1");
+});
+
+test("openai responses usage: input_tokens includes cached tokens", () => {
+  const usage = usageFromOpenAIResponses({
+    input_tokens: 1200,
+    output_tokens: 300,
+    total_tokens: 1500,
+    input_tokens_details: { cached_tokens: 1000 },
+    output_tokens_details: { reasoning_tokens: 120 },
+  });
+  assert.deepEqual(usage, {
+    uncachedInputTokens: 200,
+    cacheReadTokens: 1000,
+    cacheCreationTokens: 0,
+    outputTokens: 300,
+  });
+  assert.equal(accountTokens(usage).promptTokens, 1200);
+  assert.deepEqual(usageFromOpenAIResponses(null), EMPTY_USAGE);
+  assert.equal(
+    usageFromOpenAIResponses({ input_tokens: 5, input_tokens_details: { cached_tokens: 50 } })
+      .uncachedInputTokens,
+    0
+  );
+});
+
+test("openai embeddings usage normalises through usageFromOpenAI (input only)", () => {
+  const usage = usageFromOpenAI({ prompt_tokens: 42, total_tokens: 42 });
+  assert.deepEqual(usage, {
+    uncachedInputTokens: 42,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+  });
+  const cost = calculateCost("openai", "text-embedding-3-small", {
+    ...EMPTY_USAGE,
+    uncachedInputTokens: 1_000_000,
+  });
+  close(cost.cost, 0.02);
+});
+
+test("openai responses stream: usage rides on response.completed only", () => {
+  let usage = EMPTY_USAGE;
+  usage = mergeOpenAIResponsesStreamUsage(usage, {
+    type: "response.output_text.delta",
+    delta: "hel",
+  });
+  assert.deepEqual(usage, EMPTY_USAGE);
+  usage = mergeOpenAIResponsesStreamUsage(usage, {
+    type: "response.created",
+    response: { usage: null },
+  });
+  assert.deepEqual(usage, EMPTY_USAGE);
+  usage = mergeOpenAIResponsesStreamUsage(usage, {
+    type: "response.completed",
+    response: {
+      usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 60 } },
+    },
+  });
+  assert.deepEqual(usage, {
+    uncachedInputTokens: 40,
+    cacheReadTokens: 60,
+    cacheCreationTokens: 0,
+    outputTokens: 20,
+  });
+  assert.deepEqual(
+    mergeOpenAIResponsesStreamUsage(EMPTY_USAGE, {
+      type: "response.incomplete",
+      response: { usage: { input_tokens: 7, output_tokens: 1 } },
+    }),
+    { uncachedInputTokens: 7, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 1 }
+  );
+});
+
+test("gemini usage: promptTokenCount includes cached; thoughts bill as output", () => {
+  const usage = usageFromGemini({
+    promptTokenCount: 5000,
+    cachedContentTokenCount: 4000,
+    candidatesTokenCount: 250,
+    thoughtsTokenCount: 700,
+    totalTokenCount: 5950,
+  });
+  assert.deepEqual(usage, {
+    uncachedInputTokens: 1000,
+    cacheReadTokens: 4000,
+    cacheCreationTokens: 0,
+    outputTokens: 950,
+  });
+  const cost = calculateCost("gemini", "gemini-2.5-pro", {
+    uncachedInputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000,
+    cacheCreationTokens: 0,
+    outputTokens: 1_000_000,
+  });
+  // 1.25 + 0.31 + 10
+  close(cost.cost, 11.56);
+  assert.deepEqual(usageFromGemini(undefined), EMPTY_USAGE);
+});
+
+test("gemini stream: cumulative usageMetadata, max per field", () => {
+  let usage = EMPTY_USAGE;
+  usage = mergeGeminiStreamUsage(usage, {
+    candidates: [{ content: { parts: [{ text: "Hel" }] } }],
+    usageMetadata: { promptTokenCount: 12, totalTokenCount: 12 },
+  });
+  assert.deepEqual(usage, { ...EMPTY_USAGE, uncachedInputTokens: 12 });
+  usage = mergeGeminiStreamUsage(usage, {
+    candidates: [{ content: { parts: [{ text: "lo" }] } }],
+    usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 30, totalTokenCount: 42 },
+  });
+  // A trailing chunk without counts cannot zero the accumulator.
+  usage = mergeGeminiStreamUsage(usage, { usageMetadata: { promptTokenCount: 12 } });
+  usage = mergeGeminiStreamUsage(usage, { candidates: [] });
+  assert.deepEqual(usage, {
+    uncachedInputTokens: 12,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 30,
+  });
+});
+
+test("bedrock stream: anthropic usage first, invocationMetrics as fallback", () => {
+  let usage = mergeBedrockStreamUsage(EMPTY_USAGE, {
+    type: "message_start",
+    message: { usage: { input_tokens: 25, output_tokens: 1 } },
+  });
+  usage = mergeBedrockStreamUsage(usage, {
+    type: "message_delta",
+    usage: { output_tokens: 80 },
+  });
+  usage = mergeBedrockStreamUsage(usage, {
+    type: "message_stop",
+    "amazon-bedrock-invocationMetrics": { inputTokenCount: 999, outputTokenCount: 999 },
+  });
+  assert.deepEqual(usage, {
+    uncachedInputTokens: 25,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 80,
+  });
+  // With no Anthropic usage fields at all, the metrics fill in.
+  assert.deepEqual(
+    mergeBedrockStreamUsage(EMPTY_USAGE, {
+      type: "message_stop",
+      "amazon-bedrock-invocationMetrics": {
+        inputTokenCount: 10,
+        outputTokenCount: 4,
+        cacheReadInputTokenCount: 6,
+      },
+    }),
+    { uncachedInputTokens: 10, cacheReadTokens: 6, cacheCreationTokens: 0, outputTokens: 4 }
+  );
+  assert.deepEqual(usageFromBedrockMetrics(null), EMPTY_USAGE);
+});

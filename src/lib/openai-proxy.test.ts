@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   readOpenAIUpstreamPayload,
   sanitizeOpenAIUpstreamError,
-} from "./route";
+} from "./openai-proxy";
 
 test("readOpenAIUpstreamPayload preserves SSE responses as streams", async () => {
   const response = new Response("data: {\"id\":\"evt_1\"}\n\n", {

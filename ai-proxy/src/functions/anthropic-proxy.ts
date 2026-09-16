@@ -1,29 +1,25 @@
 import { app, HttpRequest, HttpResponseInit } from "@azure/functions";
 import { Readable, PassThrough } from "stream";
 import { accountTokens, calculateCost, usageFromAnthropic, usageMetadata } from "../lib/pricing";
-import { logPolicyDenial, logUsage } from "../lib/db";
+import { logUsage } from "../lib/db";
 import { extractAnthropicStreamUsage } from "../lib/stream-parser";
 import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
 import { applyMcpPassthrough } from "../lib/mcp-passthrough";
-import { secretsMatch } from "../lib/secret-compare";
-import {
-  loadEnforcementMode,
-  loadPoliciesForSystem,
-  type EnforcementMode,
-  type LoadedPolicy,
-} from "../lib/policy-loader";
-import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
+import { recordToolActivity } from "../lib/tool-activity";
 import { computePromptHash, extractUserPromptText } from "../lib/prompt-hash";
 import { loadPromptHashSalt } from "../lib/prompt-hash-salt";
-import { loadAgent, type LoadedAgent } from "../lib/agent-loader";
-import { recordToolActivity, MCP_SERVER_DENIAL_RULE } from "../lib/tool-activity";
 import {
-  evaluateServers,
   extractAnthropicToolUses,
   extractDeclaredMcpServers,
-  restrictAllowedTools,
   summarizeMcpForMetadata,
 } from "../lib/mcp-tool-governance";
+import { canonicalizeRequest, policyViewOf } from "../lib/proxy-providers";
+import {
+  authenticate,
+  resolveAttribution,
+  runMcpServerGate,
+  runPolicyGate,
+} from "../lib/proxy-gate";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 const MESSAGES_ENDPOINT = "/v1/messages";
@@ -41,15 +37,8 @@ function upstreamRequestId(res: Response): string | null {
 
 async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   // Auth
-  const proxyKey = req.headers.get("x-proxy-key");
-  const proxySecret = process.env.PROXY_SECRET;
-
-  if (!proxySecret) {
-    return { status: 500, jsonBody: { error: "PROXY_SECRET not configured" } };
-  }
-  if (!secretsMatch(proxyKey, proxySecret)) {
-    return { status: 401, jsonBody: { error: "Invalid x-proxy-key" } };
-  }
+  const authError = authenticate(req);
+  if (authError) return authError;
 
   // API key
   const apiKey = req.headers.get("x-api-key") ?? process.env.ANTHROPIC_API_KEY;
@@ -58,33 +47,12 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   }
 
   // Tracking — x-ai-system-id links proxy traffic to a governed system in
-  // the registry, matching the Vercel fallback proxy's behavior.
-  const department = req.headers.get("x-department") ?? null;
-  const userEmail = req.headers.get("x-user-email") ?? null;
-
-  // x-agent-id attributes the call to a registered agent whose MCP allowlists
-  // govern the request. Fail closed like the policy gate: if the agent record
-  // cannot be loaded (DB outage, cold cache) refuse rather than forward
-  // unenforced.
-  const requestedAgentId = req.headers.get("x-agent-id") ?? null;
-  let agent: LoadedAgent | null = null;
-  if (requestedAgentId) {
-    try {
-      agent = await loadAgent(requestedAgentId);
-    } catch (err) {
-      console.error("Agent governance unavailable — failing closed:", err);
-      return {
-        status: 503,
-        jsonBody: {
-          error: {
-            type: "agent_unavailable",
-            message: "Agent governance state could not be loaded; request refused. Retry shortly.",
-          },
-        },
-      };
-    }
-  }
-  const aiSystemId = req.headers.get("x-ai-system-id") ?? agent?.aiSystemId ?? null;
+  // the registry; x-agent-id attributes the call to a registered agent whose
+  // MCP allowlists govern the request (fails closed when the agent record
+  // cannot be loaded). Shared with the other provider functions.
+  const { attribution, response: attributionError } = await resolveAttribution(req);
+  if (attributionError) return attributionError;
+  const { department, userEmail, aiSystemId, agent } = attribution;
 
   // Build target URL from route params
   const url = new URL(req.url);
@@ -130,136 +98,41 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     extractUserPromptText(bodyJson)
   );
 
-  // ── MCP server allowlist gate ──
+  // ── MCP server allowlist gate ── (shared with the other providers)
   // Monitor mode records a dry-run denial and forwards; enforce mode returns
   // 403 for unlisted servers and narrows allowed_tools before forwarding.
   const declaredServers = extractDeclaredMcpServers(bodyJson);
-  if (agent && declaredServers.length > 0) {
-    const denied = evaluateServers(declaredServers, agent.config).filter((v) => !v.allowed);
-    if (denied.length > 0) {
-      const agentName = agent.name;
-      const violations = denied.map((v) => ({
-        ruleKey: MCP_SERVER_DENIAL_RULE,
-        message: `MCP server "${v.server.name}"${v.server.host ? ` (${v.server.host})` : ""} is not on the allowlist for agent "${agentName}".`,
-        policyId: agent.id,
-        policyName: `Agent MCP allowlist: ${agentName}`,
-      }));
-      void logPolicyDenial({
-        provider: "claude",
-        model,
-        aiSystemId,
-        userEmail,
-        department,
-        mode: agent.config.enforcement === "enforce" ? "enforced" : "dryrun",
-        policyIds: [],
-        reasons: violations,
-        promptExcerpt: null,
-        requestMetadata: {
-          isStreaming,
-          agentId: agent.id,
-          deniedServers: denied.map((v) => ({ name: v.server.name, host: v.server.host })),
-        },
-      }).catch((err) => {
-        console.error("logPolicyDenial (mcp) failed:", err);
-      });
-      if (agent.config.enforcement === "enforce") {
-        return {
-          status: 403,
-          jsonBody: {
-            error: {
-              type: "policy_denied",
-              message: "Request blocked: an MCP server is not on this agent's allowlist. See `violations`.",
-              violations: violations.map((v) => ({ rule: v.ruleKey, message: v.message, policy: v.policyName })),
-            },
-          },
-        };
-      }
-    }
-    if (agent.config.enforcement === "enforce") {
-      const restricted = restrictAllowedTools(bodyJson, agent.config);
-      if (restricted.changed && restricted.body) {
-        bodyJson = restricted.body;
-        bodyText = JSON.stringify(restricted.body);
-      }
-    }
-  }
+  const mcpGate = await runMcpServerGate({
+    agent,
+    declaredServers,
+    provider: "claude",
+    model,
+    aiSystemId,
+    userEmail,
+    department,
+    isStreaming,
+    bodyJson,
+    bodyText,
+  });
+  if (mcpGate.response) return mcpGate.response;
+  bodyJson = mcpGate.bodyJson;
+  bodyText = mcpGate.bodyText;
 
-  // ── Policy enforcement gate ──
+  // ── Policy enforcement gate ── (shared; see proxy-gate.ts for mode semantics)
   // Off: skip entirely. Dryrun: evaluate + record denials but forward.
   // Enforce: evaluate + return 403 on blocking violations.
-  // No aiSystemId: nothing to evaluate against (proxy still logs usage).
-  if (aiSystemId) {
-    // Fail closed: if policy state can't be loaded (DB outage with a cold
-    // cache), refuse the request rather than forwarding it unenforced.
-    let mode: EnforcementMode = "off";
-    let policies: LoadedPolicy[] = [];
-    try {
-      mode = await loadEnforcementMode();
-      if (mode !== "off") policies = await loadPoliciesForSystem(aiSystemId);
-    } catch (err) {
-      console.error("Policy state unavailable — failing closed:", err);
-      return {
-        status: 503,
-        jsonBody: {
-          error: {
-            type: "policy_unavailable",
-            message:
-              "Policy enforcement state could not be loaded; request refused. Retry shortly.",
-          },
-        },
-      };
-    }
-    if (mode !== "off") {
-      if (policies.length) {
-        const evaluation = await evaluateRequest({
-          policies,
-          aiSystemId,
-          model,
-          bodyJson,
-        });
-
-        if (evaluation.decision === "deny") {
-          const promptExcerpt = extractPromptText(bodyJson).slice(0, 1000);
-          const policyIds = Array.from(
-            new Set(evaluation.violations.map((v) => v.policyId))
-          );
-
-          void logPolicyDenial({
-            provider: "claude",
-            model,
-            aiSystemId,
-            userEmail,
-            department,
-            mode: mode === "enforce" ? "enforced" : "dryrun",
-            policyIds,
-            reasons: evaluation.violations,
-            promptExcerpt: promptExcerpt || null,
-            requestMetadata: { isStreaming },
-          }).catch((err) => {
-            console.error("logPolicyDenial failed:", err);
-          });
-
-          if (mode === "enforce") {
-            return {
-              status: 403,
-              jsonBody: {
-                error: {
-                  type: "policy_denied",
-                  message:
-                    "Request blocked by governance policy. See `violations` for details.",
-                  violations: evaluation.violations.map((v) => ({
-                    rule: v.ruleKey,
-                    message: v.message,
-                    policy: v.policyName,
-                  })),
-                },
-              },
-            };
-          }
-          // dryrun falls through to forwarding
-        }
-      }
-    }
+  if (subpath === MESSAGES_ENDPOINT) {
+    const denied = await runPolicyGate({
+      provider: "claude",
+      model,
+      aiSystemId,
+      userEmail,
+      department,
+      policyBody: policyViewOf({ ...canonicalizeRequest("anthropic", bodyJson), model }),
+      isStreaming,
+      requestMetadata: { endpoint: subpath },
+    });
+    if (denied) return denied;
   }
 
   // Forward to Anthropic
@@ -327,6 +200,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     // complete — accepted limitation until telemetry moves to a queue.
     const extractPromise = extractAnthropicStreamUsage(logPass, {
       provider: "claude",
+      pricingProvider: "anthropic",
       model,
       department,
       userEmail,

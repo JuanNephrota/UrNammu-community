@@ -8,7 +8,8 @@ import { prisma } from "./db";
  */
 
 type WriteParams = {
-  provider: "anthropic" | "openai";
+  /** Normalized bucket provider — see `bucketProviderFor` in proxy-providers.ts. */
+  provider: string;
   model: string;
   userEmail: string | null;
   department: string | null;

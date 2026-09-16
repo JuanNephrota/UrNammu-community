@@ -3,7 +3,8 @@
  *
  * MIRRORED FILE — `src/lib/model-pricing.ts` and `ai-proxy/src/lib/pricing.ts`
  * must stay byte-identical. The Azure Functions project cannot import from the
- * Next.js app, so the file is copied by hand; CI does not enforce it yet.
+ * Next.js app, so the file is copied by hand; `npm run check:mirror-drift`
+ * (scripts/check-mirror-drift.mjs, wired into CI) fails when they differ.
  *
  * Token accounting convention (matches `src/lib/provider-telemetry.ts`, the
  * Anthropic admin-sync writer, so proxy_live rows and admin-sync rows in
@@ -12,7 +13,15 @@
  *   - Anthropic reports `input_tokens` EXCLUDING cached tokens. Total prompt
  *     size = input_tokens + cache_read_input_tokens + cache_creation_input_tokens.
  *   - OpenAI reports `prompt_tokens` INCLUDING cached tokens;
- *     `prompt_tokens_details.cached_tokens` is the cached subset.
+ *     `prompt_tokens_details.cached_tokens` is the cached subset. The
+ *     Responses API uses `input_tokens` / `output_tokens` /
+ *     `input_tokens_details.cached_tokens` with the same inclusion rule;
+ *     Embeddings report only `prompt_tokens`.
+ *   - Gemini reports `usageMetadata.promptTokenCount` INCLUDING cached tokens;
+ *     `cachedContentTokenCount` is the cached subset and `thoughtsTokenCount`
+ *     is billed as output alongside `candidatesTokenCount`.
+ *   - Bedrock serves the Anthropic Messages API unchanged (same `usage`
+ *     object); its `amazon-bedrock-invocationMetrics` are a fallback only.
  *
  *   We normalise both into a `TokenUsage` of four disjoint buckets
  *   (uncachedInputTokens, cacheReadTokens, cacheCreationTokens, outputTokens)
@@ -33,10 +42,22 @@
  * `null` and report `pricingMatched: false` — we never silently bill a default.
  */
 
-export type PricingProvider = "anthropic" | "openai";
+export type PricingProvider = "anthropic" | "openai" | "google";
 
-/** Legacy provider names used by `APIUsageLog.provider` are accepted too. */
-export type PricingProviderInput = PricingProvider | "claude" | "chatgpt";
+/**
+ * Provider names used by `APIUsageLog.provider` are accepted too: `claude` /
+ * `bedrock` price off the Anthropic table (Bedrock list prices for Anthropic
+ * models match first-party), `chatgpt` / `azure_openai` off the OpenAI table
+ * (Azure OpenAI pay-as-you-go matches OpenAI list; deployments are mapped to
+ * model ids before lookup), `gemini` off the Google table.
+ */
+export type PricingProviderInput =
+  | PricingProvider
+  | "claude"
+  | "chatgpt"
+  | "azure_openai"
+  | "gemini"
+  | "bedrock";
 
 /** USD per million tokens. */
 export type ModelPrice = {
@@ -87,6 +108,18 @@ const anthropic = (
 ): ModelPrice => ({ input, output, cacheRead, cacheWrite: input * 1.25 });
 
 const openai = (input: number, output: number, cacheRead = input * 0.5): ModelPrice => ({
+  input,
+  output,
+  cacheRead,
+  cacheWrite: input,
+});
+
+/**
+ * Gemini context caching bills storage per hour rather than a per-token write
+ * premium, so `cacheWrite` equals `input` and is never charged (Gemini reports
+ * no cache-creation tokens).
+ */
+const gemini = (input: number, output: number, cacheRead = input * 0.25): ModelPrice => ({
   input,
   output,
   cacheRead,
@@ -146,21 +179,70 @@ const OPENAI_PRICING: Record<string, ModelPrice> = {
   "o1-mini": openai(3.0, 12.0, 1.5),
   o3: openai(2.0, 8.0, 0.5),
   "o4-mini": openai(1.1, 4.4, 0.275),
+  // Later 5.x snapshots and the Codex variant (Responses API).
+  "gpt-5.1": openai(1.25, 10.0, 0.125),
+  "gpt-5.2": openai(1.75, 14.0, 0.175),
+  "gpt-5-codex": openai(1.25, 10.0, 0.125),
+  // Embeddings: input only. `output` is never charged because the Embeddings
+  // API reports no completion tokens.
+  "text-embedding-3-small": openai(0.02, 0.0, 0.02),
+  "text-embedding-3-large": openai(0.13, 0.0, 0.13),
+  "text-embedding-ada-002": openai(0.1, 0.0, 0.1),
+};
+
+/**
+ * Gemini Developer API list prices (standard tier, prompts at or below the
+ * 200k-token threshold; longer prompts bill higher and are under-counted
+ * here). Keys are bare model ids — `models/gemini-2.5-pro` and dated
+ * snapshots (`gemini-2.5-flash-preview-05-20`) resolve by prefix.
+ */
+const GEMINI_PRICING: Record<string, ModelPrice> = {
+  "gemini-3-pro": gemini(2.0, 12.0, 0.2),
+  "gemini-3-flash": gemini(0.5, 3.0, 0.05),
+  "gemini-2.5-pro": gemini(1.25, 10.0, 0.31),
+  "gemini-2.5-flash": gemini(0.3, 2.5, 0.075),
+  "gemini-2.5-flash-lite": gemini(0.1, 0.4, 0.025),
+  "gemini-2.0-flash": gemini(0.1, 0.4, 0.025),
+  "gemini-2.0-flash-lite": gemini(0.075, 0.3, 0.01875),
+  "gemini-1.5-pro": gemini(1.25, 5.0, 0.3125),
+  "gemini-1.5-flash": gemini(0.075, 0.3, 0.01875),
+  "gemini-1.5-flash-8b": gemini(0.0375, 0.15, 0.01),
+  // Embeddings: input only (see the OpenAI embeddings note above).
+  "gemini-embedding-001": gemini(0.15, 0.0, 0.15),
+};
+
+const PRICING_TABLES: Record<PricingProvider, Record<string, ModelPrice>> = {
+  anthropic: ANTHROPIC_PRICING,
+  openai: OPENAI_PRICING,
+  google: GEMINI_PRICING,
 };
 
 export function normalizePricingProvider(provider: PricingProviderInput): PricingProvider {
-  return provider === "claude" || provider === "anthropic" ? "anthropic" : "openai";
+  switch (provider) {
+    case "claude":
+    case "anthropic":
+    case "bedrock":
+      return "anthropic";
+    case "gemini":
+    case "google":
+      return "google";
+    default:
+      return "openai";
+  }
 }
 
 /**
- * Canonicalise a model id before lookup: lower-case, strip a Bedrock-style
- * `anthropic.` / `us.anthropic.` prefix and a Vertex-style `@version` suffix.
+ * Canonicalise a model id before lookup: lower-case; strip a Gemini REST
+ * `models/` prefix; strip a Bedrock-style `anthropic.` prefix with its
+ * optional inference-profile region (`us.`, `eu.`, `apac.`, `global.`) and
+ * `-v1:0` version suffix; strip a Vertex-style `@version` suffix.
  */
 export function normalizeModelId(model: string): string {
-  const lowered = model
-    .trim()
-    .toLowerCase()
-    .replace(/^(?:[a-z]{2,3}\.)?anthropic\./, "");
+  let lowered = model.trim().toLowerCase();
+  if (lowered.startsWith("models/")) lowered = lowered.slice("models/".length);
+  lowered = lowered.replace(/^(?:[a-z]{2,6}\.)?anthropic\./, "");
+  // Bedrock version suffix (`anthropic.claude-sonnet-4-5-20250929-v1:0`).
+  lowered = lowered.replace(/-v\d+:\d+$/, "");
   // Drop a Vertex-style `@version` suffix. Plain indexOf rather than a regex:
   // the id comes from client input and `/@.*$/` is flagged as polynomial
   // backtracking by CodeQL.
@@ -177,8 +259,7 @@ export function resolveModelPrice(
   provider: PricingProviderInput,
   model: string
 ): { key: string; price: ModelPrice } | null {
-  const table =
-    normalizePricingProvider(provider) === "anthropic" ? ANTHROPIC_PRICING : OPENAI_PRICING;
+  const table = PRICING_TABLES[normalizePricingProvider(provider)];
   const id = normalizeModelId(model);
   if (!id) return null;
 
@@ -248,7 +329,12 @@ export function usageFromAnthropic(usage: AnthropicUsagePayload | null | undefin
   };
 }
 
-/** Non-streaming OpenAI `usage` → TokenUsage. `prompt_tokens` includes cached tokens. */
+/**
+ * Non-streaming OpenAI Chat Completions / legacy Completions `usage` →
+ * TokenUsage. `prompt_tokens` includes cached tokens. Embeddings responses
+ * carry the same shape with no `completion_tokens`, so they normalise here
+ * too (input only).
+ */
 export function usageFromOpenAI(usage: OpenAIUsagePayload | null | undefined): TokenUsage {
   const prompt = num(usage?.prompt_tokens);
   const cached = Math.min(prompt, num(usage?.prompt_tokens_details?.cached_tokens));
@@ -257,6 +343,74 @@ export function usageFromOpenAI(usage: OpenAIUsagePayload | null | undefined): T
     cacheReadTokens: cached,
     cacheCreationTokens: 0,
     outputTokens: num(usage?.completion_tokens),
+  };
+}
+
+export type OpenAIResponsesUsagePayload = {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  total_tokens?: number | null;
+  input_tokens_details?: { cached_tokens?: number | null } | null;
+  output_tokens_details?: { reasoning_tokens?: number | null } | null;
+};
+
+/**
+ * OpenAI Responses API `usage` → TokenUsage. `input_tokens` includes cached
+ * tokens (`input_tokens_details.cached_tokens`); `output_tokens` already
+ * includes reasoning tokens.
+ */
+export function usageFromOpenAIResponses(
+  usage: OpenAIResponsesUsagePayload | null | undefined
+): TokenUsage {
+  const input = num(usage?.input_tokens);
+  const cached = Math.min(input, num(usage?.input_tokens_details?.cached_tokens));
+  return {
+    uncachedInputTokens: input - cached,
+    cacheReadTokens: cached,
+    cacheCreationTokens: 0,
+    outputTokens: num(usage?.output_tokens),
+  };
+}
+
+export type GeminiUsageMetadata = {
+  promptTokenCount?: number | null;
+  candidatesTokenCount?: number | null;
+  cachedContentTokenCount?: number | null;
+  thoughtsTokenCount?: number | null;
+  totalTokenCount?: number | null;
+};
+
+/**
+ * Gemini `usageMetadata` → TokenUsage. `promptTokenCount` includes the cached
+ * subset (`cachedContentTokenCount`); thinking tokens are billed as output.
+ */
+export function usageFromGemini(usage: GeminiUsageMetadata | null | undefined): TokenUsage {
+  const prompt = num(usage?.promptTokenCount);
+  const cached = Math.min(prompt, num(usage?.cachedContentTokenCount));
+  return {
+    uncachedInputTokens: prompt - cached,
+    cacheReadTokens: cached,
+    cacheCreationTokens: 0,
+    outputTokens: num(usage?.candidatesTokenCount) + num(usage?.thoughtsTokenCount),
+  };
+}
+
+export type BedrockInvocationMetrics = {
+  inputTokenCount?: number | null;
+  outputTokenCount?: number | null;
+  cacheReadInputTokenCount?: number | null;
+  cacheWriteInputTokenCount?: number | null;
+};
+
+/** Bedrock `amazon-bedrock-invocationMetrics` → TokenUsage (Anthropic convention). */
+export function usageFromBedrockMetrics(
+  metrics: BedrockInvocationMetrics | null | undefined
+): TokenUsage {
+  return {
+    uncachedInputTokens: num(metrics?.inputTokenCount),
+    cacheReadTokens: num(metrics?.cacheReadInputTokenCount),
+    cacheCreationTokens: num(metrics?.cacheWriteInputTokenCount),
+    outputTokens: num(metrics?.outputTokenCount),
   };
 }
 
@@ -301,6 +455,62 @@ export function mergeOpenAIStreamUsage(current: TokenUsage, chunk: unknown): Tok
   const usage = (chunk as { usage?: OpenAIUsagePayload | null }).usage;
   if (!usage || typeof usage !== "object") return current;
   return usageFromOpenAI(usage);
+}
+
+/**
+ * Fold one OpenAI Responses SSE event into a running TokenUsage. Usage rides
+ * on the terminal `response.completed` event (also `response.incomplete` /
+ * `response.failed`, which report what was billed) as `response.usage`; no
+ * `stream_options` opt-in is needed, so the proxy never injects anything.
+ */
+export function mergeOpenAIResponsesStreamUsage(current: TokenUsage, event: unknown): TokenUsage {
+  if (!event || typeof event !== "object") return current;
+  const e = event as { type?: string; response?: { usage?: OpenAIResponsesUsagePayload | null } | null };
+  if (
+    e.type !== "response.completed" &&
+    e.type !== "response.incomplete" &&
+    e.type !== "response.failed"
+  ) {
+    return current;
+  }
+  const usage = e.response?.usage;
+  if (!usage || typeof usage !== "object") return current;
+  return usageFromOpenAIResponses(usage);
+}
+
+/**
+ * Fold one Gemini `streamGenerateContent` chunk into a running TokenUsage.
+ * Chunks carry a cumulative `usageMetadata`; the final chunk has the totals.
+ * Each field is taken as the max seen so a trailing chunk that omits a count
+ * cannot zero it.
+ */
+export function mergeGeminiStreamUsage(current: TokenUsage, chunk: unknown): TokenUsage {
+  if (!chunk || typeof chunk !== "object") return current;
+  const usage = (chunk as { usageMetadata?: GeminiUsageMetadata | null }).usageMetadata;
+  if (!usage || typeof usage !== "object") return current;
+  const next = usageFromGemini(usage);
+  return {
+    uncachedInputTokens: Math.max(current.uncachedInputTokens, next.uncachedInputTokens),
+    cacheReadTokens: Math.max(current.cacheReadTokens, next.cacheReadTokens),
+    cacheCreationTokens: Math.max(current.cacheCreationTokens, next.cacheCreationTokens),
+    outputTokens: Math.max(current.outputTokens, next.outputTokens),
+  };
+}
+
+/**
+ * Fold one decoded Bedrock `invoke-with-response-stream` event into a running
+ * TokenUsage. The events are the Anthropic Messages stream events, so
+ * `message_start` / `message_delta` carry usage as usual; the trailing
+ * `message_stop` also carries `amazon-bedrock-invocationMetrics`, used only
+ * when the Anthropic usage fields were absent.
+ */
+export function mergeBedrockStreamUsage(current: TokenUsage, event: unknown): TokenUsage {
+  const next = mergeAnthropicStreamUsage(current, event);
+  if (!event || typeof event !== "object") return next;
+  const metrics = (event as Record<string, unknown>)["amazon-bedrock-invocationMetrics"];
+  if (!metrics || typeof metrics !== "object") return next;
+  if (totalInputTokens(next) + next.outputTokens > 0) return next;
+  return usageFromBedrockMetrics(metrics as BedrockInvocationMetrics);
 }
 
 /**

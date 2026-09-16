@@ -90,6 +90,10 @@ export const HELP_HINTS = {
     "Usage is attributed via optional headers: x-user-email (person), x-department (cost center), x-ai-system-id (registry link).",
   proxy_user_email:
     "Set PROXY_USER_EMAIL in your shell profile (from git config user.email) so Claude Code usage is attributed to you.",
+  proxy_azure_deployments:
+    "Azure OpenAI paths carry a deployment name, not a model id. Map each deployment to its model (JSON) so usage prices correctly; unmapped deployments price by name.",
+  proxy_bedrock_auth:
+    "Bedrock calls are forwarded with the client's own AWS credentials and only logged. Bedrock API keys (Bearer) work as-is; SigV4 signatures must be computed for the Bedrock host, not the proxy.",
 
   // --- Oversight ---
   spend_budget_scope:

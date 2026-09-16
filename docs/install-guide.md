@@ -498,7 +498,7 @@ Vercel → Project → Domains → add your domain. Update `NEXTAUTH_URL` to mat
 
 ## 7. API Proxy Deployment (Azure Functions)
 
-The `ai-proxy/` directory is a standalone Azure Functions app that transparently proxies Claude and OpenAI traffic and logs usage to the same Postgres database. Deploying it is **optional** — Vercel has fallback proxy routes at `/api/proxy/*` — but Azure Functions is recommended for long-running streams because it supports a 10-minute function timeout versus Vercel's shorter timeouts.
+The `ai-proxy/` directory is a standalone Azure Functions app that transparently proxies Claude, OpenAI, Azure OpenAI, Gemini and Amazon Bedrock traffic and logs usage to the same Postgres database. Deploying it is **optional** — Vercel has fallback proxy routes at `/api/proxy/*` — but Azure Functions is recommended for long-running streams because it supports a 10-minute function timeout versus Vercel's shorter timeouts.
 
 ### 7.1 Prerequisites
 
@@ -522,9 +522,12 @@ Edit `ai-proxy/local.settings.json` for local runs, or set in Azure Function App
 | `DATABASE_URL` | **Same** Postgres the main app uses. The proxy writes to `APIUsageLog` / `UsageBucket`. |
 | `PROXY_SECRET` | Shared secret — must match `PROXY_SECRET` in the main app. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Provider credentials the proxy uses when clients route through it. |
+| `AZURE_OPENAI_ENDPOINT` | Optional. Azure OpenAI resource endpoint (`https://<resource>.openai.azure.com`) the `/api/proxy/azure-openai` route forwards to. The `azure_openai_endpoint` setting (Settings → Proxy Setup) takes precedence; clients can also send `x-azure-openai-resource`. |
+| `AZURE_OPENAI_DEPLOYMENTS` | Optional. JSON deployment → model map (`{"gpt4o-prod":"gpt-4o"}`) so Azure traffic prices correctly. The `azure_openai_deployments` setting takes precedence. |
+| `BEDROCK_REGION` (or `AWS_REGION`) | Optional default region for `/api/proxy/bedrock` when the client sends neither `x-aws-region` nor a SigV4 signature. |
 | `PROMPT_HASH_SALT` | Optional. Salt for the prompt correlation hash written to `APIUsageLog.promptMetadata.promptHash`. The proxy first reads the `prompt_hash_salt` setting from the shared database, then this variable, then `NEXTAUTH_SECRET`; the value must be the one the main app uses or hashes will not line up. Unset everywhere → `promptHash` is `null`. |
 
-Model prices live in `ai-proxy/src/lib/pricing.ts`, a byte-for-byte mirror of the app's `src/lib/model-pricing.ts`. When you add a model, edit both and redeploy the proxy; a model missing from the table is logged with cost `0` and `pricingMatched: false` rather than a guessed price.
+Model prices live in `ai-proxy/src/lib/pricing.ts`, a byte-for-byte mirror of the app's `src/lib/model-pricing.ts` (Anthropic, OpenAI and Gemini tables; Azure OpenAI prices through the OpenAI table via the deployment map, Bedrock through the Anthropic table after model-id normalisation). When you add a model, edit both and redeploy the proxy — `npm run check:mirror-drift` fails CI if the copies differ. A model missing from the table is logged with cost `0` and `pricingMatched: false` rather than a guessed price.
 
 When proxying traffic, UrNammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default. Every proxied request also records a salted `promptHash` of the user-authored prompt so the same prompt can be correlated with alerts and Claude Code / Cursor telemetry without storing the prompt itself.
 
@@ -548,12 +551,23 @@ func azure functionapp publish <your-function-app-name> --build remote
 
 ### 7.6 Wire clients to the proxy
 
-Direct SDK calls can point at the proxy instead of the provider:
+Direct SDK calls point at the proxy instead of the provider. Every route is path-based — the SDK appends its own paths — so set the base URL / endpoint and keep everything else as-is. The same paths exist on the Vercel fallback under `<platform-url>/api/proxy/...`:
 
-- Claude: `https://<your-function-app>.azurewebsites.net/api/anthropic-proxy`
-- OpenAI: `https://<your-function-app>.azurewebsites.net/api/openai-proxy`
+| Provider | SDK base URL / endpoint | Credential header (forwarded verbatim) | Logged with tokens |
+|----------|-------------------------|----------------------------------------|--------------------|
+| Claude | `https://<function-app>.azurewebsites.net/api/proxy/anthropic` | `x-api-key` | `/v1/messages` (count_tokens and batches pass through untouched) |
+| OpenAI | `https://<function-app>.azurewebsites.net/api/proxy/openai/v1` | `Authorization: Bearer` | `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`; every other `/v1/*` path passes through as a 0-token row with the endpoint in metadata |
+| Azure OpenAI | `https://<function-app>.azurewebsites.net/api/proxy/azure-openai` | `api-key` (or Entra `Authorization: Bearer`) | `/openai/deployments/<deployment>/{chat/completions,completions,embeddings}` and `/openai/v1/responses`; deployment names price through `azure_openai_deployments` |
+| Gemini | `https://<function-app>.azurewebsites.net/api/proxy/gemini` | `x-goog-api-key` (or `?key=`) | `models/<model>:generateContent` and `:streamGenerateContent` (`?alt=sse` or JSON array); `countTokens`, `embedContent` pass through |
+| Bedrock | `https://<function-app>.azurewebsites.net/api/proxy/bedrock` | `Authorization: Bearer <Bedrock API key>` or SigV4, plus `x-aws-region` | `/model/<modelId>/invoke` and `/invoke-with-response-stream` (Anthropic Messages API); `converse` passes through |
 
-Clients authenticate to the proxy with an `x-proxy-key: $PROXY_SECRET` header. The proxy forwards a strict allow-list of headers to Anthropic / OpenAI by default (`Content-Type`, `anthropic-version`, `anthropic-beta`, plus the org's own `x-api-key`). Other headers are dropped.
+Clients authenticate to the proxy with an `x-proxy-key: $PROXY_SECRET` header. The proxy forwards a strict allow-list of headers per provider (`Content-Type`, the provider's credential header, `anthropic-version` / `anthropic-beta`, `OpenAI-Organization` / `OpenAI-Project` / `OpenAI-Beta`, `x-goog-api-client`). Other headers are dropped.
+
+**Bedrock is log-only in v1.** The proxy never holds AWS credentials or injects them. With a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK` in the AWS SDKs) the request needs no signing and is forwarded verbatim. SigV4-signed requests are forwarded byte-for-byte with every header the client signed, so the signature must be computed for `bedrock-runtime.<region>.amazonaws.com` — not the proxy host — and the proxy's own headers (`x-proxy-key`, attribution) must be added after signing so they stay unsigned. Signing with a proxy-held IAM role is a separate decision. The region is taken from `x-aws-region`, else the SigV4 credential scope, else `BEDROCK_REGION`.
+
+**Azure OpenAI** needs the resource endpoint and the deployment → model map configured in Settings → Proxy Setup (or the env vars in 7.3) before requests are accepted. The Azure Functions proxy re-reads these settings every minute.
+
+**Redeploy after upgrading.** The route shapes changed in the proxy-coverage release (`proxy/openai/{*path}` replaced the single chat-completions route; `azure-openai`, `gemini` and `bedrock` are new). Run `func azure functionapp publish nammu-ai-proxy --build remote` and re-point OpenAI clients at `/api/proxy/openai/v1`.
 
 **Usage attribution.** The proxy accepts optional headers for tracking:
 

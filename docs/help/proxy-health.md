@@ -30,6 +30,14 @@ Use this table to confirm attribution headers are populated. Rows with no user o
 
 **Tokens** counts all input tokens (uncached plus cache read and cache creation) and output. A row with tokens but a **Cost** of $0 on a real model usually means the model is not in the pricing table — the row's metadata will carry `pricingMatched: false`. Unknown models are never charged a default price.
 
+## Providers and endpoints
+
+The proxy covers five providers, and every row on this board carries the provider and the endpoint it came from: Claude (`/v1/messages`), OpenAI (any `/v1/*` path — chat completions, completions, the Responses API and embeddings are logged with tokens), Azure OpenAI (deployment paths, priced through the deployment → model map in **Settings → Proxy Setup**), Gemini (`generateContent` and `streamGenerateContent`) and Amazon Bedrock (`invoke` and `invoke-with-response-stream`, log only, client-signed).
+
+Endpoints whose usage cannot be read — images, audio, files, batches, Gemini `countTokens`, Bedrock `converse` — still appear as **0-token rows** with `passthrough: true` and the endpoint in the row's metadata, so the traffic is visible even though no cost is attributed. A burst of 0-token rows on a chat endpoint is not normal: it means the upstream response had no usage block (check the row's status and `flagReason`).
+
+Policy-as-code denials, MCP allowlist denials, prompt-risk flags and response DLP are applied the same way for all five providers, on both the Azure Functions proxy and the Vercel fallback.
+
 ## Sync errors
 
 If the last Azure Monitor sync failed, the metrics card reports **Last sync failed** with the error from Azure; a connection that has never run shows **Never synced**. Scheduled and manual syncs both record a snapshot whether they succeed or fail, so the **Last hour of syncs** table shows every attempt. Neither state affects proxy operation or logging — they only mean this board cannot show platform metrics right now.

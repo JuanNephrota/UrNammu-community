@@ -19,6 +19,7 @@
     "test": "tsx --test \"src/**/*.test.ts\"",
     "check:secrets": "bash scripts/check-secrets.sh",
     "check:schema-drift": "node scripts/check-schema-drift.mjs",
+    "check:mirror-drift": "node scripts/check-mirror-drift.mjs",
     "check:help-drift": "node scripts/gen-help-content.mjs --check",
     "help:sync": "node scripts/gen-help-content.mjs",
     "db:migrate": "npx prisma migrate dev",

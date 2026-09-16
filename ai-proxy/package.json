@@ -1,7 +1,7 @@
 {
   "name": "urnammu-ai-proxy",
   "version": "1.0.0",
-  "description": "UrNammu AI API Proxy — Claude & OpenAI usage logging",
+  "description": "UrNammu AI API Proxy — Claude, OpenAI, Azure OpenAI, Gemini and Bedrock usage logging + policy enforcement",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc && prisma generate",

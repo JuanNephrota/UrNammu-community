@@ -48,6 +48,8 @@ const SETTINGS_KEYS = [
   "governance_escalation_overdue_days",
   "proxy_secret",
   "platform_url",
+  "azure_openai_endpoint",
+  "azure_openai_deployments",
   "enable_local_auth",
   "enable_dev_login",
   "google_oauth_client_id",
@@ -161,6 +163,17 @@ export async function getSettingsPageData() {
 
   const policyEnforcementMode = parseEnforcementMode(settingsMap.policy_enforcement_mode);
 
+  // Azure OpenAI passthrough config shown on Settings → Proxy Setup. Env
+  // fallbacks match what the Azure Functions proxy reads.
+  const azureOpenAIProxy = {
+    endpoint: isAdmin
+      ? settingsMap.azure_openai_endpoint ?? process.env.AZURE_OPENAI_ENDPOINT ?? ""
+      : "",
+    deployments: isAdmin
+      ? settingsMap.azure_openai_deployments ?? process.env.AZURE_OPENAI_DEPLOYMENTS ?? ""
+      : "",
+  };
+
   const azureMonitor = {
     subscriptionId: settingsMap.azure_subscription_id ?? "",
     resourceGroup: settingsMap.azure_resource_group ?? "",
@@ -195,6 +208,9 @@ export async function getSettingsPageData() {
     modelLabel,
     policyEnforcementMode,
     azureMonitor,
+    azureOpenAIProxy,
+    /** Azure Functions proxy host, when the Proxy Health connection names it. */
+    functionAppName: settingsMap.azure_function_app_name ?? "",
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasCursorAdminKey: !!settingsMap.cursor_admin_key,
     hasGitHubCopilotConfig:

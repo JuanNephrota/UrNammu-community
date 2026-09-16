@@ -1287,17 +1287,32 @@ Configure organization-level telemetry pulls.
 
 ### 13.3 Proxy Setup
 
-Configure the shared `PROXY_SECRET` for the Claude / OpenAI transparent proxy (Azure Functions + Vercel fallback). The setup page generates ready-to-paste configuration for both organization-wide managed settings and per-user `~/.claude/settings.json`.
+Configure the shared `PROXY_SECRET` for the transparent proxy (Azure Functions + Vercel fallback) and see, per provider, the base URL to point each SDK at plus ready-to-paste TypeScript, Python and cURL snippets. The page also generates configuration for Claude Code, both organization-wide managed settings and per-user `~/.claude/settings.json`.
 
-**Attribution headers** — the proxy supports optional headers for usage attribution:
+**Providers covered** — one proxy, five upstreams, one governance path:
+
+| Provider | Base URL (`/api/proxy/…`) | What is logged with tokens and cost |
+|----------|---------------------------|-------------------------------------|
+| Claude | `anthropic` | Messages API (streaming and non-streaming). |
+| OpenAI | `openai/v1` | Chat Completions, Completions, the Responses API and Embeddings. Every other `/v1` endpoint (images, audio, files, batches…) is forwarded and recorded as a 0-token row with the endpoint in metadata. |
+| Azure OpenAI | `azure-openai` | Same endpoints on your Azure resource. Requests name a *deployment*, so the **Azure OpenAI — Resource & Deployment Map** card maps deployment names to model ids for pricing (unmapped deployments price by name). |
+| Gemini | `gemini` | `generateContent` and `streamGenerateContent`, including cached and thinking tokens. |
+| Bedrock | `bedrock` | `invoke` and `invoke-with-response-stream` for Anthropic models, **log only**: the proxy forwards the client's own AWS credentials (a Bedrock API key, or a SigV4 signature computed for the Bedrock host) and never injects keys. |
+
+Policy-as-code (Settings → General enforcement mode), MCP server/tool allowlists (`x-agent-id`), prompt-risk detection and response DLP apply identically to all five providers.
+
+**Attribution and credential headers**:
 
 | Header | Purpose |
 |--------|---------|
 | `x-proxy-key` | Authentication (required). Must match the configured proxy secret. |
 | `x-user-email` | Links usage to a platform user for per-person cost tracking. |
 | `x-department` | Department or cost center label for spend attribution. |
-| `x-ai-system-id` | Links usage to a registered AI system in the registry. |
+| `x-ai-system-id` | Links usage to a registered AI system in the registry and enables its policy-as-code rules. |
 | `x-agent-id` | Links usage to a registered AI agent (and its parent system) and switches on MCP tool governance for the call. |
+| `x-api-key` / `Authorization` / `api-key` / `x-goog-api-key` | The provider credential, forwarded verbatim (Anthropic / OpenAI and Bedrock / Azure OpenAI / Gemini). |
+| `x-azure-openai-resource` | Overrides the configured Azure OpenAI resource for one request. |
+| `x-aws-region` | Bedrock region; inferred from a SigV4 signature when absent. |
 
 For Claude Code, user attribution requires each developer to set a shell environment variable:
 

@@ -64,6 +64,8 @@ export async function getSetting(key: string): Promise<string | null> {
       process.env.GOVERNANCE_ESCALATION_OVERDUE_DAYS,
     anthropic_api_key: process.env.ANTHROPIC_API_KEY,
     proxy_secret: process.env.PROXY_SECRET,
+    azure_openai_endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+    azure_openai_deployments: process.env.AZURE_OPENAI_DEPLOYMENTS,
     shadow_ai_blocklist_token: process.env.SHADOW_AI_BLOCKLIST_TOKEN,
     openrouter_provisioning_key: process.env.OPENROUTER_PROVISIONING_KEY,
     helicone_api_key: process.env.HELICONE_API_KEY,
@@ -320,6 +322,19 @@ export { COLLECTION_RETENTION_SETTINGS_KEYS };
 export const PLATFORM_SETTINGS_KEYS = {
   PROXY_SECRET: "proxy_secret",
   PLATFORM_URL: "platform_url",
+} as const;
+
+// Azure OpenAI passthrough (`/api/proxy/azure-openai`). ENDPOINT is the
+// resource endpoint (`https://<resource>.openai.azure.com`, or just the
+// resource name); a client may override it per request with
+// `x-azure-openai-resource`. DEPLOYMENTS is a JSON object mapping deployment
+// name → model id (`{"gpt4o-prod": "gpt-4o"}`) so usage prices correctly —
+// Azure paths carry the deployment, not the model. Both fall back to
+// AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_DEPLOYMENTS env vars, which is also
+// how the Azure Functions proxy reads them.
+export const AZURE_OPENAI_PROXY_SETTINGS_KEYS = {
+  ENDPOINT: "azure_openai_endpoint",
+  DEPLOYMENTS: "azure_openai_deployments",
 } as const;
 
 export const THIRD_PARTY_PROXY_SETTINGS_KEYS = {
