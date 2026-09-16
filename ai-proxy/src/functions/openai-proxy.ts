@@ -18,6 +18,8 @@ import {
   type LoadedPolicy,
 } from "../lib/policy-loader";
 import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
+import { computePromptHash, extractUserPromptText } from "../lib/prompt-hash";
+import { loadPromptHashSalt } from "../lib/prompt-hash-salt";
 import { loadAgent, type LoadedAgent } from "../lib/agent-loader";
 import { recordToolActivity } from "../lib/tool-activity";
 import { extractOpenAIToolUses, summarizeMcpForMetadata } from "../lib/mcp-tool-governance";
@@ -156,6 +158,13 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const isStreaming = bodyJson.stream === true;
   const startTime = Date.now();
 
+  // Cross-surface correlation hash of the user-authored prompt (never the
+  // prompt itself) — see anthropic-proxy.ts.
+  const promptHash = computePromptHash(
+    await loadPromptHashSalt(),
+    extractUserPromptText(bodyJson)
+  );
+
   // Streaming usage — see injectIncludeUsage. Done before policy evaluation
   // so the evaluated body is exactly what we forward.
   const usageInjection = injectIncludeUsage(bodyJson);
@@ -261,7 +270,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       flagged: true,
       flagCategory: "proxy_error",
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
-      metadata: { aiSystemId },
+      metadata: { aiSystemId, promptHash },
     }).catch((logErr) => {
       console.error("logUsage failed:", logErr);
     });
@@ -296,6 +305,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       agent,
       declaredServers: [],
       usageInjected: usageInjection.injected,
+      promptHash,
     }).catch((err: unknown) => {
       console.error("extractOpenAIStreamUsage failed:", err);
     });
@@ -384,6 +394,7 @@ async function openaiProxy(req: HttpRequest): Promise<HttpResponseInit> {
       agentId: agent?.id ?? null,
       latencyMs,
       status: openaiRes.status,
+      promptHash,
       ...usageMetadata(tokenUsage, pricing),
       mcp: summarizeMcpForMetadata([], toolUses),
     },

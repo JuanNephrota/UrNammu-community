@@ -77,6 +77,7 @@ export async function getSetting(key: string): Promise<string | null> {
     datadog_site: process.env.DATADOG_SITE,
     datadog_enabled: process.env.DATADOG_ENABLED,
     claude_code_telemetry_secret: process.env.CLAUDE_CODE_TELEMETRY_SECRET,
+    prompt_hash_salt: process.env.PROMPT_HASH_SALT,
     // Retention windows for every prune cron (OTel telemetry plus the
     // collection tables). One list in collection-retention.ts feeds both this
     // fallback map and the Settings → General retention card.
@@ -311,6 +312,15 @@ export const THIRD_PARTY_PROXY_SETTINGS_KEYS = {
   PORTKEY_WORKSPACE_SLUG: "portkey_workspace_slug",
   LITELLM_API_KEY: "litellm_api_key",
   LITELLM_API_BASE_URL: "litellm_api_base_url",
+} as const;
+
+// Salt for the dangerous-prompt correlation hash (HMAC-SHA256 of the
+// normalized prompt; see src/lib/prompt-hash.ts). Deliberately NOT an
+// encrypted secret setting: the Azure Functions proxy reads the same
+// AppSetting row with its own plain Prisma client so every surface hashes
+// with one salt. Falls back to PROMPT_HASH_SALT, then NEXTAUTH_SECRET.
+export const PROMPT_HASH_SETTINGS_KEYS = {
+  SALT: "prompt_hash_salt",
 } as const;
 
 // Sensitive-information scanning. Controls the active leakage-probe scanner and

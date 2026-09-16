@@ -160,6 +160,9 @@ OPENAI_API_KEY=<optional>
 
 # Proxy
 PROXY_SECRET=<shared secret for API proxy auth>
+# Salt for the dangerous-prompt correlation hash (also `prompt_hash_salt` setting).
+# Falls back to NEXTAUTH_SECRET. Set identically on the Azure Function App.
+PROMPT_HASH_SALT=<random>
 
 # Shadow AI blocklist feed (can also be set in Settings > Shadow AI)
 # Bearer token for GET /api/discovered-tools/blocklist — the denylist of BLOCKED

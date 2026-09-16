@@ -1,6 +1,21 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { safeCompileRegex } from "./regex-validator";
 import { BUILTIN_PROMPT_RISK_RULES } from "./prompt-risk-defaults";
+import { getSetting } from "./settings";
+import {
+  computePromptHash,
+  extractUserPromptText,
+  PROMPT_HASH_SETTING_KEY,
+  resolvePromptHashSalt,
+} from "./prompt-hash";
+import {
+  initialOccurrenceMetadata,
+  mergePromptHashOccurrence,
+  PROMPT_HASH_DEDUPE_WINDOW_MS,
+  surfaceForProvider,
+  type PromptRiskSurface,
+} from "./prompt-risk-dedupe";
 
 type PromptRiskSeverity = "critical" | "warning";
 
@@ -91,6 +106,13 @@ export type PromptRiskAnalysis = {
   ruleMatches: RuleMatch[];    // NEW: per-rule grouping for investigation UI
   excerpt: string | null;      // short sanitized excerpt (≤220 chars)
   fullExcerpt: string | null;  // longer sanitized excerpt (≤2000 chars)
+  /**
+   * Salted HMAC fingerprint of the normalized prompt (see ./prompt-hash.ts),
+   * or null when there was no prompt text or no salt is configured. Safe to
+   * persist — it is what lets the same prompt be correlated across the
+   * proxies, Claude Code and Cursor without storing the prompt itself.
+   */
+  promptHash: string | null;
 };
 
 /**
@@ -111,57 +133,11 @@ export type PromptRiskAnalysis = {
  * What we DO scan: `role: "user"` message text, excluding tool_result
  * sub-blocks. This is the surface where prompt injection and social
  * engineering actually originate.
+ *
+ * The extractor itself lives in ./prompt-hash.ts (extractUserPromptText) so
+ * the risk analysis and the prompt hash are always computed over the same
+ * text, on every surface including the Azure proxy mirror.
  */
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function extractUserTextFromContentBlocks(blocks: unknown, acc: string[]) {
-  if (typeof blocks === "string") {
-    acc.push(blocks);
-    return;
-  }
-  if (!Array.isArray(blocks)) return;
-  for (const block of blocks) {
-    if (typeof block === "string") {
-      acc.push(block);
-      continue;
-    }
-    if (!isRecord(block)) continue;
-    // Skip tool_result and tool_use content blocks entirely.
-    if (block.type === "tool_result" || block.type === "tool_use") continue;
-    // Accept text blocks.
-    if (block.type === "text" && typeof block.text === "string") {
-      acc.push(block.text);
-    }
-  }
-}
-
-function extractPromptText(requestBody: Record<string, unknown> | null | undefined): string {
-  if (!requestBody) return "";
-  const parts: string[] = [];
-
-  // Anthropic: messages is [{ role, content }]
-  // OpenAI:    messages is [{ role, content }]
-  const messages = requestBody.messages;
-  if (Array.isArray(messages)) {
-    for (const msg of messages) {
-      if (!isRecord(msg)) continue;
-      const role = msg.role;
-      // Only scan user messages.
-      if (role !== "user") continue;
-      extractUserTextFromContentBlocks(msg.content, parts);
-    }
-  }
-
-  // Bare `prompt` field (legacy / non-chat APIs) — treat as user text.
-  if (typeof requestBody.prompt === "string") {
-    parts.push(requestBody.prompt);
-  }
-
-  return parts.join("\n").slice(0, 8000);
-}
 
 export function sanitizeText(value: string | null): string | null {
   if (!value) return null;
@@ -196,7 +172,64 @@ function sanitizeExcerpt(value: string | null, maxLength = 220): string | null {
 export async function analyzePromptRisk(
   requestBody: Record<string, unknown> | null | undefined
 ): Promise<PromptRiskAnalysis> {
-  return analyzeText(extractPromptText(requestBody));
+  return analyzeText(extractUserPromptText(requestBody));
+}
+
+// ── Prompt hash salt ──
+// AppSetting `prompt_hash_salt` (env fallback PROMPT_HASH_SALT via
+// getSetting), then NEXTAUTH_SECRET so an install that never set a salt still
+// gets stable hashes. Cached briefly; a DB outage falls through to env so the
+// proxy hot path never blocks on it.
+let saltCache: { value: string | null; expiresAt: number } | null = null;
+const SALT_TTL_MS = 60_000;
+
+export async function loadPromptHashSalt(): Promise<string | null> {
+  if (saltCache && saltCache.expiresAt > Date.now()) return saltCache.value;
+  let configured: string | null = null;
+  try {
+    configured = await getSetting(PROMPT_HASH_SETTING_KEY);
+  } catch {
+    configured = process.env.PROMPT_HASH_SALT ?? null;
+  }
+  const value = resolvePromptHashSalt(configured, process.env.NEXTAUTH_SECRET);
+  saltCache = { value, expiresAt: Date.now() + SALT_TTL_MS };
+  return value;
+}
+
+/** Test hook — drop the cached salt so the next call re-reads settings. */
+export function invalidatePromptHashSaltCache() {
+  saltCache = null;
+}
+
+/**
+ * The prompt-risk slice of an APIUsageLog `promptMetadata` blob. `promptHash`
+ * is written on EVERY logged request (so a later alert can be correlated to
+ * the calls that carried the same prompt); the `promptRisk` block only when
+ * the analysis flagged. Never includes prompt text — only the sanitized
+ * excerpt the analysis already produced.
+ */
+export function promptRiskLogMetadata(analysis: PromptRiskAnalysis): {
+  promptHash: string | null;
+  promptRisk?: {
+    severity: PromptRiskSeverity | null;
+    categories: string[];
+    matchedSignals: string[];
+    excerpt: string | null;
+    promptHash: string | null;
+  };
+} {
+  return {
+    promptHash: analysis.promptHash,
+    promptRisk: analysis.flagged
+      ? {
+          severity: analysis.severity,
+          categories: analysis.categories,
+          matchedSignals: analysis.matchedSignals,
+          excerpt: analysis.excerpt,
+          promptHash: analysis.promptHash,
+        }
+      : undefined,
+  };
 }
 
 // Built-in rules that detect malicious INTENT in user input. They match on
@@ -238,10 +271,12 @@ export async function analyzeText(
       ruleMatches: [],
       excerpt: null,
       fullExcerpt: null,
+      promptHash: null,
     };
   }
 
-  const allRules = await loadActiveRules();
+  const [allRules, salt] = await Promise.all([loadActiveRules(), loadPromptHashSalt()]);
+  const promptHash = computePromptHash(salt, promptText);
   const rules = options?.excludeIntentRules
     ? allRules.filter((r) => !INTENT_RULE_KEYS.has(r.key))
     : allRules;
@@ -291,6 +326,7 @@ export async function analyzeText(
       ruleMatches: [],
       excerpt: sanitizeExcerpt(promptText),
       fullExcerpt: sanitizeExcerpt(promptText, 2000),
+      promptHash,
     };
   }
 
@@ -310,6 +346,7 @@ export async function analyzeText(
     ruleMatches,
     excerpt: sanitizeExcerpt(promptText),
     fullExcerpt: sanitizeExcerpt(promptText, 2000),
+    promptHash,
   };
 }
 
@@ -354,6 +391,17 @@ export async function shouldSuppressAlert(
   return true;
 }
 
+/**
+ * Raise (or fold into) a dangerous_prompt alert.
+ *
+ * Dedupe, in order:
+ *  1. By prompt hash — an OPEN dangerous_prompt alert carrying the same
+ *     `promptHash` from the last 24h absorbs the sighting: `occurrences`
+ *     increments, the surface and actor are appended (deduped), severity
+ *     only ever escalates, and `updatedAt` is touched. No second alert.
+ *  2. Hash-less fallback (no salt / no prompt text): the original 1h
+ *     same-title dedupe against OPEN/ACKNOWLEDGED alerts on the same system.
+ */
 export async function createPromptRiskAlert(input: {
   provider: string;
   model: string;
@@ -361,6 +409,8 @@ export async function createPromptRiskAlert(input: {
   userEmail: string | null;
   aiSystemId?: string | null;
   analysis: PromptRiskAnalysis;
+  /** Where the prompt was observed. Derived from `provider` when omitted. */
+  surface?: PromptRiskSurface;
 }) {
   if (!input.analysis.flagged || !input.analysis.summary) return;
 
@@ -371,18 +421,54 @@ export async function createPromptRiskAlert(input: {
   );
   if (suppressed) return;
 
-  const title = `Dangerous prompt signal detected: ${input.analysis.categories[0] ?? "Prompt risk"}`;
-  const recentDuplicate = await prisma.alert.findFirst({
-    where: {
-      source: "dangerous_prompt",
-      status: { in: ["OPEN", "ACKNOWLEDGED"] },
-      aiSystemId: input.aiSystemId ?? null,
-      title,
-      createdAt: {
-        gte: new Date(Date.now() - 60 * 60 * 1000),
+  const surface = input.surface ?? surfaceForProvider(input.provider);
+  const severity = input.analysis.severity === "critical" ? "CRITICAL" : "HIGH";
+  const promptHash = input.analysis.promptHash;
+
+  if (promptHash) {
+    const sameHash = await prisma.alert.findFirst({
+      where: {
+        source: "dangerous_prompt",
+        status: "OPEN",
+        createdAt: { gte: new Date(Date.now() - PROMPT_HASH_DEDUPE_WINDOW_MS) },
+        promptRiskMetadata: { path: ["promptHash"], equals: promptHash },
       },
-    },
-  });
+      orderBy: { createdAt: "desc" },
+      select: { id: true, severity: true, promptRiskMetadata: true },
+    });
+    if (sameHash) {
+      await prisma.alert.update({
+        where: { id: sameHash.id },
+        data: {
+          // Escalate only; never downgrade an open CRITICAL.
+          severity: sameHash.severity === "CRITICAL" ? "CRITICAL" : severity,
+          promptRiskMetadata: mergePromptHashOccurrence(sameHash.promptRiskMetadata, {
+            surface,
+            userEmail: input.userEmail,
+          }) as Prisma.InputJsonValue,
+          // Explicit touch so "last seen" ordering never depends on Prisma's
+          // change detection for @updatedAt.
+          updatedAt: new Date(),
+        },
+      });
+      return;
+    }
+  }
+
+  const title = `Dangerous prompt signal detected: ${input.analysis.categories[0] ?? "Prompt risk"}`;
+  const recentDuplicate = promptHash
+    ? null
+    : await prisma.alert.findFirst({
+        where: {
+          source: "dangerous_prompt",
+          status: { in: ["OPEN", "ACKNOWLEDGED"] },
+          aiSystemId: input.aiSystemId ?? null,
+          title,
+          createdAt: {
+            gte: new Date(Date.now() - 60 * 60 * 1000),
+          },
+        },
+      });
 
   const descriptionParts = [
     `Provider: ${input.provider}`,
@@ -404,13 +490,15 @@ export async function createPromptRiskAlert(input: {
     ruleMatches: input.analysis.ruleMatches,
     excerpt: input.analysis.excerpt,
     fullExcerpt: input.analysis.fullExcerpt,
+    promptHash,
+    ...initialOccurrenceMetadata({ surface, userEmail: input.userEmail }),
   };
 
   if (recentDuplicate) {
     await prisma.alert.update({
       where: { id: recentDuplicate.id },
       data: {
-        severity: input.analysis.severity === "critical" ? "CRITICAL" : "HIGH",
+        severity,
         description: descriptionParts.join(" · "),
         promptRiskMetadata: metadata,
       },
@@ -422,7 +510,7 @@ export async function createPromptRiskAlert(input: {
     data: {
       title,
       description: descriptionParts.join(" · "),
-      severity: input.analysis.severity === "critical" ? "CRITICAL" : "HIGH",
+      severity,
       source: "dangerous_prompt",
       aiSystemId: input.aiSystemId ?? null,
       promptRiskMetadata: metadata,

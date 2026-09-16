@@ -37,6 +37,12 @@ interface StreamContext {
   mcp?: { servers: number; forwardedHeaders: string[] } | null;
   /** OpenAI only: true when the proxy added `stream_options.include_usage` itself. */
   usageInjected?: boolean;
+  /**
+   * Salted fingerprint of the user prompt (see ./prompt-hash.ts) — never the
+   * prompt. Lets this row be correlated with dangerous_prompt alerts and
+   * Claude Code / Cursor telemetry that carried the same prompt.
+   */
+  promptHash?: string | null;
 }
 
 /**
@@ -119,6 +125,7 @@ export async function extractAnthropicStreamUsage(
           streaming: true,
           aiSystemId: ctx.aiSystemId,
           agentId: ctx.agent?.id ?? null,
+          promptHash: ctx.promptHash ?? null,
           ...usageMetadata(usage, pricing),
           mcp:
             ctx.mcp || (ctx.declaredServers?.length ?? 0) > 0 || toolUses.length > 0
@@ -219,6 +226,7 @@ export async function extractOpenAIStreamUsage(
           usageInjected: ctx.usageInjected ?? false,
           aiSystemId: ctx.aiSystemId,
           agentId: ctx.agent?.id ?? null,
+          promptHash: ctx.promptHash ?? null,
           ...usageMetadata(usage, pricing),
           mcp: summarizeMcpForMetadata(ctx.declaredServers ?? [], toolUses),
         },

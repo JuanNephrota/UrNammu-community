@@ -879,6 +879,7 @@ Each dangerous prompt alert stores structured metadata: provider, model, departm
 - **Matched signals** shown as highlighted code elements — the exact phrases that triggered the rule
 - **Sanitized excerpt** in a monospace block for context
 - **Related API usage logs** — an expandable panel showing flagged APIUsageLog records within a ±5 minute window
+- **Same prompt, other sightings** — when the identical prompt (matched by a salted hash, never the text) was seen again while the alert was open, the card reads "Seen N times across …" with the surfaces (API proxy, Claude Code, Cursor) and people involved, and lists other alerts that carry the same prompt. Repeats within 24 hours fold into the open alert instead of raising a new one.
 
 ### False Positive Marking
 

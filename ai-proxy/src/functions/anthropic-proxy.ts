@@ -13,6 +13,8 @@ import {
   type LoadedPolicy,
 } from "../lib/policy-loader";
 import { evaluateRequest, extractPromptText } from "../lib/policy-enforcement";
+import { computePromptHash, extractUserPromptText } from "../lib/prompt-hash";
+import { loadPromptHashSalt } from "../lib/prompt-hash-salt";
 import { loadAgent, type LoadedAgent } from "../lib/agent-loader";
 import { recordToolActivity, MCP_SERVER_DENIAL_RULE } from "../lib/tool-activity";
 import {
@@ -119,6 +121,14 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const model = (bodyJson?.model as string) ?? "unknown";
   const isStreaming = bodyJson?.stream === true;
   const startTime = Date.now();
+
+  // Cross-surface correlation hash of the user-authored prompt (never the
+  // prompt itself). Same extractor + salt chain as the main app, so this
+  // matches the hash on the Vercel proxies and the OTel ingest routes.
+  const promptHash = computePromptHash(
+    await loadPromptHashSalt(),
+    extractUserPromptText(bodyJson)
+  );
 
   // ── MCP server allowlist gate ──
   // Monitor mode records a dry-run denial and forwards; enforce mode returns
@@ -273,7 +283,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       flagged: true,
       flagCategory: "proxy_error",
       flagReason: `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
-      metadata: { aiSystemId },
+      metadata: { aiSystemId, promptHash },
     }).catch((logErr) => {
       console.error("logUsage failed:", logErr);
     });
@@ -325,6 +335,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       requestId,
       agent,
       declaredServers,
+      promptHash,
       mcp: mcpResult.detected
         ? { servers: mcpResult.mcpServerCount, forwardedHeaders: mcpResult.forwarded }
         : null,
@@ -415,6 +426,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       agentId: agent?.id ?? null,
       latencyMs,
       status: anthropicRes.status,
+      promptHash,
       ...usageMetadata(tokenUsage, pricing),
       mcp:
         mcpResult.detected || declaredServers.length > 0 || toolUses.length > 0

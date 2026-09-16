@@ -3,7 +3,12 @@ import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings";
 import { logger } from "@/lib/observability";
-import { analyzePromptRisk, analyzeText, createPromptRiskAlert } from "@/lib/prompt-risk";
+import {
+  analyzePromptRisk,
+  analyzeText,
+  createPromptRiskAlert,
+  promptRiskLogMetadata,
+} from "@/lib/prompt-risk";
 import { recordSensitiveFinding } from "@/lib/sensitive-alerts";
 import { writeProxyUsageBucket } from "@/lib/proxy-bucket-writer";
 import { secretsMatch } from "@/lib/secret-compare";
@@ -316,14 +321,7 @@ export async function POST(req: NextRequest) {
         promptRisk.flagReason ??
         `Proxy error: ${err instanceof Error ? err.message : "Network error"}`,
       metadata: {
-        promptRisk: promptRisk.flagged
-          ? {
-              severity: promptRisk.severity,
-              categories: promptRisk.categories,
-              matchedSignals: promptRisk.matchedSignals,
-              excerpt: promptRisk.excerpt,
-            }
-          : undefined,
+        ...promptRiskLogMetadata(promptRisk),
         aiSystemId,
       },
     });
@@ -480,14 +478,7 @@ export async function POST(req: NextRequest) {
       status: openaiResponse.status,
       aiSystemId,
       ...usageMetadata(tokenUsage, pricing),
-      promptRisk: promptRisk.flagged
-        ? {
-            severity: promptRisk.severity,
-            categories: promptRisk.categories,
-            matchedSignals: promptRisk.matchedSignals,
-            excerpt: promptRisk.excerpt,
-          }
-        : undefined,
+      ...promptRiskLogMetadata(promptRisk),
     },
   });
 
@@ -635,14 +626,7 @@ async function extractOpenAIStreamUsage(
           usageInjected: ctx.injectedUsage,
           aiSystemId: ctx.aiSystemId,
           ...usageMetadata(usage, pricing),
-          promptRisk: ctx.promptRisk.flagged
-            ? {
-                severity: ctx.promptRisk.severity,
-                categories: ctx.promptRisk.categories,
-                matchedSignals: ctx.promptRisk.matchedSignals,
-                excerpt: ctx.promptRisk.excerpt,
-              }
-            : undefined,
+          ...promptRiskLogMetadata(ctx.promptRisk),
         },
       });
     } else {

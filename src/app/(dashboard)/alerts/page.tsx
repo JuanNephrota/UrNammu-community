@@ -8,7 +8,8 @@ import { AlertActions } from "./alert-actions";
 import { InvestigationButton } from "@/components/oversight/investigation-button";
 import { AlertHighlight } from "./alert-highlight";
 import { RelatedUsageLogs } from "./related-usage-logs";
-import { DangerousPromptDetail } from "./dangerous-prompt-detail";
+import { DangerousPromptDetail, type RelatedPromptAlertView } from "./dangerous-prompt-detail";
+import { findAlertsByPromptHashes } from "@/lib/prompt-hash-alerts";
 
 type RuleMatchMeta = {
   key: string;
@@ -28,10 +29,19 @@ type PromptRiskMeta = {
   ruleMatches?: RuleMatchMeta[];
   excerpt?: string | null;
   fullExcerpt?: string | null;
+  // Cross-surface correlation (see src/lib/prompt-risk-dedupe.ts)
+  promptHash?: string | null;
+  occurrences?: number;
+  surfaces?: string[];
+  actors?: string[];
 };
 
 function isPromptRiskMeta(value: unknown): value is PromptRiskMeta {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
 export default async function AlertsPage() {
@@ -53,6 +63,28 @@ export default async function AlertsPage() {
     },
     select: { id: true, alertId: true, status: true },
   });
+  // One query for every prompt hash on the page, so each dangerous_prompt
+  // card can list the other alerts that carry the same prompt.
+  const promptHashes = alerts.flatMap((alert) => {
+    if (alert.source !== "dangerous_prompt" || !isPromptRiskMeta(alert.promptRiskMetadata)) return [];
+    const hash = alert.promptRiskMetadata.promptHash;
+    return typeof hash === "string" && hash.length > 0 ? [hash] : [];
+  });
+  const relatedByHash = await findAlertsByPromptHashes(promptHashes);
+  const relatedAlertsFor = (alertId: string, hash: string | null | undefined): RelatedPromptAlertView[] =>
+    (hash ? relatedByHash.get(hash) ?? [] : [])
+      .filter((related) => related.id !== alertId)
+      .map((related) => ({
+        id: related.id,
+        title: related.title,
+        severity: related.severity,
+        status: related.status,
+        createdAtLabel: formatDateTime(related.createdAt),
+        provider: related.provider,
+        userEmail: related.userEmail,
+        occurrences: related.occurrences,
+      }));
+
   const investigationsByAlert = new Map<string, { id: string; status: string }>(
     investigations.map((item: { id: string; alertId: string; status: string }) => [
       item.alertId,
@@ -148,6 +180,11 @@ export default async function AlertsPage() {
                           ruleMatches={meta.ruleMatches}
                           excerpt={meta.excerpt ?? null}
                           fullExcerpt={meta.fullExcerpt ?? null}
+                          promptHash={typeof meta.promptHash === "string" ? meta.promptHash : null}
+                          occurrences={typeof meta.occurrences === "number" ? meta.occurrences : 1}
+                          surfaces={stringList(meta.surfaces)}
+                          actors={stringList(meta.actors)}
+                          relatedAlerts={relatedAlertsFor(alert.id, meta.promptHash)}
                         />
 
                         {/* Related system / incident */}

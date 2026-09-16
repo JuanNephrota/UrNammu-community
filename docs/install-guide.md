@@ -182,6 +182,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 |----------|---------|---------|
 | `CRON_SECRET` | Bearer token for the maintenance endpoint and every `/api/cron/*` job. | — |
 | `PROXY_SECRET` | Shared secret for the AI proxy (`ai-proxy/`). | — |
+| `PROMPT_HASH_SALT` | HMAC salt for the dangerous-prompt correlation hash (also settable as the `prompt_hash_salt` setting). Falls back to `NEXTAUTH_SECRET`. Set the same value on the Azure proxy so hashes match across surfaces. Only the hash is stored, never the prompt or the salt. | `NEXTAUTH_SECRET` |
 
 ### 3.3 Auth providers (optional — can also live in Settings UI)
 
@@ -518,10 +519,11 @@ Edit `ai-proxy/local.settings.json` for local runs, or set in Azure Function App
 | `DATABASE_URL` | **Same** Postgres the main app uses. The proxy writes to `APIUsageLog` / `UsageBucket`. |
 | `PROXY_SECRET` | Shared secret — must match `PROXY_SECRET` in the main app. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Provider credentials the proxy uses when clients route through it. |
+| `PROMPT_HASH_SALT` | Optional. Salt for the prompt correlation hash written to `APIUsageLog.promptMetadata.promptHash`. The proxy first reads the `prompt_hash_salt` setting from the shared database, then this variable, then `NEXTAUTH_SECRET`; the value must be the one the main app uses or hashes will not line up. Unset everywhere → `promptHash` is `null`. |
 
 Model prices live in `ai-proxy/src/lib/pricing.ts`, a byte-for-byte mirror of the app's `src/lib/model-pricing.ts`. When you add a model, edit both and redeploy the proxy; a model missing from the table is logged with cost `0` and `pricingMatched: false` rather than a guessed price.
 
-When proxying traffic, UrNammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default.
+When proxying traffic, UrNammu can also generate dangerous-prompt alerts from prompt-risk patterns. The proxy stores redacted excerpts and category signals rather than full prompt bodies by default. Every proxied request also records a salted `promptHash` of the user-authored prompt so the same prompt can be correlated with alerts and Claude Code / Cursor telemetry without storing the prompt itself.
 
 ### 7.4 Run locally
 

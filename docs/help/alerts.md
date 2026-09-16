@@ -37,6 +37,18 @@ When traffic flows through the proxy, prompts are analyzed for jailbreak attempt
 - **Matched signals** — the exact phrases that matched, shown as code elements.
 - **Sanitized excerpt** — a redacted snippet of the prompt text (full prompts are never stored).
 - **Related usage logs** — expandable panel showing flagged API calls near the alert.
+- **Same prompt, other sightings** — shown when the identical prompt was seen more than once or raised other alerts. See below.
+
+## Cross-surface prompt correlation
+
+Every scanned prompt — from the API proxy, Claude Code, and Cursor — is reduced to a **prompt hash**: a salted fingerprint of the normalized text (trimmed, whitespace collapsed, lower-cased). The hash is stored; the prompt is not. It cannot be reversed without the salt, which is never written to the database records it protects.
+
+- If the same prompt is seen again while its alert is still `OPEN` (within 24 hours), no second alert is raised. The existing alert's **Seen N times across …** line counts the repeat and records which surfaces and people sent it.
+- **Other alerts with this prompt** lists alerts sharing the hash — the same prompt seen on another day, or after the first alert was resolved. Click one to jump to it.
+- The truncated hash in the card header can be copied to search usage logs and Claude Code / Cursor telemetry, which carry the same value.
+- Alerts without a hash (older alerts, or installs with no salt configured) fall back to the previous behaviour: repeats of the same signal fold into one alert for an hour.
+
+The salt comes from the `prompt_hash_salt` setting (or the `PROMPT_HASH_SALT` environment variable), falling back to `NEXTAUTH_SECRET`. Configure the same value for the Azure proxy so its hashes match.
 
 ## False positive marking
 

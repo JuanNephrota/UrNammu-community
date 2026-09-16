@@ -92,7 +92,14 @@ export async function POST(req: NextRequest) {
   );
   for (let i = 0; i < rows.length; i++) {
     const analysis = analyses[i];
-    if (!analysis?.flagged) continue;
+    if (!analysis) continue;
+    // Salted fingerprint of the prompt (never the prompt) — joins this span
+    // to proxy usage rows and alerts that carried the same prompt. The
+    // prompt content key itself stays stripped from the bag.
+    if (analysis.promptHash) {
+      rows[i].attributes["prompt.hash"] = analysis.promptHash;
+    }
+    if (!analysis.flagged) continue;
     flaggedCount++;
     rows[i].riskSeverity = analysis.severity;
     rows[i].riskCategory =
@@ -100,6 +107,7 @@ export async function POST(req: NextRequest) {
     // Sequential to avoid racing the alert-dedup window.
     await createPromptRiskAlert({
       provider: "cursor",
+      surface: "cursor",
       model: rows[i].genAiModel ?? "cursor",
       department: null,
       userEmail: rows[i].userEmail,
