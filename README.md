@@ -300,7 +300,7 @@ Recent improvements:
 
 ### AI Gateways (Helicone, OpenRouter, Portkey, LiteLLM)
 
-Third-party LLM gateways can be connected so their activity/cost is normalized into the same `UsageBucket` / `CostBucket` pipeline as direct-provider telemetry. Configure keys (and base URL for self-hosted LiteLLM) in `Settings > Integrations`, each with its own connection test. Syncs run on the single global `provider_sync_enabled` / `provider_sync_interval_hours`; per-gateway schedules are planned ([Tier 2 plan](docs/plans/data-collection-tier2.md)). Portkey writes per-day per-model usage and cost buckets plus per-day per-user usage buckets, treating Portkey's cent-denominated costs as cents and recording a `reconciliation` block (graph total vs. summed grouped totals) in each sync run's metadata.
+Third-party LLM gateways can be connected so their activity/cost is normalized into the same `UsageBucket` / `CostBucket` pipeline as direct-provider telemetry. Configure keys (and base URL for self-hosted LiteLLM) in `Settings > Integrations`, each with a connection test; each gateway has its own sync enable toggle and interval under `Settings > Provider Admin APIs`. Portkey writes per-day per-model usage and cost buckets plus per-day per-user usage buckets, treating Portkey's cent-denominated costs as cents and recording a `reconciliation` block (graph total vs. summed grouped totals) in each sync run's metadata.
 
 ### Hexnode UEM (shadow AI device discovery)
 
@@ -335,34 +335,31 @@ Forwards governance alerts and sync events to a Datadog org as events. Configure
 
 ## Background Scheduling
 
-The project now includes a shared maintenance endpoint for background jobs:
+Background work runs as **one Vercel Cron entry per job**, all guarded by `Authorization: Bearer $CRON_SECRET` and wired in [vercel.json](vercel.json):
 
-- `GET /api/scheduler/maintenance`
-- authenticated with `Authorization: Bearer $CRON_SECRET`
+| Route | Schedule | What it does |
+|---|---|---|
+| `/api/cron/provider-sync/<provider>` | hourly, one entry per provider (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry into `UsageBucket` / `CostBucket`. The OpenAI entry also refreshes the Assistants inventory. |
+| `/api/cron/discovery-scan/<source>` | hourly, one entry per source (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan and fails any scan of the same source stuck in `running` for 10+ minutes. |
+| `/api/cron/governance-automation` | hourly | Review-renewal, exception-renewal, and ownership-escalation alerts. |
+| `/api/cron/key-usage-rules` | hourly | Key usage rule evaluation and `ApiKeyProfile` refresh. |
+| `/api/cron/run-report-schedules` | every 15 min | Scheduled report email delivery. |
+| `/api/cron/sensitive-scan`, `/api/cron/provider-security-scan` | daily | Gateway leakage probes and provider secure-use audit. |
+| `/api/cron/prune-claude-code-metrics`, `/api/cron/prune-cursor-metrics` | daily | OTel telemetry retention. |
+| `/api/cron/prune-collection` | daily | Retention for the proxy request log, agent tool calls, policy denials, raw snapshots, proxy-health snapshots, and scan runs. |
+| `/api/cron/proxy-health` | every 15 min | Azure Monitor snapshot for the Proxy Health board. |
 
-It handles:
-
-- provider admin telemetry sync
-- OpenAI assistant follow-up discovery
-- Google Gemini / Vertex AI billing-export follow-up syncs
-- AI gateway syncs (Helicone, OpenRouter, Portkey, LiteLLM)
-- Google Workspace shadow-AI follow-up scans
-- Microsoft 365 shadow-AI follow-up scans
-- Hexnode UEM device scans
-- Azure Monitor proxy-health snapshots
-- governance renewal and exception notice alerts
-- overdue, blocked, and ownership escalation alerts
-
-Dedicated cron routes complement the shared endpoint (all guarded by `CRON_SECRET`, wired in `vercel.json`): `/api/cron/run-report-schedules` (scheduled report email delivery), `/api/cron/proxy-health` (Azure Monitor snapshot every 15 minutes), and `/api/cron/prune-claude-code-metrics` + `/api/cron/prune-cursor-metrics` (OTel telemetry retention).
+Each hourly route checks its own saved enable flag and interval before doing work, so the hourly tick is cheap when nothing is due. Because every provider and every scan source runs in its own function, a slow or failing provider no longer delays the others, and due-ness is tracked **per provider** from that provider's own last successful `ProviderSyncRun`.
 
 Cadence is controlled in Settings:
 
-- `Settings > Provider Admin APIs`: the single global provider sync enable/interval (covers admin APIs, Cursor, Gemini, and AI gateways)
-- `Settings > Shadow AI`: Google Workspace, Microsoft 365, and Hexnode auto-scan enable/interval
-- `Settings > Integrations`: AI gateway credentials and Azure Monitor sync enable/interval
-- `Settings > Reporting`: telemetry retention windows and report email delivery
+- `Settings > Provider Admin APIs`: global provider-sync default (enable + interval) plus a per-provider table with its own Auto-sync / Interval override, last run, and next due. Overrides are stored as `provider_sync_<provider>_enabled` / `provider_sync_<provider>_interval_hours` (env fallback `PROVIDER_SYNC_<PROVIDER>_ENABLED` / `_INTERVAL_HOURS`) and inherit the global keys when unset.
+- `Settings > Shadow AI`: Google Workspace, Microsoft 365, Hexnode, and CrowdStrike auto-scan enable/interval
+- `Settings > Integrations`: AI gateway and Azure Monitor configuration
+- `Settings > General`: data-retention windows for every prune cron
+- `Settings > Reporting`: report email delivery
 
-For Vercel deployments, [vercel.json](/Users/pmarsh/scripts/AI-gov/vercel.json) is configured to call the maintenance endpoint hourly. The route itself checks each job’s saved interval before running, so one hourly cron can safely drive multiple background jobs.
+`GET /api/scheduler/maintenance` remains as a **deprecated** compatibility shim for one release. It runs the same per-job functions inside a single 60-second function and returns `Deprecation: true`; move external schedulers to the per-job routes above.
 
 ## Useful Commands
 

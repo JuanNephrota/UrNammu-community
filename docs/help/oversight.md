@@ -4,7 +4,7 @@ Provider-level usage, cost, anomaly, vendor, and investigation telemetry.
 
 ## How provider sync works
 
-With an Anthropic admin key, an OpenAI admin key, a Cursor Admin API key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (plus any AI gateway keys under **Settings → Integrations**), the maintenance cron pulls data on the shared provider sync interval and writes into:
+With an Anthropic admin key, an OpenAI admin key, a Cursor admin key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (gateway keys live under **Settings → Integrations**), each provider has its own hourly cron that syncs once that provider's own interval has elapsed since its last successful run, and writes into:
 
 - `UsageBucket` — tokens / requests per provider / model / project / actor / time bucket.
 - `CostBucket` — amount and line-item cost.
@@ -20,6 +20,8 @@ What each sync records, beyond the shared bucket shape:
 - **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. This is where Cursor tokens and cost come from; the Cursor OTel hook carries neither.
 - **Portkey** — one usage and cost bucket per day per model, and one usage bucket per day per user. Portkey reports cost in cents; the sync divides by 100 and records a `reconciliation` block in the sync-run metadata comparing the org-level graph total with the summed per-model and per-user totals so the unit assumption is auditable.
 - **Gemini** — spend and best-effort project attribution from the BigQuery billing export.
+
+Because every provider runs in its own function, a slow or failing provider does not delay the others, and one healthy provider cannot reset the clock for a stalled one. **Settings → Provider Admin APIs** shows each provider's last run, its outcome, and when it is next due.
 
 ## Pages
 

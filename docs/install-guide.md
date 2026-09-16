@@ -759,20 +759,20 @@ Optional observability export. Set `DATADOG_API_KEY`, `DATADOG_APP_KEY`, `DATADO
 
 ## 9. Background Cron Setup
 
-UrNammu has one hourly maintenance endpoint that fans out to most background work, plus a few dedicated crons for jobs that need their own cadence. All of them authenticate with `CRON_SECRET`.
+UrNammu schedules **one cron entry per background job**. Every route authenticates with `Authorization: Bearer $CRON_SECRET`, and every hourly route checks its own saved enable flag and interval before doing work, so the hourly tick is cheap when nothing is due.
 
-### 9.1 Endpoint
+### 9.1 Hourly routes (one function per unit of work)
 
-```
-GET /api/scheduler/maintenance
-Authorization: Bearer $CRON_SECRET
-```
+| Endpoint | Entries | Purpose |
+|----------|---------|---------|
+| `/api/cron/provider-sync/<provider>` | 9 (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry when its own interval has elapsed since its last successful sync. |
+| `/api/cron/discovery-scan/<source>` | 4 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. |
+| `/api/cron/governance-automation` | 1 | Review-renewal, exception-renewal, and ownership-escalation alerts. |
+| `/api/cron/key-usage-rules` | 1 | Key usage rule evaluation. |
 
-The hourly pass covers provider telemetry syncs, all four shadow-AI scan sources (Google Workspace, Microsoft 365, Hexnode, CrowdStrike), governance automation alerts (review renewals, exception renewals, ownership escalations), and key usage rule evaluation.
+Running each provider and each scan source in its own function means a slow or failing one cannot delay the others, and each provider's schedule is tracked from its own last success.
 
 ### 9.2 Dedicated crons
-
-These run on their own schedules rather than through the maintenance pass:
 
 | Endpoint | Schedule | Purpose |
 |----------|----------|---------|
@@ -788,12 +788,26 @@ The prune jobs matter more than they look: the developer-AI telemetry tables and
 
 ### 9.3 Vercel Cron (recommended if deploying to Vercel)
 
-All of the above are already configured in `vercel.json`:
+All of the above are already configured in `vercel.json` (20 entries, staggered so the hourly jobs do not all fire at minute zero):
 
 ```json
 {
   "crons": [
-    { "path": "/api/scheduler/maintenance", "schedule": "0 * * * *" },
+    { "path": "/api/cron/provider-sync/anthropic", "schedule": "0 * * * *" },
+    { "path": "/api/cron/provider-sync/claude_code", "schedule": "3 * * * *" },
+    { "path": "/api/cron/provider-sync/cursor", "schedule": "6 * * * *" },
+    { "path": "/api/cron/provider-sync/gemini", "schedule": "9 * * * *" },
+    { "path": "/api/cron/provider-sync/openai", "schedule": "12 * * * *" },
+    { "path": "/api/cron/provider-sync/openrouter", "schedule": "15 * * * *" },
+    { "path": "/api/cron/provider-sync/helicone", "schedule": "18 * * * *" },
+    { "path": "/api/cron/provider-sync/portkey", "schedule": "21 * * * *" },
+    { "path": "/api/cron/provider-sync/litellm", "schedule": "24 * * * *" },
+    { "path": "/api/cron/discovery-scan/google_workspace", "schedule": "30 * * * *" },
+    { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
+    { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
+    { "path": "/api/cron/discovery-scan/crowdstrike", "schedule": "45 * * * *" },
+    { "path": "/api/cron/governance-automation", "schedule": "50 * * * *" },
+    { "path": "/api/cron/key-usage-rules", "schedule": "55 * * * *" },
     { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
     { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
     { "path": "/api/cron/prune-collection", "schedule": "45 3 * * *" },
@@ -805,31 +819,35 @@ All of the above are already configured in `vercel.json`:
 }
 ```
 
-Individual jobs inside the maintenance pass check their own interval settings in `AppSetting` and skip if not yet due, so the hourly tick is cheap when little is pending.
+Per-provider sync cadence is set in **Settings → Provider Admin APIs** (global default plus a per-provider override table); shadow-AI scan cadence in **Settings → Shadow AI**.
 
-> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency (and total crons). The 15-minute report schedule in particular will not run as configured — either upgrade, or drive the endpoints from an external scheduler as below.
+> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency and the total number of crons (well below the 20 entries above). Either upgrade to Pro, or drive the endpoints from an external scheduler as below.
 
 ### 9.4 External cron (non-Vercel hosts)
 
-Use any scheduler (GitHub Actions, cron-job.org, Render Cron, an Azure Function timer, etc.) to hit the endpoints. At minimum, the hourly maintenance pass:
+Use any scheduler (GitHub Actions, cron-job.org, Render Cron, an Azure Function timer, etc.) to hit the endpoints on the schedules above. For example, one provider sync:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
-  https://<your-domain>/api/scheduler/maintenance
+  https://<your-domain>/api/cron/provider-sync/anthropic
 ```
 
-Then add whichever dedicated crons you need, on the schedules in §9.2. Skipping the prune jobs is the one omission that degrades over time rather than immediately.
+Hit every provider you have configured, each discovery source you have enabled, plus `governance-automation` and `key-usage-rules` hourly, then add whichever dedicated crons you need from §9.2. Skipping the prune jobs is the one omission that degrades over time rather than immediately.
+
+> **Migrating from the old endpoint**: `GET /api/scheduler/maintenance` still works for one release as a deprecated shim (it runs every job inside a single 60-second function and returns a `Deprecation: true` header). Move your scheduler to the per-job routes above before the next release.
 
 ### 9.5 Manual trigger (useful for testing)
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
-  http://localhost:3001/api/scheduler/maintenance
+  http://localhost:3001/api/cron/provider-sync/cursor
 ```
+
+The response reports whether the job was `due`, and if not, the `skippedReason` and `nextDueAt`.
 
 ### 9.6 Verifying cron health
 
-- **Settings → Provider Admin APIs** shows last sync timestamps.
+- **Settings → Provider Admin APIs** shows each provider's last run, outcome, and next-due time.
 - **Shadow AI** page shows the most recent `ScanHistory` row.
 - Any failures show up with an error message in the relevant admin page.
 

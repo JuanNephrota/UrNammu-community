@@ -1,6 +1,7 @@
 import { requireRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
-import { AdminAPISettings } from "../admin-api-settings";
+import { getProviderSyncStatuses } from "@/lib/background-jobs";
+import { AdminAPISettings, type ProviderSyncStatusView } from "../admin-api-settings";
 import { getSettingsPageData } from "../data";
 
 export default async function ProviderAdminSettingsPage() {
@@ -23,6 +24,33 @@ export default async function ProviderAdminSettingsPage() {
     orderBy: { name: "asc" },
   });
 
+  const providerSyncStatuses: ProviderSyncStatusView[] = (await getProviderSyncStatuses()).map(
+    (status) => ({
+      provider: status.provider,
+      label: status.label,
+      configured: status.configured,
+      enabled: status.schedule.enabled,
+      enabledSource: status.schedule.enabledSource,
+      intervalHours: status.schedule.intervalHours,
+      intervalSource: status.schedule.intervalSource,
+      due: status.schedule.due,
+      nextDueAt: status.schedule.nextDueAt?.toISOString() ?? null,
+      skippedReason: status.schedule.skippedReason,
+      overrideEnabled: status.overrides.enabled,
+      overrideIntervalHours: status.overrides.intervalHours,
+      lastRun: status.lastRun
+        ? {
+            status: status.lastRun.status,
+            startedAt: status.lastRun.startedAt.toISOString(),
+            completedAt: status.lastRun.completedAt?.toISOString() ?? null,
+            errorMessage: status.lastRun.errorMessage,
+            recordsProcessed: status.lastRun.recordsProcessed,
+          }
+        : null,
+      lastSucceededAt: status.lastSucceededAt?.toISOString() ?? null,
+    })
+  );
+
   return (
     <AdminAPISettings
       hasAnthropicAdminKey={hasAnthropicAdminKey}
@@ -35,6 +63,7 @@ export default async function ProviderAdminSettingsPage() {
       hasGeminiBillingConfig={hasGeminiBillingConfig}
       providerSyncEnabled={settingsMap.provider_sync_enabled !== "false"}
       providerSyncIntervalHours={parseInt(settingsMap.provider_sync_interval_hours ?? "6")}
+      providerSyncStatuses={providerSyncStatuses}
       geminiBillingProjectId={settingsMap.gemini_billing_project_id ?? ""}
       geminiBillingDataset={settingsMap.gemini_billing_dataset ?? ""}
       geminiBillingTable={settingsMap.gemini_billing_table ?? ""}

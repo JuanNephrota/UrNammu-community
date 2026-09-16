@@ -487,7 +487,7 @@ export function GoogleWorkspaceSettings({
               <option value="48">Every 48 hours</option>
             </select>
             <p className="text-[10px] text-[var(--text-faint)]">
-              The background scheduler checks this cadence when `CRON_SECRET`-authenticated maintenance requests run.
+              Each source has its own hourly `CRON_SECRET`-authenticated cron that scans once this interval has elapsed since the last completed scan.
             </p>
           </div>
 

@@ -599,8 +599,8 @@ Discovered entries are deduplicated by `toolName + domain`. Each finding becomes
 
 ### Running a Scan
 
-- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/4)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `completed` / `failed`). Sources that aren't configured are skipped.
-- **Automatic**: configured in Settings → Shadow AI per source. A cron job at `/api/scheduler/maintenance` triggers scans on each source's configured interval (default 24 hours).
+- **Manual**: click **Scan All Sources** at the top of the page. A single button runs every configured source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike) in sequence, showing live per-source progress (e.g. "Scanning Google Workspace (1/4)…") and a result summary per source. Each source writes its own `ScanHistory` entry (status `running` → `success` / `failed`). Sources that aren't configured are skipped.
+- **Automatic**: configured in Settings → Shadow AI per source. Each source has its own hourly cron at `/api/cron/discovery-scan/<source>` that scans once the source's configured interval has elapsed (default 24 hours), so a slow scan of one source never delays another.
 
 ### Importing DNS / Proxy Logs
 
@@ -738,7 +738,7 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 
 ### How Provider Sync Works
 
-With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys in Settings → Integrations, the `/api/scheduler/maintenance` cron pulls oversight data on the configured sync interval and normalizes it into:
+With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys.
@@ -1328,26 +1328,20 @@ Hexnode MDM scripts can also be used to roll out the Claude Code / Cursor OTel h
 
 ## 15. Background Automation
 
-UrNammu has one hourly cron endpoint that fans out to most background jobs, plus a handful of dedicated crons for work that needs its own cadence. All are guarded by `CRON_SECRET` and wired in `vercel.json`.
+Every background job has its own cron endpoint, guarded by `CRON_SECRET` and wired in `vercel.json`. Splitting them up means one slow or failing provider never delays the others, and each provider's schedule is tracked from its own last successful run.
 
-### `GET /api/scheduler/maintenance`
+### Hourly per-job crons
 
-- **Auth**: `Authorization: Bearer $CRON_SECRET` header.
-- **Jobs**, each gated by its own enable flag and interval in `AppSetting`:
-  - Anthropic telemetry sync
-  - OpenAI telemetry sync
-  - OpenAI assistant discovery
-  - Google Gemini / Vertex AI billing-export sync
-  - AI gateway syncs (Helicone, OpenRouter, Portkey, LiteLLM)
-  - Google Workspace shadow-AI scan
-  - Microsoft 365 shadow-AI scan
-  - Hexnode UEM device scan
-  - CrowdStrike Falcon endpoint scan
-  - Azure Monitor proxy-health snapshot
-  - Key usage rule evaluation (see [Key Usage Rules](#key-usage-rules))
-  - Governance automation (below)
+| Endpoint | Purpose |
+|----------|---------|
+| `/api/cron/provider-sync/<provider>` | One entry each for `anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`. Syncs that provider's telemetry when its own interval has elapsed. The OpenAI job also discovers Assistants as agents. |
+| `/api/cron/discovery-scan/<source>` | One entry each for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`. Fails scans of that source stuck in `running` for 10+ minutes, then scans when due. |
+| `/api/cron/governance-automation` | Governance automation (below). |
+| `/api/cron/key-usage-rules` | Key usage rule evaluation (see [Key Usage Rules](#key-usage-rules)); a failed evaluation is reported in the response rather than failing the cron. |
 
-Two implementation details you may notice in practice: scans stuck in `running` for more than ten minutes are marked failed at the start of each pass, and key usage evaluation runs last inside its own error boundary, so a badly configured rule cannot take down the rest of the maintenance run.
+Each route checks its own enable flag and interval in `AppSetting` and reports `due`, `skippedReason`, and `nextDueAt` in its response, so a manual `curl` shows exactly why a job did or did not run.
+
+Provider cadence lives in **Settings → Provider Admin APIs**: a global default (Auto-sync + Sync Interval) and a per-provider table where each provider can override both, alongside its last run, outcome, and next-due time. Leave a provider on **Inherit** to follow the global default.
 
 ### Dedicated crons
 
@@ -1360,7 +1354,11 @@ Two implementation details you may notice in practice: scans stuck in `running` 
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
 | `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
 
-Admins can trigger the endpoint manually for testing (e.g., `curl` with the `CRON_SECRET`).
+Admins can trigger any endpoint manually for testing (e.g., `curl` with the `CRON_SECRET`).
+
+### Deprecated: `GET /api/scheduler/maintenance`
+
+The old single hourly endpoint remains for one release as a compatibility shim. It runs the same jobs inside one 60-second function and returns a `Deprecation: true` header. If an external scheduler still calls it, move it to the per-job routes above.
 
 ### Governance Automation
 

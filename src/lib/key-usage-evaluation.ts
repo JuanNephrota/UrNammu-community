@@ -14,7 +14,7 @@ import {
 /**
  * IO layer for the key-usage rule engine. Loads the telemetry window, runs the
  * pure evaluator in `key-usage-rules.ts`, reconciles Alerts, and maintains the
- * ApiKeyProfile table. Called hourly from `runScheduledMaintenance()`.
+ * ApiKeyProfile table. Called hourly from `/api/cron/key-usage-rules`.
  */
 
 export const KEY_USAGE_ALERT_SOURCE = "key_usage_rule";

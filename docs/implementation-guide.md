@@ -204,16 +204,16 @@ All of this is metadata only — no prompt text and no code content — and that
 
 ## Background Jobs
 
-Two kinds of scheduled work, both wired in `vercel.json` and Bearer-guarded with `CRON_SECRET`.
+Every scheduled job is its own route under `src/app/api/cron/`, wired as its own entry in `vercel.json` and Bearer-guarded with `CRON_SECRET` via `unauthorizedCronResponse()` in `src/lib/cron-auth.ts`. The orchestration lives in `src/lib/background-jobs.ts`; the pure due-ness logic (and its unit tests) lives in `src/lib/provider-sync-schedule.ts`.
 
-**The hourly maintenance pass** — `GET /api/scheduler/maintenance`, orchestrated by `runScheduledMaintenance()` in `src/lib/background-jobs.ts`:
+**Hourly, one function per unit of work:**
 
-- provider telemetry syncs
-- Google Workspace, Microsoft 365, Hexnode, and CrowdStrike shadow-AI scans
-- governance automation alerts (review renewals, exception renewals, ownership escalations)
-- key usage rule evaluation
+- `/api/cron/provider-sync/[provider]` — `runScheduledProviderSync()`. One cron entry per `SyncProvider` (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`), staggered a few minutes apart, `maxDuration = 300`. Due-ness is computed **per provider** from that provider's latest `SUCCEEDED` `ProviderSyncRun`, with the effective schedule resolved as `provider_sync_<provider>_*` → `provider_sync_*` → built-in default (enabled, 6 h). The OpenAI job also runs Assistants discovery after a successful sync.
+- `/api/cron/discovery-scan/[source]` — `runScheduledDiscoveryScan()` for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`, `maxDuration = 300`. Each source first fails its own scans stuck in `running` for 10+ minutes, then scans if enabled, configured, idle, and past its interval.
+- `/api/cron/governance-automation` — `runGovernanceAutomationJob()`: review renewals, exception renewals, ownership escalations.
+- `/api/cron/key-usage-rules` — `runKeyUsageRulesJob()`: never throws; a failed evaluation returns `ok: false` with a 207 so one bad rule shows up in the cron log without a 500.
 
-Each job checks its own saved enable/interval settings before doing work, so the hourly tick is cheap when little is due. Two details worth preserving if you extend it: scans stuck in `running` for more than ten minutes are marked failed at the top of the pass, and key-usage evaluation runs **last** inside a catch so a bad rule cannot fail the whole maintenance run.
+Splitting the work this way is what makes the acceptance criteria hold: a provider that hangs burns only its own budget, and a healthy provider's success no longer resets the clock for a stalled one. `runProviderSyncJob()` (the manual **Sync now** button) still fans out to every provider at once via the same `runProviderSync()` unit.
 
 **Dedicated crons**, each on its own schedule:
 
@@ -225,6 +225,8 @@ Each job checks its own saved enable/interval settings before doing work, so the
 - `/api/cron/prune-cursor-metrics` — daily
 
 The two prune jobs exist because the OTel surfaces are high-volume; if you add another telemetry surface, add a retention job with it rather than letting the table grow unbounded.
+
+**Deprecated:** `GET /api/scheduler/maintenance` is kept for one release as a shim. `runScheduledMaintenance()` composes the per-job functions above inside a single 60-second function, logs a deprecation warning, and returns `Deprecation: true`. It is no longer in `vercel.json`; delete it (and `runScheduledMaintenance`) after the next release.
 
 ## Settings Strategy
 

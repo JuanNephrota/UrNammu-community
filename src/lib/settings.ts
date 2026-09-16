@@ -95,7 +95,15 @@ export async function getSetting(key: string): Promise<string | null> {
     resend_api_key: process.env.RESEND_API_KEY,
     report_email_from: process.env.REPORT_EMAIL_FROM,
   };
-  return envMap[key] ?? null;
+  if (envMap[key] !== undefined) return envMap[key] ?? null;
+
+  // Per-provider sync overrides (provider_sync_<provider>_enabled /
+  // provider_sync_<provider>_interval_hours) fall back to the matching
+  // upper-cased env var, e.g. PROVIDER_SYNC_CURSOR_INTERVAL_HOURS.
+  if (PROVIDER_SYNC_OVERRIDE_KEY_PATTERN.test(key)) {
+    return process.env[key.toUpperCase()] ?? null;
+  }
+  return null;
 }
 
 /**
@@ -182,10 +190,23 @@ export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
   LOCATION: "gemini_billing_location",
 } as const;
 
+// Global defaults for the per-provider sync crons. Each provider can override
+// both with `provider_sync_<provider>_enabled` and
+// `provider_sync_<provider>_interval_hours` (see providerSyncSettingKeys);
+// an unset override inherits the global value.
 export const PROVIDER_SYNC_SETTINGS_KEYS = {
   ENABLED: "provider_sync_enabled",
   INTERVAL_HOURS: "provider_sync_interval_hours",
 } as const;
+
+const PROVIDER_SYNC_OVERRIDE_KEY_PATTERN = /^provider_sync_[a-z0-9_]+_(enabled|interval_hours)$/;
+
+export function providerSyncSettingKeys(provider: string) {
+  return {
+    enabled: `provider_sync_${provider}_enabled`,
+    intervalHours: `provider_sync_${provider}_interval_hours`,
+  } as const;
+}
 
 // Provider security & privacy posture scan. Audits each configured provider's
 // secure-use/privacy configuration. ENABLED gates the scheduled (cron) run;

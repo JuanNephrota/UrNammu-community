@@ -396,7 +396,7 @@ export default async function DashboardPage() {
     },
     {
       label: "Renewal automation queue",
-      description: "Scheduled maintenance generated review or exception renewal reminders.",
+      description: "Scheduled governance automation generated review or exception renewal reminders.",
       count: renewalAutomationAlerts,
       href: "/alerts",
       tone: renewalAutomationAlerts > 0 ? "warning" : "success",

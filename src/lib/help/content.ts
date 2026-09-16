@@ -372,7 +372,7 @@ Provider-level usage, cost, anomaly, vendor, and investigation telemetry.
 
 ## How provider sync works
 
-With an Anthropic admin key, an OpenAI admin key, a Cursor Admin API key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (plus any AI gateway keys under **Settings → Integrations**), the maintenance cron pulls data on the shared provider sync interval and writes into:
+With an Anthropic admin key, an OpenAI admin key, a Cursor admin key, and/or Google Gemini billing export configured in **Settings → Provider Admin APIs** (gateway keys live under **Settings → Integrations**), each provider has its own hourly cron that syncs once that provider's own interval has elapsed since its last successful run, and writes into:
 
 - \`UsageBucket\` — tokens / requests per provider / model / project / actor / time bucket.
 - \`CostBucket\` — amount and line-item cost.
@@ -388,6 +388,8 @@ What each sync records, beyond the shared bucket shape:
 - **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. This is where Cursor tokens and cost come from; the Cursor OTel hook carries neither.
 - **Portkey** — one usage and cost bucket per day per model, and one usage bucket per day per user. Portkey reports cost in cents; the sync divides by 100 and records a \`reconciliation\` block in the sync-run metadata comparing the org-level graph total with the summed per-model and per-user totals so the unit assumption is auditable.
 - **Gemini** — spend and best-effort project attribution from the BigQuery billing export.
+
+Because every provider runs in its own function, a slow or failing provider does not delay the others, and one healthy provider cannot reset the clock for a stalled one. **Settings → Provider Admin APIs** shows each provider's last run, its outcome, and when it is next due.
 
 ## Pages
 
@@ -740,7 +742,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 
 - **Overview** — jump-off page to every settings area.
 - **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization). The global **policy enforcement mode** for the proxy — Off / Dry run / Enforce — is also set here, along with Azure Monitor access for Proxy Health and the **Data Retention** card.
-- **Provider Admin APIs** — admin keys for org telemetry: Anthropic (which also feeds Claude Code analytics), OpenAI, Google Gemini billing export, and the Cursor Admin API. One global sync toggle and interval covers every provider (per-provider settings are planned). Anomaly thresholds, governance-automation notice days, and attribution tuning live here too.
+- **Provider Admin APIs** — admin keys for org telemetry: Anthropic, OpenAI, Cursor, Google Gemini billing export, plus the AI gateways. The **Background Provider Sync** card sets the global auto-sync default and interval, and a per-provider table lets each provider (including Claude Code analytics and each gateway) override both, with its last run, outcome, and next-due time. Unset overrides inherit the global value. Anomaly thresholds, governance-automation notice days, and attribution tuning live here too.
 - **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent Claude / OpenAI proxy. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`. For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile.
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts.
 - **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary.

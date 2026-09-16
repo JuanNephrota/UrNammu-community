@@ -1,5 +1,13 @@
 import { prisma } from "./prisma";
-import { fetchOpenAIOrgData, listAssistants } from "./openai-admin";
+import { fetchOpenAIOrgData, isOpenAIAdminConfigured, listAssistants } from "./openai-admin";
+import { isAnthropicAdminConfigured } from "./anthropic-admin";
+import { isClaudeCodeAnalyticsAvailable } from "./claude-code-analytics";
+import { isCursorAdminConfigured } from "./cursor-admin";
+import { isGeminiBillingConfigured } from "./gemini-admin";
+import { isOpenRouterConfigured } from "./openrouter-admin";
+import { isHeliconeConfigured } from "./helicone-admin";
+import { isPortkeyConfigured } from "./portkey-admin";
+import { isLiteLLMConfigured } from "./litellm-admin";
 import { logger } from "./observability";
 import { notifyDatadog } from "./datadog-client";
 import {
@@ -17,11 +25,13 @@ import { executeScan } from "./scan-executor";
 import {
   GOVERNANCE_AUTOMATION_SETTINGS_KEYS,
   getSetting,
+  getSettings,
   GOOGLE_SETTINGS_KEYS,
   HEXNODE_SETTINGS_KEYS,
   CROWDSTRIKE_SETTINGS_KEYS,
   MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
   PROVIDER_SYNC_SETTINGS_KEYS,
+  providerSyncSettingKeys,
 } from "./settings";
 import { isGoogleWorkspaceConfigured } from "./google-workspace";
 import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
@@ -32,9 +42,96 @@ import {
   runKeyUsageRuleEvaluation,
   type KeyUsageEvaluationResult,
 } from "./key-usage-evaluation";
+import {
+  DISCOVERY_SCAN_LABELS,
+  DISCOVERY_SCAN_RUNNING_GRACE_MS,
+  DISCOVERY_SCAN_SOURCES,
+  PROVIDER_SYNC_RUNNING_GRACE_MS,
+  parseIntervalHours,
+  resolveDiscoveryScanSchedule,
+  resolveProviderSyncSchedule,
+  SYNC_PROVIDER_LABELS,
+  SYNC_PROVIDERS,
+  type DiscoveryScanSchedule,
+  type DiscoveryScanSource,
+  type ProviderSyncSchedule,
+  type SyncProviderId,
+} from "./provider-sync-schedule";
 
 type BackgroundActor = string;
 
+type TelemetrySyncResult = Awaited<ReturnType<typeof syncAnthropicTelemetry>>;
+
+const PROVIDER_SYNC_FUNCTIONS: Record<
+  SyncProviderId,
+  (triggeredByUserId: BackgroundActor) => Promise<TelemetrySyncResult>
+> = {
+  anthropic: syncAnthropicTelemetry,
+  claude_code: syncClaudeCodeAnalytics,
+  cursor: syncCursorTelemetry,
+  gemini: syncGeminiTelemetry,
+  openai: syncOpenAITelemetry,
+  openrouter: syncOpenRouterTelemetry,
+  helicone: syncHeliconeTelemetry,
+  portkey: syncPortkeyTelemetry,
+  litellm: syncLiteLLMTelemetry,
+};
+
+const PROVIDER_CONFIGURED_CHECKS: Record<SyncProviderId, () => Promise<boolean>> = {
+  anthropic: isAnthropicAdminConfigured,
+  claude_code: isClaudeCodeAnalyticsAvailable,
+  cursor: isCursorAdminConfigured,
+  gemini: isGeminiBillingConfigured,
+  openai: isOpenAIAdminConfigured,
+  openrouter: isOpenRouterConfigured,
+  helicone: isHeliconeConfigured,
+  portkey: isPortkeyConfigured,
+  litellm: isLiteLLMConfigured,
+};
+
+const DISCOVERY_SCAN_SETTINGS: Record<
+  DiscoveryScanSource,
+  { enabled: string; intervalHours: string; configured: () => Promise<boolean> }
+> = {
+  google_workspace: {
+    enabled: GOOGLE_SETTINGS_KEYS.SCAN_ENABLED,
+    intervalHours: GOOGLE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS,
+    configured: isGoogleWorkspaceConfigured,
+  },
+  microsoft_365: {
+    enabled: MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_ENABLED,
+    intervalHours: MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_INTERVAL_HOURS,
+    configured: isMicrosoft365Configured,
+  },
+  hexnode: {
+    enabled: HEXNODE_SETTINGS_KEYS.SCAN_ENABLED,
+    intervalHours: HEXNODE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS,
+    configured: isHexnodeConfigured,
+  },
+  crowdstrike: {
+    enabled: CROWDSTRIKE_SETTINGS_KEYS.SCAN_ENABLED,
+    intervalHours: CROWDSTRIKE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS,
+    configured: isCrowdStrikeConfigured,
+  },
+};
+
+/** Outcome of syncing a single provider (one cron invocation). */
+export type ProviderSyncOutcome = {
+  provider: SyncProviderId;
+  label: string;
+  status: "succeeded" | "failed" | "skipped";
+  error?: string;
+  syncRunId?: string;
+  usageBucketsUpserted: number;
+  costBucketsUpserted: number;
+  rawSnapshotsStored: number;
+  projectsUpserted: number;
+  actorsUpserted: number;
+  /** OpenAI only: assistant inventory follow-up discovery. */
+  assistants?: { found: number; created: number; updated: number; error?: string };
+};
+
+/** Aggregate shape kept for the manual "Sync now" panel (POST /api/admin-sync). */
 export type ProviderSyncJobResult = {
   anthropicUsageSynced: number;
   openaiUsageSynced: number;
@@ -62,62 +159,73 @@ export type ProviderSyncJobResult = {
    *  billing export is not configured. These are not failures. */
   skipped: string[];
   errors: string[];
+  /** Per-provider detail behind the aggregate counters. */
+  providers: ProviderSyncOutcome[];
 };
 
+export type ProviderSyncRunSummary = {
+  id: string;
+  status: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  recordsProcessed: number;
+  errorMessage: string | null;
+};
+
+/** Everything Settings → Provider Admin APIs needs to render one provider row. */
+export type ProviderSyncStatus = {
+  provider: SyncProviderId;
+  label: string;
+  configured: boolean;
+  schedule: ProviderSyncSchedule;
+  /** Raw provider-level overrides; null means "inherit the global value". */
+  overrides: { enabled: string | null; intervalHours: string | null };
+  lastRun: ProviderSyncRunSummary | null;
+  lastSucceededAt: Date | null;
+};
+
+export type ScheduledProviderSyncResult = {
+  provider: SyncProviderId;
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+  intervalHours: number;
+  due: boolean;
+  skippedReason?: string;
+  nextDueAt: Date | null;
+  result?: ProviderSyncOutcome;
+};
+
+export type ScheduledDiscoveryScanResult = {
+  source: DiscoveryScanSource;
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+  intervalHours: number;
+  due: boolean;
+  skippedReason?: string;
+  nextDueAt: Date | null;
+  staleScansFailed: number;
+  result?: Awaited<ReturnType<typeof executeScan>>;
+};
+
+export type GovernanceAutomationJobResult = {
+  reviewRenewals: number;
+  exceptionRenewals: number;
+  ownershipEscalations: number;
+};
+
+/**
+ * Compatibility shape returned by the deprecated `/api/scheduler/maintenance`
+ * shim. New deployments schedule the per-job `/api/cron/**` routes instead.
+ */
 export type ScheduledMaintenanceResult = {
-  providerSync: {
-    enabled: boolean;
-    due: boolean;
-    skippedReason?: string;
-    result?: ProviderSyncJobResult;
-  };
-  googleWorkspaceScan: {
-    enabled: boolean;
-    due: boolean;
-    skippedReason?: string;
-    result?: Awaited<ReturnType<typeof executeScan>>;
-  };
-  microsoft365Scan: {
-    enabled: boolean;
-    due: boolean;
-    skippedReason?: string;
-    result?: Awaited<ReturnType<typeof executeScan>>;
-  };
-  hexnodeScan: {
-    enabled: boolean;
-    due: boolean;
-    skippedReason?: string;
-    result?: Awaited<ReturnType<typeof executeScan>>;
-  };
-  crowdstrikeScan: {
-    enabled: boolean;
-    due: boolean;
-    skippedReason?: string;
-    result?: Awaited<ReturnType<typeof executeScan>>;
-  };
-  governanceAutomation: {
-    reviewRenewals: number;
-    exceptionRenewals: number;
-    ownershipEscalations: number;
-  };
+  deprecated: string;
+  providerSync: Record<SyncProviderId, ScheduledProviderSyncResult>;
+  discoveryScans: Record<DiscoveryScanSource, ScheduledDiscoveryScanResult>;
+  governanceAutomation: GovernanceAutomationJobResult;
   keyUsageRules: KeyUsageEvaluationResult;
 };
-
-function parseBooleanSetting(value: string | null, defaultValue: boolean) {
-  if (value === null) return defaultValue;
-  return value === "true";
-}
-
-function parseIntervalHours(value: string | null, defaultValue: number) {
-  const parsed = Number.parseInt(value ?? "", 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue;
-  return parsed;
-}
-
-function isDue(lastCompletedAt: Date | null, intervalHours: number, now: Date) {
-  if (!lastCompletedAt) return true;
-  return now.getTime() - lastCompletedAt.getTime() >= intervalHours * 60 * 60 * 1000;
-}
 
 async function syncGovernanceAutomationAlerts(input: {
   source: string;
@@ -199,157 +307,181 @@ async function syncGovernanceAutomationAlerts(input: {
   return desiredKeys.size;
 }
 
-export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Promise<ProviderSyncJobResult> {
+/**
+ * Discover OpenAI Assistants as AI agents. Runs after a successful OpenAI
+ * telemetry sync so the inventory and the usage data come from the same key.
+ */
+async function discoverOpenAIAssistants(
+  triggeredByUserId: BackgroundActor
+): Promise<NonNullable<ProviderSyncOutcome["assistants"]>> {
+  const summary: NonNullable<ProviderSyncOutcome["assistants"]> = { found: 0, created: 0, updated: 0 };
+  try {
+    const assistantsResponse = await listAssistants({ limit: 100, order: "desc" }).catch(async () => {
+      const fullData = await fetchOpenAIOrgData();
+      return fullData.assistants ?? null;
+    });
+    const assistants = ((assistantsResponse as Record<string, unknown> | null)?.data ?? []) as Record<string, unknown>[];
+    summary.found = assistants.length;
+
+    for (const assistant of assistants) {
+      const name = (assistant.name as string) ?? "Unnamed Assistant";
+      const description =
+        (assistant.instructions as string)?.slice(0, 500) ??
+        (assistant.description as string) ??
+        null;
+      const tools = ((assistant.tools ?? []) as Record<string, unknown>[]).map((t) => t.type as string);
+
+      const existing = await prisma.aIAgent.findFirst({
+        where: { name, department: "OpenAI" },
+      });
+
+      if (existing) {
+        await prisma.aIAgent.update({
+          where: { id: existing.id },
+          data: {
+            description: description ?? existing.description,
+            capabilities: tools.length > 0 ? tools : (existing.capabilities as string[]) ?? [],
+          },
+        });
+        summary.updated++;
+      } else {
+        await prisma.aIAgent.create({
+          data: {
+            name,
+            description,
+            ownerId: triggeredByUserId === "system" ? (await getFallbackOwnerId()) : triggeredByUserId,
+            capabilities: tools,
+            accessLevel: "api",
+            autonomyLevel: "SUPERVISED",
+            connectedSystems: ["OpenAI Platform"],
+            humanReviewRequired: false,
+            riskLevel: "MEDIUM",
+            status: "DEPLOYED",
+            department: "OpenAI",
+          },
+        });
+        summary.created++;
+      }
+    }
+  } catch (err) {
+    summary.error = err instanceof Error ? err.message : "Failed";
+  }
+  return summary;
+}
+
+/**
+ * Sync exactly one provider. This is the unit of work behind
+ * `/api/cron/provider-sync/[provider]`; a provider that is not configured is
+ * reported as skipped without touching the upstream API or ProviderSyncRun.
+ */
+export async function runProviderSync(
+  provider: SyncProviderId,
+  triggeredByUserId: BackgroundActor
+): Promise<ProviderSyncOutcome> {
+  const label = SYNC_PROVIDER_LABELS[provider];
   logger.info("provider_sync.requested", {
+    provider,
     userId: triggeredByUserId,
     trigger: triggeredByUserId === "system" ? "scheduler" : "manual",
   });
 
-  const [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, litellmResult, geminiResult, claudeCodeResult, cursorResult] = await Promise.all([
-    syncAnthropicTelemetry(triggeredByUserId),
-    syncOpenAITelemetry(triggeredByUserId),
-    syncOpenRouterTelemetry(triggeredByUserId),
-    syncHeliconeTelemetry(triggeredByUserId),
-    syncPortkeyTelemetry(triggeredByUserId),
-    syncLiteLLMTelemetry(triggeredByUserId),
-    syncGeminiTelemetry(triggeredByUserId),
-    syncClaudeCodeAnalytics(triggeredByUserId),
-    syncCursorTelemetry(triggeredByUserId),
-  ]);
-
-  const providerLabels: Record<string, string> = {
-    anthropic: "Anthropic telemetry",
-    openai: "OpenAI telemetry",
-    openrouter: "OpenRouter activity",
-    helicone: "Helicone request logs",
-    portkey: "Portkey analytics",
-    litellm: "LiteLLM spend logs",
-    gemini: "Gemini telemetry",
-    claude_code: "Claude Code analytics",
-    cursor: "Cursor admin usage & spend",
-  };
-  const rawResults = [anthropicResult, openaiResult, openRouterResult, heliconeResult, portkeyResult, litellmResult, geminiResult, claudeCodeResult, cursorResult];
-  const skipped: string[] = [];
-  const errors: string[] = [];
-  for (const result of rawResults) {
-    if (result.success) continue;
-    const label = providerLabels[result.provider] ?? result.provider;
-    if ("skipped" in result && result.skipped) {
-      skipped.push(`${label}: ${result.error}`);
-    } else {
-      errors.push(`${label}: ${result.error}`);
-    }
+  let raw: TelemetrySyncResult;
+  try {
+    raw = await PROVIDER_SYNC_FUNCTIONS[provider](triggeredByUserId);
+  } catch (error) {
+    // The sync functions catch their own errors and fail the run row, so this
+    // is only reached for programming errors (e.g. a thrown non-Error).
+    raw = {
+      provider,
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown sync error",
+    };
   }
 
-  const results: ProviderSyncJobResult = {
-    anthropicUsageSynced: anthropicResult.success ? anthropicResult.usageBucketsUpserted : 0,
-    openaiUsageSynced: openaiResult.success ? openaiResult.usageBucketsUpserted : 0,
-    openRouterUsageSynced: openRouterResult.success ? openRouterResult.usageBucketsUpserted : 0,
-    heliconeUsageSynced: heliconeResult.success ? heliconeResult.usageBucketsUpserted : 0,
-    portkeyUsageSynced: portkeyResult.success ? portkeyResult.usageBucketsUpserted : 0,
-    litellmUsageSynced: litellmResult.success ? litellmResult.usageBucketsUpserted : 0,
-    geminiUsageSynced: geminiResult.success ? geminiResult.usageBucketsUpserted : 0,
-    claudeCodeUsageSynced: claudeCodeResult.success ? claudeCodeResult.usageBucketsUpserted : 0,
-    cursorUsageSynced: cursorResult.success ? cursorResult.usageBucketsUpserted : 0,
-    anthropicCostBucketsSynced: anthropicResult.success ? anthropicResult.costBucketsUpserted : 0,
-    openaiCostBucketsSynced: openaiResult.success ? openaiResult.costBucketsUpserted : 0,
-    openRouterCostBucketsSynced: openRouterResult.success ? openRouterResult.costBucketsUpserted : 0,
-    heliconeCostBucketsSynced: heliconeResult.success ? heliconeResult.costBucketsUpserted : 0,
-    portkeyCostBucketsSynced: portkeyResult.success ? portkeyResult.costBucketsUpserted : 0,
-    litellmCostBucketsSynced: litellmResult.success ? litellmResult.costBucketsUpserted : 0,
-    geminiCostBucketsSynced: geminiResult.success ? geminiResult.costBucketsUpserted : 0,
-    claudeCodeCostsSynced: claudeCodeResult.success ? claudeCodeResult.costBucketsUpserted : 0,
-    cursorCostBucketsSynced: cursorResult.success ? cursorResult.costBucketsUpserted : 0,
-    rawSnapshotsStored:
-      (anthropicResult.success ? anthropicResult.rawSnapshotsStored : 0) +
-      (openaiResult.success ? openaiResult.rawSnapshotsStored : 0) +
-      (openRouterResult.success ? openRouterResult.rawSnapshotsStored : 0) +
-      (heliconeResult.success ? heliconeResult.rawSnapshotsStored : 0) +
-      (portkeyResult.success ? portkeyResult.rawSnapshotsStored : 0) +
-      (litellmResult.success ? litellmResult.rawSnapshotsStored : 0) +
-      (geminiResult.success ? geminiResult.rawSnapshotsStored : 0) +
-      (claudeCodeResult.success ? claudeCodeResult.rawSnapshotsStored : 0) +
-      (cursorResult.success ? cursorResult.rawSnapshotsStored : 0),
-    assistantsFound: 0,
-    agentsCreated: 0,
-    agentsUpdated: 0,
-    skipped,
-    errors,
+  const outcome: ProviderSyncOutcome = {
+    provider,
+    label,
+    status: raw.success ? "succeeded" : "skipped" in raw && raw.skipped ? "skipped" : "failed",
+    error: raw.success ? undefined : raw.error,
+    syncRunId: raw.success ? raw.syncRunId : undefined,
+    usageBucketsUpserted: raw.success ? raw.usageBucketsUpserted : 0,
+    costBucketsUpserted: raw.success ? raw.costBucketsUpserted : 0,
+    rawSnapshotsStored: raw.success ? raw.rawSnapshotsStored : 0,
+    projectsUpserted: raw.success ? raw.projectsUpserted : 0,
+    actorsUpserted: raw.success ? raw.actorsUpserted : 0,
   };
 
-  if (openaiResult.success) {
-    try {
-      const assistantsResponse = await listAssistants({ limit: 100, order: "desc" }).catch(async () => {
-        const fullData = await fetchOpenAIOrgData();
-        return fullData.assistants ?? null;
-      });
-      const assistants = ((assistantsResponse as Record<string, unknown> | null)?.data ?? []) as Record<string, unknown>[];
-      results.assistantsFound = assistants.length;
-
-      for (const assistant of assistants) {
-        const name = (assistant.name as string) ?? "Unnamed Assistant";
-        const description =
-          (assistant.instructions as string)?.slice(0, 500) ??
-          (assistant.description as string) ??
-          null;
-        const tools = ((assistant.tools ?? []) as Record<string, unknown>[]).map((t) => t.type as string);
-
-        const existing = await prisma.aIAgent.findFirst({
-          where: { name, department: "OpenAI" },
-        });
-
-        if (existing) {
-          await prisma.aIAgent.update({
-            where: { id: existing.id },
-            data: {
-              description: description ?? existing.description,
-              capabilities: tools.length > 0 ? tools : (existing.capabilities as string[]) ?? [],
-            },
-          });
-          results.agentsUpdated++;
-        } else {
-          await prisma.aIAgent.create({
-            data: {
-              name,
-              description,
-              ownerId: triggeredByUserId === "system" ? (await getFallbackOwnerId()) : triggeredByUserId,
-              capabilities: tools,
-              accessLevel: "api",
-              autonomyLevel: "SUPERVISED",
-              connectedSystems: ["OpenAI Platform"],
-              humanReviewRequired: false,
-              riskLevel: "MEDIUM",
-              status: "DEPLOYED",
-              department: "OpenAI",
-            },
-          });
-          results.agentsCreated++;
-        }
-      }
-    } catch (err) {
-      results.errors.push(`OpenAI assistants: ${err instanceof Error ? err.message : "Failed"}`);
-    }
+  if (provider === "openai" && raw.success) {
+    outcome.assistants = await discoverOpenAIAssistants(triggeredByUserId);
   }
 
   logger.info("provider_sync.completed", {
+    provider,
     userId: triggeredByUserId,
-    anthropicSuccess: anthropicResult.success,
-    openaiSuccess: openaiResult.success,
-    openRouterSuccess: openRouterResult.success,
-    heliconeSuccess: heliconeResult.success,
-    portkeySuccess: portkeyResult.success,
-    litellmSuccess: litellmResult.success,
-    geminiSuccess: geminiResult.success,
-    claudeCodeSuccess: claudeCodeResult.success,
-    cursorSuccess: cursorResult.success,
-    skipped: results.skipped,
-    errors: results.errors,
-    assistantsFound: results.assistantsFound,
-    agentsCreated: results.agentsCreated,
-    agentsUpdated: results.agentsUpdated,
+    status: outcome.status,
+    error: outcome.error,
+    usageBucketsUpserted: outcome.usageBucketsUpserted,
+    costBucketsUpserted: outcome.costBucketsUpserted,
+    assistants: outcome.assistants,
   });
 
-  return results;
+  return outcome;
+}
+
+/**
+ * Sync every provider at once. Used by the manual "Sync now" button
+ * (POST /api/admin-sync); the scheduler runs providers individually via
+ * `runScheduledProviderSync` so one slow provider cannot starve the others.
+ */
+export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Promise<ProviderSyncJobResult> {
+  const outcomes = await Promise.all(
+    SYNC_PROVIDERS.map((provider) => runProviderSync(provider, triggeredByUserId))
+  );
+  return aggregateProviderSyncOutcomes(outcomes);
+}
+
+export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): ProviderSyncJobResult {
+  const byProvider = new Map(outcomes.map((outcome) => [outcome.provider, outcome]));
+  const usage = (provider: SyncProviderId) => byProvider.get(provider)?.usageBucketsUpserted ?? 0;
+  const cost = (provider: SyncProviderId) => byProvider.get(provider)?.costBucketsUpserted ?? 0;
+
+  const skipped: string[] = [];
+  const errors: string[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.status === "skipped") skipped.push(`${outcome.label}: ${outcome.error}`);
+    else if (outcome.status === "failed") errors.push(`${outcome.label}: ${outcome.error}`);
+    if (outcome.assistants?.error) errors.push(`OpenAI assistants: ${outcome.assistants.error}`);
+  }
+
+  const assistants = byProvider.get("openai")?.assistants;
+
+  return {
+    anthropicUsageSynced: usage("anthropic"),
+    openaiUsageSynced: usage("openai"),
+    openRouterUsageSynced: usage("openrouter"),
+    heliconeUsageSynced: usage("helicone"),
+    portkeyUsageSynced: usage("portkey"),
+    litellmUsageSynced: usage("litellm"),
+    geminiUsageSynced: usage("gemini"),
+    claudeCodeUsageSynced: usage("claude_code"),
+    cursorUsageSynced: usage("cursor"),
+    anthropicCostBucketsSynced: cost("anthropic"),
+    openaiCostBucketsSynced: cost("openai"),
+    openRouterCostBucketsSynced: cost("openrouter"),
+    heliconeCostBucketsSynced: cost("helicone"),
+    portkeyCostBucketsSynced: cost("portkey"),
+    litellmCostBucketsSynced: cost("litellm"),
+    geminiCostBucketsSynced: cost("gemini"),
+    claudeCodeCostsSynced: cost("claude_code"),
+    cursorCostBucketsSynced: cost("cursor"),
+    rawSnapshotsStored: outcomes.reduce((sum, outcome) => sum + outcome.rawSnapshotsStored, 0),
+    assistantsFound: assistants?.found ?? 0,
+    agentsCreated: assistants?.created ?? 0,
+    agentsUpdated: assistants?.updated ?? 0,
+    skipped,
+    errors,
+    providers: outcomes,
+  };
 }
 
 async function getFallbackOwnerId() {
@@ -366,297 +498,247 @@ async function getFallbackOwnerId() {
   return adminUser.id;
 }
 
-async function getLatestCompletedScan(scanType: string) {
-  return prisma.scanHistory.findFirst({
-    where: {
-      scanType,
-      status: "completed",
-      completedAt: { not: null },
-    },
-    orderBy: { completedAt: "desc" },
-  });
+// ---------------------------------------------------------------------------
+// Per-provider scheduled sync (/api/cron/provider-sync/[provider])
+// ---------------------------------------------------------------------------
+
+function summarizeRun(
+  run: {
+    id: string;
+    status: string;
+    startedAt: Date;
+    completedAt: Date | null;
+    recordsProcessed: number;
+    errorMessage: string | null;
+  } | null
+): ProviderSyncRunSummary | null {
+  if (!run) return null;
+  return {
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    recordsProcessed: run.recordsProcessed,
+    errorMessage: run.errorMessage,
+  };
 }
 
-export async function runScheduledMaintenance(now = new Date()): Promise<ScheduledMaintenanceResult> {
-  const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
-  const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-
-  await prisma.scanHistory.updateMany({
-    where: { status: "running", startedAt: { lt: tenMinutesAgo } },
-    data: { status: "failed", errorMessage: "Scan timed out", completedAt: now },
-  });
-
-  const [
-    providerSyncEnabledRaw,
-    providerSyncIntervalRaw,
-    googleScanEnabledRaw,
-    googleScanIntervalRaw,
-    microsoftScanEnabledRaw,
-    microsoftScanIntervalRaw,
-    hexnodeScanEnabledRaw,
-    hexnodeScanIntervalRaw,
-    crowdstrikeScanEnabledRaw,
-    crowdstrikeScanIntervalRaw,
-    latestTelemetryRun,
-    latestGoogleScan,
-    latestMicrosoftScan,
-    latestHexnodeScan,
-    latestCrowdStrikeScan,
-    runningTelemetryRun,
-    runningGoogleScan,
-    runningMicrosoftScan,
-    runningHexnodeScan,
-    runningCrowdStrikeScan,
-    googleConfigured,
-    microsoftConfigured,
-    hexnodeConfigured,
-    crowdstrikeConfigured,
-    reviewNoticeDaysRaw,
-    exceptionNoticeDaysRaw,
-    escalationOverdueDaysRaw,
-  ] = await Promise.all([
-    getSetting(PROVIDER_SYNC_SETTINGS_KEYS.ENABLED),
-    getSetting(PROVIDER_SYNC_SETTINGS_KEYS.INTERVAL_HOURS),
-    getSetting(GOOGLE_SETTINGS_KEYS.SCAN_ENABLED),
-    getSetting(GOOGLE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
-    getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_ENABLED),
-    getSetting(MICROSOFT_SHADOW_AI_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
-    getSetting(HEXNODE_SETTINGS_KEYS.SCAN_ENABLED),
-    getSetting(HEXNODE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
-    getSetting(CROWDSTRIKE_SETTINGS_KEYS.SCAN_ENABLED),
-    getSetting(CROWDSTRIKE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS),
-    prisma.providerSyncRun.findFirst({
+async function loadProviderSyncRuns(providers: readonly SyncProviderId[], now: Date) {
+  const runningSince = new Date(now.getTime() - PROVIDER_SYNC_RUNNING_GRACE_MS);
+  const [succeeded, latest, running] = await Promise.all([
+    prisma.providerSyncRun.findMany({
       where: {
+        provider: { in: [...providers] },
         syncType: "telemetry",
         status: "SUCCEEDED",
         completedAt: { not: null },
       },
       orderBy: { completedAt: "desc" },
+      distinct: ["provider"],
     }),
-    getLatestCompletedScan("google_workspace"),
-    getLatestCompletedScan("microsoft_365"),
-    getLatestCompletedScan("hexnode"),
-    getLatestCompletedScan("crowdstrike"),
-    prisma.providerSyncRun.findFirst({
+    prisma.providerSyncRun.findMany({
+      where: { provider: { in: [...providers] }, syncType: "telemetry" },
+      orderBy: { startedAt: "desc" },
+      distinct: ["provider"],
+    }),
+    prisma.providerSyncRun.findMany({
       where: {
+        provider: { in: [...providers] },
         syncType: "telemetry",
         status: "RUNNING",
-        startedAt: { gte: thirtyMinutesAgo },
+        startedAt: { gte: runningSince },
       },
-      orderBy: { startedAt: "desc" },
+      select: { provider: true },
+      distinct: ["provider"],
+    }),
+  ]);
+
+  return {
+    lastSucceededAt: new Map(succeeded.map((run) => [run.provider, run.completedAt])),
+    latestRun: new Map(latest.map((run) => [run.provider, run])),
+    running: new Set(running.map((run) => run.provider)),
+  };
+}
+
+/**
+ * Resolve the effective schedule, last run, and configuration state for the
+ * given providers. Due-ness is computed **per provider** from that provider's
+ * own latest SUCCEEDED run.
+ */
+export async function getProviderSyncStatuses(
+  providers: readonly SyncProviderId[] = SYNC_PROVIDERS,
+  now = new Date()
+): Promise<ProviderSyncStatus[]> {
+  const overrideKeys = providers.flatMap((provider) => {
+    const keys = providerSyncSettingKeys(provider);
+    return [keys.enabled, keys.intervalHours];
+  });
+
+  const [globalEnabledRaw, globalIntervalRaw, overrides, runs, configuredFlags] = await Promise.all([
+    getSetting(PROVIDER_SYNC_SETTINGS_KEYS.ENABLED),
+    getSetting(PROVIDER_SYNC_SETTINGS_KEYS.INTERVAL_HOURS),
+    getSettings(overrideKeys),
+    loadProviderSyncRuns(providers, now),
+    Promise.all(
+      providers.map((provider) =>
+        PROVIDER_CONFIGURED_CHECKS[provider]().catch(() => false)
+      )
+    ),
+  ]);
+
+  return providers.map((provider, index) => {
+    const keys = providerSyncSettingKeys(provider);
+    // getSettings only reads the DB; fall back to the env var the same way
+    // getSetting does so PROVIDER_SYNC_<P>_* env overrides are honoured.
+    const enabledRaw = overrides[keys.enabled] ?? process.env[keys.enabled.toUpperCase()] ?? null;
+    const intervalRaw =
+      overrides[keys.intervalHours] ?? process.env[keys.intervalHours.toUpperCase()] ?? null;
+    const lastSucceededAt = runs.lastSucceededAt.get(provider) ?? null;
+    const configured = configuredFlags[index];
+
+    return {
+      provider,
+      label: SYNC_PROVIDER_LABELS[provider],
+      configured,
+      schedule: resolveProviderSyncSchedule({
+        globalEnabledRaw,
+        globalIntervalRaw,
+        providerEnabledRaw: enabledRaw,
+        providerIntervalRaw: intervalRaw,
+        lastSucceededAt,
+        running: runs.running.has(provider),
+        configured,
+        now,
+      }),
+      overrides: { enabled: enabledRaw, intervalHours: intervalRaw },
+      lastRun: summarizeRun(runs.latestRun.get(provider) ?? null),
+      lastSucceededAt,
+    };
+  });
+}
+
+/**
+ * Cron entry point for one provider: sync it if (and only if) it is enabled,
+ * configured, idle, and past its own interval.
+ */
+export async function runScheduledProviderSync(
+  provider: SyncProviderId,
+  now = new Date()
+): Promise<ScheduledProviderSyncResult> {
+  const [status] = await getProviderSyncStatuses([provider], now);
+  const result: ScheduledProviderSyncResult = {
+    provider,
+    label: status.label,
+    configured: status.configured,
+    enabled: status.schedule.enabled,
+    intervalHours: status.schedule.intervalHours,
+    due: status.schedule.due,
+    skippedReason: status.schedule.skippedReason,
+    nextDueAt: status.schedule.nextDueAt,
+  };
+
+  if (status.schedule.due) {
+    result.result = await runProviderSync(provider, "system");
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Per-source scheduled discovery scan (/api/cron/discovery-scan/[source])
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark scans stuck in `running` beyond the grace period as failed. Scoped to
+ * one source when called from that source's cron so a Hexnode run cannot fail
+ * an in-flight Google Workspace scan on a different function.
+ */
+export async function failStaleScans(now = new Date(), source?: DiscoveryScanSource) {
+  const cutoff = new Date(now.getTime() - DISCOVERY_SCAN_RUNNING_GRACE_MS);
+  const result = await prisma.scanHistory.updateMany({
+    where: {
+      status: "running",
+      startedAt: { lt: cutoff },
+      ...(source ? { scanType: source } : {}),
+    },
+    data: { status: "failed", errorMessage: "Scan timed out", completedAt: now },
+  });
+  return result.count;
+}
+
+export async function getDiscoveryScanSchedule(
+  source: DiscoveryScanSource,
+  now = new Date()
+): Promise<{ configured: boolean; schedule: DiscoveryScanSchedule; lastCompletedAt: Date | null }> {
+  const config = DISCOVERY_SCAN_SETTINGS[source];
+  const runningSince = new Date(now.getTime() - DISCOVERY_SCAN_RUNNING_GRACE_MS);
+
+  const [enabledRaw, intervalRaw, latestCompleted, runningScan, configured] = await Promise.all([
+    getSetting(config.enabled),
+    getSetting(config.intervalHours),
+    prisma.scanHistory.findFirst({
+      where: { scanType: source, status: "completed", completedAt: { not: null } },
+      orderBy: { completedAt: "desc" },
+      select: { completedAt: true },
     }),
     prisma.scanHistory.findFirst({
-      where: {
-        scanType: "google_workspace",
-        status: "running",
-        startedAt: { gte: tenMinutesAgo },
-      },
-      orderBy: { startedAt: "desc" },
+      where: { scanType: source, status: "running", startedAt: { gte: runningSince } },
+      select: { id: true },
     }),
-    prisma.scanHistory.findFirst({
-      where: {
-        scanType: "microsoft_365",
-        status: "running",
-        startedAt: { gte: tenMinutesAgo },
-      },
-      orderBy: { startedAt: "desc" },
+    config.configured().catch(() => false),
+  ]);
+
+  const lastCompletedAt = latestCompleted?.completedAt ?? null;
+  return {
+    configured,
+    lastCompletedAt,
+    schedule: resolveDiscoveryScanSchedule(source, {
+      enabledRaw,
+      intervalRaw,
+      lastCompletedAt,
+      running: !!runningScan,
+      configured,
+      now,
     }),
-    prisma.scanHistory.findFirst({
-      where: {
-        scanType: "hexnode",
-        status: "running",
-        startedAt: { gte: tenMinutesAgo },
-      },
-      orderBy: { startedAt: "desc" },
-    }),
-    prisma.scanHistory.findFirst({
-      where: {
-        scanType: "crowdstrike",
-        status: "running",
-        startedAt: { gte: tenMinutesAgo },
-      },
-      orderBy: { startedAt: "desc" },
-    }),
-    isGoogleWorkspaceConfigured(),
-    isMicrosoft365Configured(),
-    isHexnodeConfigured(),
-    isCrowdStrikeConfigured(),
+  };
+}
+
+export async function runScheduledDiscoveryScan(
+  source: DiscoveryScanSource,
+  now = new Date()
+): Promise<ScheduledDiscoveryScanResult> {
+  const staleScansFailed = await failStaleScans(now, source);
+  const { configured, schedule } = await getDiscoveryScanSchedule(source, now);
+
+  const result: ScheduledDiscoveryScanResult = {
+    source,
+    label: DISCOVERY_SCAN_LABELS[source],
+    configured,
+    enabled: schedule.enabled,
+    intervalHours: schedule.intervalHours,
+    due: schedule.due,
+    skippedReason: schedule.skippedReason,
+    nextDueAt: schedule.nextDueAt,
+    staleScansFailed,
+  };
+
+  if (schedule.due) {
+    result.result = await executeScan("system", source);
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Governance automation (/api/cron/governance-automation)
+// ---------------------------------------------------------------------------
+
+export async function runGovernanceAutomationJob(now = new Date()): Promise<GovernanceAutomationJobResult> {
+  const [reviewNoticeDaysRaw, exceptionNoticeDaysRaw, escalationOverdueDaysRaw] = await Promise.all([
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.REVIEW_NOTICE_DAYS),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.EXCEPTION_NOTICE_DAYS),
     getSetting(GOVERNANCE_AUTOMATION_SETTINGS_KEYS.ESCALATION_OVERDUE_DAYS),
   ]);
-
-  const providerSyncEnabled = parseBooleanSetting(providerSyncEnabledRaw, true);
-  const providerSyncIntervalHours = parseIntervalHours(providerSyncIntervalRaw, 6);
-  const googleScanEnabled = parseBooleanSetting(googleScanEnabledRaw, false);
-  const googleScanIntervalHours = parseIntervalHours(googleScanIntervalRaw, 24);
-  const microsoftScanEnabled = parseBooleanSetting(
-    microsoftScanEnabledRaw,
-    false
-  );
-  const microsoftScanIntervalHours = parseIntervalHours(
-    microsoftScanIntervalRaw,
-    24
-  );
-  const hexnodeScanEnabled = parseBooleanSetting(hexnodeScanEnabledRaw, false);
-  const hexnodeScanIntervalHours = parseIntervalHours(
-    hexnodeScanIntervalRaw,
-    24
-  );
-  const crowdstrikeScanEnabled = parseBooleanSetting(
-    crowdstrikeScanEnabledRaw,
-    false
-  );
-  const crowdstrikeScanIntervalHours = parseIntervalHours(
-    crowdstrikeScanIntervalRaw,
-    24
-  );
-
-  const providerSyncDue =
-    providerSyncEnabled &&
-    !runningTelemetryRun &&
-    isDue(latestTelemetryRun?.completedAt ?? null, providerSyncIntervalHours, now);
-  const googleScanDue =
-    googleScanEnabled &&
-    googleConfigured &&
-    !runningGoogleScan &&
-    isDue(latestGoogleScan?.completedAt ?? null, googleScanIntervalHours, now);
-  const microsoftScanDue =
-    microsoftScanEnabled &&
-    microsoftConfigured &&
-    !runningMicrosoftScan &&
-    isDue(
-      latestMicrosoftScan?.completedAt ?? null,
-      microsoftScanIntervalHours,
-      now
-    );
-  const hexnodeScanDue =
-    hexnodeScanEnabled &&
-    hexnodeConfigured &&
-    !runningHexnodeScan &&
-    isDue(
-      latestHexnodeScan?.completedAt ?? null,
-      hexnodeScanIntervalHours,
-      now
-    );
-  const crowdstrikeScanDue =
-    crowdstrikeScanEnabled &&
-    crowdstrikeConfigured &&
-    !runningCrowdStrikeScan &&
-    isDue(
-      latestCrowdStrikeScan?.completedAt ?? null,
-      crowdstrikeScanIntervalHours,
-      now
-    );
-
-  const result: ScheduledMaintenanceResult = {
-    providerSync: {
-      enabled: providerSyncEnabled,
-      due: providerSyncDue,
-      skippedReason:
-        !providerSyncEnabled
-          ? "Provider sync scheduling is disabled."
-          : runningTelemetryRun
-            ? "A provider sync is already running."
-          : !providerSyncDue
-            ? `Not due yet. Interval is ${providerSyncIntervalHours} hour(s).`
-            : undefined,
-    },
-    googleWorkspaceScan: {
-      enabled: googleScanEnabled,
-      due: googleScanDue,
-      skippedReason:
-        !googleScanEnabled
-          ? "Google Workspace auto-scan is disabled."
-          : !googleConfigured
-            ? "Google Workspace is not configured."
-            : runningGoogleScan
-              ? "A Google Workspace scan is already running."
-            : !googleScanDue
-              ? `Not due yet. Interval is ${googleScanIntervalHours} hour(s).`
-            : undefined,
-    },
-    microsoft365Scan: {
-      enabled: microsoftScanEnabled,
-      due: microsoftScanDue,
-      skippedReason:
-        !microsoftScanEnabled
-          ? "Microsoft 365 auto-scan is disabled."
-          : !microsoftConfigured
-            ? "Microsoft 365 Shadow AI is not configured."
-            : runningMicrosoftScan
-              ? "A Microsoft 365 scan is already running."
-              : !microsoftScanDue
-                ? `Not due yet. Interval is ${microsoftScanIntervalHours} hour(s).`
-        : undefined,
-    },
-    hexnodeScan: {
-      enabled: hexnodeScanEnabled,
-      due: hexnodeScanDue,
-      skippedReason: !hexnodeScanEnabled
-        ? "Hexnode auto-scan is disabled."
-        : !hexnodeConfigured
-          ? "Hexnode is not configured."
-          : runningHexnodeScan
-            ? "A Hexnode scan is already running."
-            : !hexnodeScanDue
-              ? `Not due yet. Interval is ${hexnodeScanIntervalHours} hour(s).`
-              : undefined,
-    },
-    crowdstrikeScan: {
-      enabled: crowdstrikeScanEnabled,
-      due: crowdstrikeScanDue,
-      skippedReason: !crowdstrikeScanEnabled
-        ? "CrowdStrike auto-scan is disabled."
-        : !crowdstrikeConfigured
-          ? "CrowdStrike is not configured."
-          : runningCrowdStrikeScan
-            ? "A CrowdStrike scan is already running."
-            : !crowdstrikeScanDue
-              ? `Not due yet. Interval is ${crowdstrikeScanIntervalHours} hour(s).`
-              : undefined,
-    },
-    governanceAutomation: {
-      reviewRenewals: 0,
-      exceptionRenewals: 0,
-      ownershipEscalations: 0,
-    },
-    keyUsageRules: {
-      rulesEvaluated: 0,
-      keysEvaluated: 0,
-      findings: 0,
-      alertsCreated: 0,
-      alertsUpdated: 0,
-      alertsResolved: 0,
-      profilesUpserted: 0,
-    },
-  };
-
-  if (providerSyncDue) {
-    result.providerSync.result = await runProviderSyncJob("system");
-  }
-
-  if (googleScanDue) {
-    result.googleWorkspaceScan.result = await executeScan(
-      "system",
-      "google_workspace"
-    );
-  }
-
-  if (microsoftScanDue) {
-    result.microsoft365Scan.result = await executeScan(
-      "system",
-      "microsoft_365"
-    );
-  }
-
-  if (hexnodeScanDue) {
-    result.hexnodeScan.result = await executeScan("system", "hexnode");
-  }
-
-  if (crowdstrikeScanDue) {
-    result.crowdstrikeScan.result = await executeScan("system", "crowdstrike");
-  }
 
   const reviewNoticeDays = parseIntervalHours(reviewNoticeDaysRaw, 14);
   const exceptionNoticeDays = parseIntervalHours(exceptionNoticeDaysRaw, 14);
@@ -763,29 +845,91 @@ export async function runScheduledMaintenance(now = new Date()): Promise<Schedul
     })),
   });
 
-  result.governanceAutomation.reviewRenewals = await syncGovernanceAutomationAlerts({
+  const reviewRenewals = await syncGovernanceAutomationAlerts({
     source: "review_renewal",
     candidates: automation.reviewRenewals,
   });
-  result.governanceAutomation.exceptionRenewals = await syncGovernanceAutomationAlerts({
+  const exceptionRenewals = await syncGovernanceAutomationAlerts({
     source: "exception_renewal",
     candidates: automation.exceptionRenewals,
   });
-  result.governanceAutomation.ownershipEscalations = await syncGovernanceAutomationAlerts({
+  const ownershipEscalations = await syncGovernanceAutomationAlerts({
     source: "ownership_escalation",
     candidates: automation.ownershipEscalations,
   });
 
-  // Key-usage rules run last and never fail the maintenance pass: a bad rule
-  // config or a slow telemetry read should not take the provider syncs and
-  // governance automation down with it.
+
+  return { reviewRenewals, exceptionRenewals, ownershipEscalations };
+}
+
+// ---------------------------------------------------------------------------
+// Key usage rules (/api/cron/key-usage-rules)
+// ---------------------------------------------------------------------------
+
+const EMPTY_KEY_USAGE_RESULT: KeyUsageEvaluationResult = {
+  rulesEvaluated: 0,
+  keysEvaluated: 0,
+  findings: 0,
+  alertsCreated: 0,
+  alertsUpdated: 0,
+  alertsResolved: 0,
+  profilesUpserted: 0,
+};
+
+/**
+ * Evaluate key-usage rules. Never throws: a bad rule config or a slow
+ * telemetry read is logged and reported as an empty result so the caller
+ * (cron route or compatibility shim) still returns 200.
+ */
+export async function runKeyUsageRulesJob(
+  now = new Date()
+): Promise<{ ok: boolean; error?: string; result: KeyUsageEvaluationResult }> {
   try {
-    result.keyUsageRules = await runKeyUsageRuleEvaluation(now);
+    return { ok: true, result: await runKeyUsageRuleEvaluation(now) };
   } catch (error) {
-    logger.error(
-      `key-usage rule evaluation failed: ${error instanceof Error ? error.message : String(error)}`
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`key-usage rule evaluation failed: ${message}`);
+    return { ok: false, error: message, result: EMPTY_KEY_USAGE_RESULT };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated compatibility shim (/api/scheduler/maintenance)
+// ---------------------------------------------------------------------------
+
+export const MAINTENANCE_SHIM_DEPRECATION =
+  "GET /api/scheduler/maintenance is deprecated and will be removed next release. " +
+  "Schedule /api/cron/provider-sync/<provider>, /api/cron/discovery-scan/<source>, " +
+  "/api/cron/governance-automation, and /api/cron/key-usage-rules instead (see vercel.json).";
+
+/**
+ * Runs every job the old hourly pass ran, composed from the per-job functions
+ * above so due-ness and skip semantics match the dedicated cron routes exactly.
+ */
+export async function runScheduledMaintenance(now = new Date()): Promise<ScheduledMaintenanceResult> {
+  logger.warn("scheduler.maintenance_shim_invoked", { message: MAINTENANCE_SHIM_DEPRECATION });
+
+  const providerResults = await Promise.all(
+    SYNC_PROVIDERS.map((provider) => runScheduledProviderSync(provider, now))
+  );
+
+  const scanResults: ScheduledDiscoveryScanResult[] = [];
+  for (const source of DISCOVERY_SCAN_SOURCES) {
+    scanResults.push(await runScheduledDiscoveryScan(source, now));
   }
 
-  return result;
+  const governanceAutomation = await runGovernanceAutomationJob(now);
+  const keyUsageRules = await runKeyUsageRulesJob(now);
+
+  return {
+    deprecated: MAINTENANCE_SHIM_DEPRECATION,
+    providerSync: Object.fromEntries(
+      providerResults.map((result) => [result.provider, result])
+    ) as Record<SyncProviderId, ScheduledProviderSyncResult>,
+    discoveryScans: Object.fromEntries(
+      scanResults.map((result) => [result.source, result])
+    ) as Record<DiscoveryScanSource, ScheduledDiscoveryScanResult>,
+    governanceAutomation,
+    keyUsageRules: keyUsageRules.result,
+  };
 }

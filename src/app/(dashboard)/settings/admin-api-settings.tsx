@@ -17,6 +17,54 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { formatDateTime } from "@/lib/utils";
+
+/** Serialisable view of `ProviderSyncStatus` (Dates as ISO strings). */
+export type ProviderSyncStatusView = {
+  provider: string;
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+  enabledSource: "provider" | "global" | "default";
+  intervalHours: number;
+  intervalSource: "provider" | "global" | "default";
+  due: boolean;
+  nextDueAt: string | null;
+  skippedReason?: string;
+  overrideEnabled: string | null;
+  overrideIntervalHours: string | null;
+  lastRun: {
+    status: string;
+    startedAt: string;
+    completedAt: string | null;
+    errorMessage: string | null;
+    recordsProcessed: number;
+  } | null;
+  lastSucceededAt: string | null;
+};
+
+const INTERVAL_OPTIONS = [1, 6, 12, 24] as const;
+
+function formatRelative(iso: string | null, now: number): string {
+  if (!iso) return "never";
+  const diffMs = now - new Date(iso).getTime();
+  const abs = Math.abs(diffMs);
+  const suffix = diffMs >= 0 ? "ago" : "from now";
+  const minutes = Math.round(abs / 60000);
+  if (minutes < 1) return diffMs >= 0 ? "just now" : "in under a minute";
+  if (minutes < 60) return `${minutes} min ${suffix}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ${suffix}`;
+  return `${Math.round(hours / 24)} d ${suffix}`;
+}
+
+function runStatusVariant(status: string): "success" | "critical" | "info" | "default" {
+  if (status === "SUCCEEDED") return "success";
+  if (status === "FAILED") return "critical";
+  if (status === "RUNNING") return "info";
+  return "default";
+}
 
 export interface ProviderConfig {
   id: string;
@@ -170,6 +218,7 @@ interface Props {
   hasGeminiBillingConfig: boolean;
   providerSyncEnabled: boolean;
   providerSyncIntervalHours: number;
+  providerSyncStatuses: ProviderSyncStatusView[];
   geminiBillingProjectId: string;
   geminiBillingDataset: string;
   geminiBillingTable: string;
@@ -199,6 +248,7 @@ export function AdminAPISettings({
   hasGeminiBillingConfig,
   providerSyncEnabled: initialProviderSyncEnabled,
   providerSyncIntervalHours: initialProviderSyncIntervalHours,
+  providerSyncStatuses,
   geminiBillingProjectId: initialGeminiBillingProjectId,
   geminiBillingDataset: initialGeminiBillingDataset,
   geminiBillingTable: initialGeminiBillingTable,
@@ -219,6 +269,21 @@ export function AdminAPISettings({
   const router = useRouter();
   const [providerSyncEnabled, setProviderSyncEnabled] = useState(initialProviderSyncEnabled);
   const [providerSyncIntervalHours, setProviderSyncIntervalHours] = useState(initialProviderSyncIntervalHours);
+  // Per-provider overrides. "" means inherit the global value (the key is
+  // deleted on save); "true"/"false" or an hour count means override.
+  const [providerOverrides, setProviderOverrides] = useState<Record<string, { enabled: string; intervalHours: string }>>(
+    () =>
+      Object.fromEntries(
+        providerSyncStatuses.map((status) => [
+          status.provider,
+          {
+            enabled: status.overrideEnabled ?? "",
+            intervalHours: status.overrideIntervalHours ?? "",
+          },
+        ])
+      )
+  );
+  const [renderedAt] = useState(() => Date.now());
   const [geminiBillingProjectId, setGeminiBillingProjectId] = useState(initialGeminiBillingProjectId);
   const [geminiBillingDataset, setGeminiBillingDataset] = useState(initialGeminiBillingDataset);
   const [geminiBillingTable, setGeminiBillingTable] = useState(initialGeminiBillingTable);
@@ -275,6 +340,12 @@ export function AdminAPISettings({
         body: JSON.stringify({
           provider_sync_enabled: providerSyncEnabled ? "true" : "false",
           provider_sync_interval_hours: String(providerSyncIntervalHours),
+          ...Object.fromEntries(
+            Object.entries(providerOverrides).flatMap(([provider, override]) => [
+              [`provider_sync_${provider}_enabled`, override.enabled || null],
+              [`provider_sync_${provider}_interval_hours`, override.intervalHours || null],
+            ])
+          ),
           anomaly_recent_window_days: String(anomalyRecentWindowDays),
           anomaly_baseline_window_days: String(anomalyBaselineWindowDays),
           anomaly_min_recent_tokens: String(anomalyMinRecentTokens),
@@ -404,7 +475,7 @@ export function AdminAPISettings({
             <div>
               <h4 className="text-sm font-semibold">Background Provider Sync</h4>
               <p className="text-xs text-[var(--text-muted)]">
-                Lets the shared maintenance scheduler refresh provider telemetry and assistant inventory without manual button presses.
+                Each provider runs on its own hourly cron and syncs when its own interval has elapsed since its last successful run. These are the defaults; override any provider below.
               </p>
             </div>
           </div>
@@ -437,6 +508,114 @@ export function AdminAPISettings({
                 <option value="24">Every 24 hours</option>
               </select>
             </div>
+          </div>
+
+
+          <div className="space-y-2">
+            <Label className="text-xs">Per-provider schedule</Label>
+            <div className="overflow-x-auto rounded-md border border-[var(--border-subtle)]">
+              <table className="w-full text-xs">
+                <thead className="bg-[var(--bg-elevated)] text-[var(--text-muted)]">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Provider</th>
+                    <th className="px-3 py-2 text-left font-medium">Auto-sync</th>
+                    <th className="px-3 py-2 text-left font-medium">Interval</th>
+                    <th className="px-3 py-2 text-left font-medium">Last run</th>
+                    <th className="px-3 py-2 text-left font-medium">Next due</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {providerSyncStatuses.map((status) => {
+                    const override = providerOverrides[status.provider] ?? { enabled: "", intervalHours: "" };
+                    const nextDue = !status.enabled
+                      ? "Disabled"
+                      : !status.configured
+                        ? "Not configured"
+                        : status.due
+                          ? "Due on next tick"
+                          : status.nextDueAt
+                            ? formatDateTime(status.nextDueAt)
+                            : "Due on next tick";
+                    return (
+                      <tr key={status.provider} className="border-t border-[var(--border-subtle)] align-top">
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-[var(--text-primary)]">{status.label}</div>
+                          <div className="text-[10px] text-[var(--text-faint)]">
+                            <code>{status.provider}</code>
+                            {" · "}
+                            {status.configured ? "configured" : "not configured"}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <select
+                            aria-label={`${status.label} auto-sync`}
+                            value={override.enabled}
+                            onChange={(e) =>
+                              setProviderOverrides((prev) => ({
+                                ...prev,
+                                [status.provider]: { ...override, enabled: e.target.value },
+                              }))
+                            }
+                            className="h-8 w-full min-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-xs text-[var(--text-primary)] appearance-none"
+                          >
+                            <option value="">Inherit ({providerSyncEnabled ? "Enabled" : "Disabled"})</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <select
+                            aria-label={`${status.label} sync interval`}
+                            value={override.intervalHours}
+                            onChange={(e) =>
+                              setProviderOverrides((prev) => ({
+                                ...prev,
+                                [status.provider]: { ...override, intervalHours: e.target.value },
+                              }))
+                            }
+                            className="h-8 w-full min-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-xs text-[var(--text-primary)] appearance-none"
+                          >
+                            <option value="">Inherit (every {providerSyncIntervalHours} h)</option>
+                            {INTERVAL_OPTIONS.map((hours) => (
+                              <option key={hours} value={String(hours)}>
+                                {hours === 1 ? "Every hour" : `Every ${hours} hours`}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          {status.lastRun ? (
+                            <div className="space-y-1">
+                              <Badge variant={runStatusVariant(status.lastRun.status)}>{status.lastRun.status}</Badge>
+                              <div
+                                className="text-[var(--text-muted)]"
+                                title={status.lastRun.errorMessage ?? formatDateTime(status.lastRun.completedAt ?? status.lastRun.startedAt)}
+                              >
+                                {formatRelative(status.lastRun.completedAt ?? status.lastRun.startedAt, renderedAt)}
+                                {status.lastRun.status === "SUCCEEDED" ? ` · ${status.lastRun.recordsProcessed} records` : ""}
+                              </div>
+                              {status.lastRun.errorMessage ? (
+                                <div className="max-w-[16rem] truncate text-[var(--critical)]" title={status.lastRun.errorMessage}>
+                                  {status.lastRun.errorMessage}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-[var(--text-faint)]">Never run</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-[var(--text-muted)]" title={status.skippedReason}>
+                          {nextDue}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] text-[var(--text-faint)]">
+              Last run and next due reflect the page load. Each provider&apos;s cron fires hourly and only syncs once its own interval has passed since its last successful run.
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -501,7 +680,7 @@ export function AdminAPISettings({
             <div>
               <h4 className="text-sm font-semibold">Governance Renewal Automation</h4>
               <p className="text-xs text-[var(--text-muted)]">
-                Control when scheduled maintenance creates renewal reminders and ownership escalation alerts.
+                Control when the hourly governance-automation cron creates renewal reminders and ownership escalation alerts.
               </p>
             </div>
           </div>
