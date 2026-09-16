@@ -80,7 +80,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │   ├── ai-provider.ts  Provider-agnostic AI client (Anthropic/OpenAI)
 │   │   ├── settings.ts     AppSetting key-value store helper
 │   │   ├── audit.ts        createAuditLog() helper
-│   │   ├── ai-tools-registry.ts  Known AI tools (18 tools) + domain/name matching
+│   │   ├── ai-tools-registry.ts  Known AI tools (160+ entries, categories, risk hints) + domain/fuzzy name matching
 │   │   ├── google-workspace.ts   Google Admin SDK scanner
 │   │   ├── scan-executor.ts      Shadow AI scan orchestrator
 │   │   ├── anthropic-proxy.ts    Claude proxy with streaming support

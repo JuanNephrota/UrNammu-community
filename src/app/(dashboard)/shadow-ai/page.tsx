@@ -19,8 +19,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { DNS_PROXY_IMPORT_SOURCES } from "@/lib/discovered-tools-ingest";
+import { AI_TOOL_CATEGORIES, categoryLabel } from "@/lib/ai-tools-registry";
 import { formatDate } from "@/lib/utils";
 import { ObservationDetails } from "./observation-details";
+import { CategoryBadge, CategorySelect } from "./category-badge";
 
 type Tool = {
   id: string;
@@ -45,6 +47,8 @@ type Tool = {
     entries: { department: string; count: number }[];
     unmatched: number;
   } | null;
+  /** Registry category id (AIToolCategory), or null when unknown. */
+  category?: string | null;
 };
 
 type ScanStatus = {
@@ -124,6 +128,8 @@ export default function ShadowAIPage() {
   // classification on the server can add several seconds of latency.
   const [pendingRegisterId, setPendingRegisterId] = useState<string | null>(null);
   const [ingestionRuns, setIngestionRuns] = useState<IngestionRun[]>([]);
+  // "" = every category; "uncategorized" = rows with no registry category.
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
 
   const fetchTools = useCallback(() => {
     fetch("/api/discovered-tools")
@@ -368,12 +374,35 @@ export default function ShadowAIPage() {
       .catch(() => {});
   }, []);
 
-  const allDiscovered = tools.filter((t) => t.status === "DISCOVERED" || t.status === "UNDER_REVIEW");
+  // Category rollup over everything loaded (the filter narrows the sections
+  // below, not the rollup, so the counts stay a map of the whole estate).
+  const categoryCounts = tools.reduce<Record<string, number>>((acc, t) => {
+    const key = t.category ?? "uncategorized";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+  const categoryRollup = [
+    ...AI_TOOL_CATEGORIES.map((c) => ({ id: c.id, label: c.label, count: categoryCounts[c.id] ?? 0 })),
+    { id: "uncategorized", label: "Uncategorized", count: categoryCounts.uncategorized ?? 0 },
+  ].filter((entry) => entry.count > 0);
+
+  const visibleTools =
+    categoryFilter === ""
+      ? tools
+      : categoryFilter === "uncategorized"
+        ? tools.filter((t) => !t.category)
+        : tools.filter((t) => t.category === categoryFilter);
+
+  const allDiscovered = visibleTools.filter((t) => t.status === "DISCOVERED" || t.status === "UNDER_REVIEW");
   // High-confidence = no matchConfidence set (legacy/manual) or "high"
   const discovered = allDiscovered.filter((t) => !t.matchConfidence || t.matchConfidence === "high");
   // Low/medium confidence candidates for review queue
   const lowConfidenceCandidates = allDiscovered.filter((t) => t.matchConfidence === "low" || t.matchConfidence === "medium");
-  const resolved = tools.filter((t) => !["DISCOVERED", "UNDER_REVIEW"].includes(t.status));
+  const resolved = visibleTools.filter((t) => !["DISCOVERED", "UNDER_REVIEW"].includes(t.status));
+
+  function updateToolCategory(id: string, category: string | null) {
+    setTools((prev) => prev.map((t) => (t.id === id ? { ...t, category } : t)));
+  }
 
   async function handlePromote(id: string) {
     const res = await fetch(`/api/discovered-tools/${id}`, {
@@ -698,6 +727,78 @@ export default function ShadowAIPage() {
         </Card>
       </div>
 
+      {/* Category rollup + filter */}
+      {tools.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-4">
+            <CardTitle className="flex items-center gap-2">
+              By Category
+              <span className="text-xs font-normal text-[var(--text-faint)]">
+                {categoryRollup.length} of {AI_TOOL_CATEGORIES.length} categories seen
+              </span>
+            </CardTitle>
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              Filter
+              <select
+                aria-label="Filter by category"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="h-8 rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-xs text-[var(--text-primary)]"
+              >
+                <option value="">All categories</option>
+                {AI_TOOL_CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label} ({categoryCounts[c.id] ?? 0})
+                  </option>
+                ))}
+                <option value="uncategorized">Uncategorized ({categoryCounts.uncategorized ?? 0})</option>
+              </select>
+            </label>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {categoryRollup.map((entry) => {
+                const active = categoryFilter === entry.id;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => setCategoryFilter(active ? "" : entry.id)}
+                    aria-pressed={active}
+                    className={`flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                      active
+                        ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-base)] text-[var(--text-secondary)] hover:border-[var(--border-default)]"
+                    }`}
+                  >
+                    <span>{entry.label}</span>
+                    <span
+                      className="rounded bg-[var(--bg-elevated)] px-1.5 text-[11px] font-semibold text-[var(--text-primary)]"
+                      style={{ fontFamily: "var(--font-display)" }}
+                    >
+                      {entry.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {categoryFilter !== "" && (
+              <p className="mt-3 text-xs text-[var(--text-faint)]">
+                Showing {visibleTools.length} tool{visibleTools.length === 1 ? "" : "s"} in{" "}
+                {categoryFilter === "uncategorized" ? "Uncategorized" : categoryLabel(categoryFilter)}.{" "}
+                <button
+                  type="button"
+                  onClick={() => setCategoryFilter("")}
+                  className="text-[var(--accent)] hover:underline"
+                >
+                  Clear filter
+                </button>
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {loading ? (
         <p className="text-[var(--text-muted)]">Loading...</p>
       ) : (
@@ -713,6 +814,7 @@ export default function ShadowAIPage() {
                         <div>
                           <div className="flex items-center gap-2">
                             <p className="font-medium">{tool.toolName}</p>
+                            <CategoryBadge category={tool.category} />
                             {(tool.detectionSource === "google_workspace" ||
                               tool.detectionSource === "microsoft_365") && (
                               <Badge variant="info" className="text-[9px] px-1.5">
@@ -727,6 +829,14 @@ export default function ShadowAIPage() {
                           <p className="text-xs text-[var(--text-faint)] mt-1">
                             Detected via {tool.detectionSource.replace("_", " ")} on {new Date(tool.detectedAt).toLocaleDateString()}
                           </p>
+                          <div className="mt-2 flex items-center gap-2 text-xs text-[var(--text-faint)]">
+                            <span>Category</span>
+                            <CategorySelect
+                              toolId={tool.id}
+                              category={tool.category}
+                              onChange={(category) => updateToolCategory(tool.id, category)}
+                            />
+                          </div>
                           <div className="mt-2">
                             <ObservationDetails
                               firstSeenAt={tool.firstSeenAt}
@@ -819,6 +929,7 @@ export default function ShadowAIPage() {
                           <Badge variant={tool.matchConfidence === "low" ? "warning" : "info"}>
                             {tool.matchConfidence}
                           </Badge>
+                          <CategoryBadge category={tool.category} />
                           {tool.matchScore != null && (
                             <span className="text-[10px] text-[var(--text-faint)]">Score: {tool.matchScore}</span>
                           )}
@@ -902,6 +1013,7 @@ export default function ShadowAIPage() {
                             )}
                           </p>
                         </div>
+                        <CategoryBadge category={tool.category} />
                         {(tool.detectionSource === "google_workspace" ||
                           tool.detectionSource === "microsoft_365") && (
                           <Badge variant="info" className="text-[9px] px-1.5">
@@ -989,6 +1101,19 @@ export default function ShadowAIPage() {
             <div className="text-xs text-[var(--text-faint)]">
               {dismissedCount} dismissed candidate{dismissedCount !== 1 ? "s" : ""} hidden from future scans.
             </div>
+          )}
+
+          {tools.length > 0 && visibleTools.length === 0 && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-8">
+                <p className="text-[var(--text-muted)]">
+                  No tools in {categoryFilter === "uncategorized" ? "Uncategorized" : categoryLabel(categoryFilter)}.
+                </p>
+                <Button variant="ghost" size="sm" className="mt-2" onClick={() => setCategoryFilter("")}>
+                  Clear filter
+                </Button>
+              </CardContent>
+            </Card>
           )}
 
           {tools.length === 0 && (

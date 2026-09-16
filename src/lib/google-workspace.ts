@@ -491,6 +491,7 @@ function buildLowConfidenceCandidate(
     tool: {
       toolName: normalizedName,
       vendor: "Needs Review",
+      category: "other",
       domains: [domain],
       clientNamePatterns: [normalizedName.toLowerCase()],
     },

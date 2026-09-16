@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { findMatchingGovernedSystem } from "@/lib/governed-system-match";
 import { normalizeDirectoryEmail, rollupDepartments } from "@/lib/directory-identity";
+import { isAIToolCategory, resolveToolCategory } from "@/lib/ai-tools-registry";
 
 const createDiscoveredToolSchema = z.object({
   toolName: z.string().min(1),
@@ -24,11 +25,19 @@ export async function GET(req: NextRequest) {
     const includeSuppressed =
       req.nextUrl.searchParams.get("includeSuppressed") === "true";
     const confidence = req.nextUrl.searchParams.get("confidence");
+    // ?category=<AIToolCategory> narrows to one registry category;
+    // ?category=uncategorized returns rows with no category.
+    const category = req.nextUrl.searchParams.get("category");
 
     const where: Record<string, unknown> = {};
     if (!includeSuppressed) where.linkedSystemId = null;
     if (confidence && ["high", "medium", "low"].includes(confidence)) {
       where.matchConfidence = confidence;
+    }
+    if (isAIToolCategory(category)) {
+      where.category = category;
+    } else if (category === "uncategorized") {
+      where.category = null;
     }
 
     const tools = await prisma.discoveredAITool.findMany({
@@ -84,17 +93,25 @@ export async function POST(req: NextRequest) {
       detectedDomain: parsed.data.detectedDomain,
     });
 
+    // Manual reports carry no registry match; derive the category from the
+    // registry when the reported name or domain is a known tool.
+    const category = resolveToolCategory({
+      toolName: parsed.data.toolName,
+      domain: parsed.data.detectedDomain,
+    });
+
     const tool = await prisma.discoveredAITool.create({
       data: governedMatch
         ? {
             ...parsed.data,
+            category,
             status: "REGISTERED",
             linkedSystemId: governedMatch.id,
             notes: parsed.data.notes
               ? `${parsed.data.notes}\nSuppressed: matches governed system "${governedMatch.name}".`
               : `Suppressed: matches governed system "${governedMatch.name}".`,
           }
-        : parsed.data,
+        : { ...parsed.data, category },
     });
 
     // Only alert on genuinely new shadow AI — suppress when the tool is

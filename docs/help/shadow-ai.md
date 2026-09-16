@@ -29,13 +29,24 @@ Each discovered tool records what the scans actually observed, shown under the t
 
 The **user count** follows one rule: a rescan from the **same** source replaces the count, so it can go down when access is revoked or devices are retired; a **different** source only ever raises it, so two partial views combine as a maximum rather than overwriting each other.
 
+## Tool categories
+
+Every tool in the known-AI-tools registry (160+ entries) carries a category, and a discovery inherits it when it matches the registry. The categories are a fixed set: Chat Assistant, Coding Assistant, Agent Platform, Image Generation, Video Generation, Audio & Voice, Writing, Meeting Notes, Search & Research, ML Platform, Data Analysis, Productivity, Translation, Customer Support, Browser Extension, and Other.
+
+- Each discovered tool shows a **category badge** beside its name. Tools that matched nothing in the registry (heuristic `.ai` candidates, manual reports of unknown tools) show **Uncategorized**.
+- The **By Category** panel counts discoveries per category across the whole page. Click a category chip, or use the **Filter** select, to narrow every section to one category; **Uncategorized** is its own filter.
+- On a **Needs Review** card the **Category** select changes the category by hand — for a tool the registry does not know, or one it classified in a way that does not fit how your organization uses it. Changes are audit-logged.
+- Existing discoveries from before categories were introduced are filled in on the next scan or import that sees them, or all at once by an administrator running the backfill script.
+
 ## Confidence scoring
 
 Every discovered tool is assigned a match confidence based on how it was identified:
 
 - **High** (score 10+) — strong match via domain + name or multiple signals.
 - **Medium** (score 6–9) — partial match via name or publisher only.
-- **Low** (score < 6) — heuristic match via AI keywords (e.g. ".ai" domain, "gpt", "copilot") but no known registry entry.
+- **Low** (score < 6) — heuristic match via AI keywords (e.g. ".ai" domain, "gpt", "copilot") but no known registry entry, or a fuzzy name match on its own.
+
+Names from app inventories and OAuth grants are matched to the registry loosely as well as exactly. A **fuzzy** match ignores case, punctuation and filler words ("AI", "Inc", "the"), allows one typo in a word of five or more letters, and tolerates split or hyphenated names — so "Perplexty", "mid journey" and "Github Co-pilot" resolve to Perplexity, Midjourney and GitHub Copilot. A fuzzy hit scores less than an exact name (4 versus 6) and is recorded as a `fuzzy_name:` reason on the discovery so reviewers can see what was inferred. A vendor name on its own ("Google", "Microsoft") is never treated as a tool match.
 
 ## Page sections
 

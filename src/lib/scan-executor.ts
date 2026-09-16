@@ -15,6 +15,7 @@ import {
   runCrowdStrikeScan,
 } from "./crowdstrike";
 import { findMatchingGovernedSystem } from "./governed-system-match";
+import { resolveToolCategory } from "./ai-tools-registry";
 import {
   dismissedDomainKey,
   initialDiscoveryObservation,
@@ -154,6 +155,11 @@ export async function executeScan(
         },
       });
 
+      const category = resolveToolCategory({
+        toolName: discovery.toolName,
+        domain: discovery.domain,
+      });
+
       if (existing) {
         // Always refresh the observation columns (emails, scopes, seen window,
         // count) — lastSeenAt must advance on every scan even when nothing
@@ -163,6 +169,11 @@ export async function executeScan(
           updates.matchConfidence = discovery.matchConfidence;
           updates.matchScore = discovery.matchScore ?? null;
           updates.matchReasons = discovery.matchReasons ?? [];
+        }
+        // Backfill the registry category for rows created before categories
+        // existed. Never overwrite a value a reviewer may have set by hand.
+        if (!existing.category && category) {
+          updates.category = category;
         }
         // Backfill the identity-provider app handle if a prior scan didn't
         // capture it (e.g. discovered via DNS import first, then OAuth scan).
@@ -221,6 +232,7 @@ export async function executeScan(
               matchConfidence: discovery.matchConfidence ?? null,
               matchScore: discovery.matchScore ?? null,
               matchReasons: discovery.matchReasons ?? [],
+              category,
               externalAppId: discovery.externalAppId ?? null,
               externalAppProvider: discovery.externalAppProvider ?? null,
               notes: governedMatch

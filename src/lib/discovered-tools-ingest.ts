@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { matchDomain, matchDomainHeuristic } from "./ai-tools-registry";
+import { matchDomain, matchDomainHeuristic, type AIToolCategory } from "./ai-tools-registry";
 import { findMatchingGovernedSystem } from "./governed-system-match";
 import { logger } from "./observability";
 import { parseCsv } from "./csv";
@@ -273,6 +273,8 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       matchConfidence: "high" | "low";
       matchScore: number;
       matchReasons: string[];
+      /** Registry category; null for heuristic (unknown-tool) candidates. */
+      category: AIToolCategory | null;
     }
   >();
 
@@ -330,6 +332,7 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       matchReasons: registryMatch
         ? [`domain matched '${registryMatch.domains[0]}'`]
         : heuristicMatch!.reasons,
+      category: registryMatch ? registryMatch.category : null,
     });
   }
 
@@ -377,6 +380,7 @@ async function runIngestion(source: string, entries: LogEntry[]) {
       firstSeenAt: Date | null;
       lastSeenAt: Date | null;
       notes: string | null;
+      category: string | null;
     }) => {
       // Same-source re-import replaces the count (it may drop); a different
       // source only raises it. See discovery-merge.ts.
@@ -391,6 +395,11 @@ async function runIngestion(source: string, entries: LogEntry[]) {
           firstSeenAt: merged.firstSeenAt,
           lastSeenAt: merged.lastSeenAt,
           notes: existing.notes ? `${existing.notes}\n${line}` : line,
+          // Backfill the registry category on legacy rows; never overwrite a
+          // value a reviewer may have set by hand.
+          ...(!existing.category && discovery.category
+            ? { category: discovery.category }
+            : {}),
         },
       });
       updatedTools++;
@@ -446,6 +455,7 @@ async function runIngestion(source: string, entries: LogEntry[]) {
           matchConfidence: discovery.matchConfidence,
           matchScore: discovery.matchScore,
           matchReasons: discovery.matchReasons,
+          category: discovery.category,
           notes: governedMatch
             ? `${baseNotes} Suppressed: matches governed system "${governedMatch.name}".`
             : baseNotes,

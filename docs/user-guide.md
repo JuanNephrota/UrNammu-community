@@ -604,7 +604,7 @@ Discovered entries are deduplicated by `toolName + domain`. Each finding becomes
 
 ### Importing DNS / Proxy Logs
 
-The importer takes raw DNS or web-proxy log exports — you do not pre-classify tools; UrNammu matches the observed hostnames against its AI tools registry (plus AI-keyword heuristics for low-confidence candidates).
+The importer takes raw DNS or web-proxy log exports — you do not pre-classify tools; UrNammu matches the observed hostnames against its AI tools registry of 160+ known tools (plus AI-keyword heuristics for low-confidence candidates). When several registry hosts match, the most specific wins — `labs.openai.com` resolves to DALL·E, not to the broader ChatGPT entry that owns `openai.com`.
 
 **CSV / TXT upload** — **Shadow AI → Import CSV** (or `POST /api/discovered-tools/import` as multipart `file` + `source`). Pick the export's vendor so the right column names are recognized: `umbrella` (Cisco Umbrella), `cloudflare_gateway`, `zscaler`, `netskope`, `prisma_access`, `dnsfilter`, `nextdns`, or the generic `dns_proxy` / `firewall` / `siem` / `other`. The header row is matched case-insensitively against each preset's aliases; the generic preset understands:
 
@@ -646,6 +646,44 @@ The inverse also runs: when a new AISystem is registered, any pre-existing unlin
 
 Suppressed discoveries are hidden from the Shadow AI page by default. Admins who want to audit suppressions can fetch them via `GET /api/discovered-tools?includeSuppressed=true`.
 
+### Tool Categories
+
+Every entry in the known-AI-tools registry carries a **category**, and a discovery inherits it when it matches the registry (`DiscoveredAITool.category`). The set is closed:
+
+| Category id | Label | Examples |
+|-------------|-------|----------|
+| `chat_assistant` | Chat Assistant | ChatGPT, Claude, Gemini, DeepSeek, Grok |
+| `coding_assistant` | Coding Assistant | GitHub Copilot, Cursor, Windsurf, Devin, Cline |
+| `agent_platform` | Agent Platform | Zapier Agents, n8n, Relevance AI, Manus |
+| `image_generation` | Image Generation | Midjourney, Stability AI, Ideogram, DALL·E |
+| `video_generation` | Video Generation | Runway, Pika, Luma, HeyGen, Synthesia, Sora |
+| `audio_voice` | Audio & Voice | ElevenLabs, Suno, Descript, Deepgram |
+| `writing` | Writing | Grammarly, Jasper, Copy.ai, QuillBot |
+| `meeting_notes` | Meeting Notes | Otter, Fireflies, Read AI, Fathom, Gong |
+| `search` | Search & Research | Perplexity, Glean, Consensus, Elicit |
+| `ml_platform` | ML Platform | Hugging Face, Replicate, Groq, OpenRouter, Azure OpenAI |
+| `data_analysis` | Data Analysis | Julius, Hex Magic, ThoughtSpot Sage |
+| `productivity` | Productivity | Notion AI, Gamma, Canva Magic Studio |
+| `translation` | Translation | DeepL, Lilt, Smartling |
+| `customer_support` | Customer Support | Intercom Fin, Ada, Sierra, Decagon |
+| `browser_extension` | Browser Extension | Monica, Merlin, Sider, HARPA, MaxAI |
+| `other` | Other | anything that fits none of the above |
+
+On the Shadow AI page:
+
+- A **category badge** appears beside each tool name in every section. Discoveries that matched nothing in the registry show **Uncategorized**.
+- The **By Category** panel rolls up discoveries per category. Click a chip, or use the **Filter** select, to narrow the Needs Review, Low-Confidence and Resolved sections to one category (**Uncategorized** is its own filter). The rollup itself always reflects the whole page.
+- The **Category** select on a Needs Review card lets a reviewer set or clear the category by hand. It goes through `PUT /api/discovered-tools/{id}` with `{ "category": "<id>" | null }`, is validated against the closed set, and writes an `UPDATE_CATEGORY` audit entry. `GET /api/discovered-tools?category=<id>` (or `=uncategorized`) filters server-side.
+
+Rows created before categories existed have `category = NULL`. Scans and imports backfill it the next time they observe the tool (never overwriting a value already present), or an administrator fills every row at once:
+
+```bash
+npx tsx scripts/backfill-tool-categories.ts --dry-run   # report what would change
+npx tsx scripts/backfill-tool-categories.ts             # write categories
+```
+
+The registry also carries **risk hints** per tool — `trains_on_data`, `consumer_grade`, `china_hosted`, `no_enterprise_tier` — as reviewer context for the approve/block decision. They are informational and do not change scores.
+
 ### Confidence Scoring
 
 Every discovered tool is assigned a match confidence level based on how it was identified:
@@ -654,7 +692,17 @@ Every discovered tool is assigned a match confidence level based on how it was i
 |-----------|-------------|---------|
 | **High** | 10+ | Strong match — domain + name or multiple signals confirmed |
 | **Medium** | 6–9 | Partial match — name or publisher matched but not domain |
-| **Low** | < 6 | Heuristic match — AI keywords detected (e.g. `.ai` domain, "gpt", "copilot") but no known registry match |
+| **Low** | < 6 | Heuristic match — AI keywords detected (e.g. `.ai` domain, "gpt", "copilot") but no known registry match, or a fuzzy name match alone |
+
+Signals and their weights: exact name pattern **+6**, fuzzy name **+4**, publisher **+4**, domain **+8**, OAuth scope referencing a domain **+3**, app/bundle id **+5**. On an equal score the more specific match wins (a longer name pattern or a longer domain), so "OpenAI Codex" resolves to Codex rather than ChatGPT.
+
+**Fuzzy name matching.** App names from device inventories and OAuth grants rarely match the registry letter-for-letter, so names are also compared loosely:
+
+- Both sides are normalized — lowercased, punctuation dropped, and the filler tokens `ai`, `inc`, `llc`, `app`, `the` removed — and compared token by token.
+- Every token of the registry pattern must be covered by a token of the observed name, either exactly or within one edit (Damerau-Levenshtein distance ≤ 1: one insertion, deletion, substitution or adjacent swap) for tokens of five or more characters. Adjacent observed tokens are also tried joined, so "mid journey" covers `midjourney` and "Co-pilot" covers `copilot`.
+- A single plain-English word is never enough on its own (`beautiful`, `continue`, `meta`, …); such tools need their multi-word pattern, their domain, or their app id.
+- A fuzzy hit adds a `fuzzy_name:<observed tokens>` entry to the match reasons, e.g. `fuzzy_name:perplexty`.
+- The publisher/vendor name is never fuzzy-matched. A bare vendor ("Google", "Microsoft") can still register as a publisher signal, but the device-inventory scanners (Hexnode, CrowdStrike) reject publisher-only matches, so Word is not flagged as Copilot.
 
 Confidence, score, and match reasons are stored on each `DiscoveredAITool` record and displayed in the UI.
 

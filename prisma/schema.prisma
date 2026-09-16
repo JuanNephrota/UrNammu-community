@@ -358,6 +358,12 @@ model DiscoveredAITool {
   matchScore      Int?            // numeric score from resolveAIToolMatch
   matchReasons    Json?           // array of reason strings
 
+  // Registry category (AIToolCategory in src/lib/ai-tools-registry.ts), set
+  // from the registry match on create and backfilled when null. Editable by
+  // reviewers via PUT /api/discovered-tools/[id]. Null for heuristic-only
+  // discoveries that match nothing in the registry.
+  category        String?
+
   // Identity-provider app handle captured at scan time, used to target
   // identity-layer enforcement (revoke/disable the app's SSO access).
   // externalAppProvider: "google_workspace" | "microsoft_365".
@@ -385,6 +391,7 @@ model DiscoveredAITool {
   @@index([status, matchConfidence])
   @@index([externalAppProvider, externalAppId])
   @@index([lastSeenAt])
+  @@index([category])
 }
 
 model DismissedCandidate {

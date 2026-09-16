@@ -6,17 +6,21 @@ import { createAuditLog } from "@/lib/audit";
 import { classifyDiscoveredTool } from "@/lib/ai-classification";
 import { enforceIdentityBlock, type IdentityEnforcementResult } from "@/lib/identity-enforcement";
 import { dismissedDomainKey } from "@/lib/discovery-merge";
+import { AI_TOOL_CATEGORY_IDS } from "@/lib/ai-tools-registry";
 
-const updateDiscoveredToolSchema = z.object({
-  status: z.enum([
-    "DISCOVERED",
-    "UNDER_REVIEW",
-    "REGISTERED",
-    "BLOCKED",
-    "APPROVED",
-  ]),
-  notes: z.string().max(2000).nullish(),
-});
+// A regular update may change the status, the category, or both. `category`
+// is validated against the registry's closed set; null clears it.
+const updateDiscoveredToolSchema = z
+  .object({
+    status: z
+      .enum(["DISCOVERED", "UNDER_REVIEW", "REGISTERED", "BLOCKED", "APPROVED"])
+      .optional(),
+    notes: z.string().max(2000).nullish(),
+    category: z.enum(AI_TOOL_CATEGORY_IDS).nullable().optional(),
+  })
+  .refine((data) => data.status !== undefined || data.category !== undefined, {
+    message: "status or category is required",
+  });
 
 export async function PUT(
   req: NextRequest,
@@ -175,22 +179,37 @@ export async function PUT(
     const existing = await prisma.discoveredAITool.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    const nextStatus = parsed.data.status ?? existing.status;
+    const categoryChanged =
+      parsed.data.category !== undefined && parsed.data.category !== existing.category;
+
     const updated = await prisma.discoveredAITool.update({
       where: { id },
       data: {
-        status: parsed.data.status,
+        status: nextStatus,
         ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
+        ...(categoryChanged ? { category: parsed.data.category } : {}),
       },
     });
+
+    if (categoryChanged) {
+      await createAuditLog({
+        userId: session.user.userId,
+        action: "UPDATE_CATEGORY",
+        entityType: "DiscoveredAITool",
+        entityId: id,
+        changes: { from: existing.category, to: parsed.data.category ?? null },
+      });
+    }
 
     // Identity-layer enforcement: when a tool enters BLOCKED, disable its IdP
     // sign-ins; when it leaves BLOCKED, restore them. Best-effort — a failure
     // here is reported, not fatal, so the status change still persists.
     let identityEnforcement: IdentityEnforcementResult | undefined;
     const enteringBlocked =
-      parsed.data.status === "BLOCKED" && existing.status !== "BLOCKED";
+      nextStatus === "BLOCKED" && existing.status !== "BLOCKED";
     const leavingBlocked =
-      existing.status === "BLOCKED" && parsed.data.status !== "BLOCKED";
+      existing.status === "BLOCKED" && nextStatus !== "BLOCKED";
     if (enteringBlocked || leavingBlocked) {
       identityEnforcement = await enforceIdentityBlock(
         {
@@ -202,7 +221,7 @@ export async function PUT(
       );
     }
 
-    if (existing.status !== parsed.data.status) {
+    if (existing.status !== nextStatus) {
       const action = existing.status === "BLOCKED" ? "UNBLOCK" : "UPDATE_STATUS";
       await createAuditLog({
         userId: session.user.userId,
@@ -211,7 +230,7 @@ export async function PUT(
         entityId: id,
         changes: {
           from: existing.status,
-          to: parsed.data.status,
+          to: nextStatus,
           ...(identityEnforcement
             ? {
                 identityEnforcement: {
