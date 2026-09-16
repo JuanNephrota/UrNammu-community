@@ -9,6 +9,9 @@
     "url": "https://github.com/JuanNephrota/UrNammu.git"
   },
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
