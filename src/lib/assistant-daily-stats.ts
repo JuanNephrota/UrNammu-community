@@ -8,9 +8,15 @@ import type { ChatGPTDailyCounts, CodexDailyCounts } from "./chatgpt-enterprise-
 // loop in provider-telemetry.ts owns fetching and the Prisma upserts; the
 // column semantics live here so they can be unit-tested and so every reader
 // (Usage by Person, the Cursor and Claude Code oversight pages, reports)
-// agrees on what each column means.
+// agrees on what each column means. The GitHub Copilot mapper lives in
+// github-copilot-metrics.ts next to its Zod schemas.
 
-export type AssistantProvider = "claude_code" | "cursor" | "chatgpt" | "codex";
+export type AssistantProvider =
+  | "claude_code"
+  | "cursor"
+  | "github_copilot"
+  | "chatgpt"
+  | "codex";
 
 /** Column values for one AssistantDailyStat row, minus id / sync-run bookkeeping. */
 export interface AssistantDailyStatValues {

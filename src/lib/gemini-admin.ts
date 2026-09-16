@@ -195,7 +195,20 @@ function getBillingTableReference(config: GeminiBillingConfig) {
   return `\`${config.projectId}.${config.dataset}.${config.table}\``;
 }
 
-function getGeminiUsageQuery(config: GeminiBillingConfig) {
+/** Row cap on the billing-export query; hitting it flags the sync as truncated. */
+export const GEMINI_BILLING_ROW_LIMIT = 5000;
+
+/**
+ * Billing-export query. Two window modes share the same shape:
+ *   - `lookback`: rows since `CURRENT_TIMESTAMP() - @lookback_days` (overview);
+ *   - `window`:   rows with `@window_start <= usage_start_time < @window_end`
+ *                 (incremental sync / backfill).
+ */
+function getGeminiUsageQuery(config: GeminiBillingConfig, mode: "lookback" | "window" = "lookback") {
+  const whereWindow =
+    mode === "window"
+      ? "usage_start_time >= @window_start AND usage_start_time < @window_end"
+      : "usage_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL CAST(@lookback_days AS INT64) DAY)";
   return `
     SELECT
       CAST(DATE(usage_start_time) AS STRING) AS usage_date,
@@ -207,7 +220,7 @@ function getGeminiUsageQuery(config: GeminiBillingConfig) {
       SUM(COALESCE(usage.amount, 0)) AS usage_amount,
       ANY_VALUE(usage.unit) AS usage_unit
     FROM ${getBillingTableReference(config)}
-    WHERE usage_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL CAST(@lookback_days AS INT64) DAY)
+    WHERE ${whereWindow}
       AND (
         LOWER(COALESCE(service.description, '')) LIKE '%vertex ai%'
         OR LOWER(COALESCE(service.description, '')) LIKE '%gemini%'
@@ -216,7 +229,7 @@ function getGeminiUsageQuery(config: GeminiBillingConfig) {
       )
     GROUP BY usage_date, project_id, sku_description
     ORDER BY usage_date DESC, total_cost DESC
-    LIMIT 5000
+    LIMIT ${GEMINI_BILLING_ROW_LIMIT}
   `;
 }
 
@@ -293,6 +306,40 @@ export async function getGeminiBillingOverview() {
     rowCount: rows.length,
     topSkus: [...bySku.values()].sort((a, b) => b.cost - a.cost).slice(0, 6),
     topProjects: [...byProject.values()].sort((a, b) => b.cost - a.cost).slice(0, 6),
+  };
+}
+
+export type GeminiBillingWindowResult = {
+  rows: GeminiBillingRow[];
+  /** Always 1 — BigQuery returns the capped result in one response. */
+  pages: number;
+  /** True when the row cap was hit; the window has more rows than were read. */
+  truncated: boolean;
+};
+
+/** Billing rows for an explicit `[from, to)` window (incremental sync / backfill). */
+export async function getGeminiBillingRowsForWindow(window: {
+  from: Date;
+  to: Date;
+}): Promise<GeminiBillingWindowResult> {
+  const config = await getConfig();
+  const rows = await runBigQueryQuery<Record<string, unknown>>(getGeminiUsageQuery(config, "window"), [
+    {
+      name: "window_start",
+      parameterType: { type: "TIMESTAMP" },
+      parameterValue: { value: window.from.toISOString() },
+    },
+    {
+      name: "window_end",
+      parameterType: { type: "TIMESTAMP" },
+      parameterValue: { value: window.to.toISOString() },
+    },
+  ]);
+
+  return {
+    rows: rows.map(normalizeBillingRow),
+    pages: 1,
+    truncated: rows.length >= GEMINI_BILLING_ROW_LIMIT,
   };
 }
 

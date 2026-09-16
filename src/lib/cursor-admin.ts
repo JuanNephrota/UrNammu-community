@@ -120,15 +120,29 @@ interface Pagination {
 
 // ─── Endpoints ───────────────────────────────────────────
 
+/** Page caps — runaway guards. Hitting one flags the result `truncated`. */
+export const CURSOR_DAILY_USAGE_MAX_PAGES = 50;
+export const CURSOR_USAGE_EVENTS_MAX_PAGES = 200;
+export const CURSOR_PAGE_SIZE = 1000;
+
+export type CursorPagedResult<T> = {
+  rows: T[];
+  /** Number of pages actually fetched. */
+  pages: number;
+  /** True when the page cap was reached while the API still reported hasNextPage. */
+  truncated: boolean;
+};
+
 /** Per-user, per-day activity. start/end are epoch ms. Paginated. */
 export async function getCursorDailyUsage(
   startMs: number,
   endMs: number,
-): Promise<CursorDailyUsageRow[]> {
+): Promise<CursorPagedResult<CursorDailyUsageRow>> {
   const rows: CursorDailyUsageRow[] = [];
   let page = 1;
-  // Hard cap on pages as a runaway guard (1000 users/page).
-  for (let i = 0; i < 50; i++) {
+  let pages = 0;
+  let truncated = false;
+  for (let i = 0; i < CURSOR_DAILY_USAGE_MAX_PAGES; i++) {
     const res = await adminPost<{
       data?: CursorDailyUsageRow[];
       pagination?: Pagination;
@@ -136,13 +150,15 @@ export async function getCursorDailyUsage(
       startDate: startMs,
       endDate: endMs,
       page,
-      pageSize: 1000,
+      pageSize: CURSOR_PAGE_SIZE,
     });
+    pages++;
     rows.push(...(res.data ?? []));
     if (!res.pagination?.hasNextPage) break;
+    if (i === CURSOR_DAILY_USAGE_MAX_PAGES - 1) truncated = true;
     page++;
   }
-  return rows;
+  return { rows, pages, truncated };
 }
 
 /** Current-cycle per-member spend. Returns members + cycle start. */
@@ -191,11 +207,14 @@ export async function testCursorAdmin(): Promise<{ success: boolean; message: st
 export async function getCursorUsageEvents(
   startMs: number,
   endMs: number,
-): Promise<CursorUsageEvent[]> {
-  const events: CursorUsageEvent[] = [];
+): Promise<CursorPagedResult<CursorUsageEvent>> {
+  const rows: CursorUsageEvent[] = [];
   let page = 1;
-  // Cap pages — events can be voluminous; the 7-day window keeps this bounded.
-  for (let i = 0; i < 200; i++) {
+  let pages = 0;
+  let truncated = false;
+  // Cap pages — events can be voluminous; the sync window keeps this bounded
+  // and the cap is reported back so the sync run can record truncation.
+  for (let i = 0; i < CURSOR_USAGE_EVENTS_MAX_PAGES; i++) {
     const res = await adminPost<{
       usageEvents?: CursorUsageEvent[];
       pagination?: Pagination;
@@ -203,11 +222,13 @@ export async function getCursorUsageEvents(
       startDate: startMs,
       endDate: endMs,
       page,
-      pageSize: 1000,
+      pageSize: CURSOR_PAGE_SIZE,
     });
-    events.push(...(res.usageEvents ?? []));
+    pages++;
+    rows.push(...(res.usageEvents ?? []));
     if (!res.pagination?.hasNextPage) break;
+    if (i === CURSOR_USAGE_EVENTS_MAX_PAGES - 1) truncated = true;
     page++;
   }
-  return events;
+  return { rows, pages, truncated };
 }

@@ -10,6 +10,7 @@
     { "path": "/api/cron/provider-sync/portkey", "schedule": "21 * * * *" },
     { "path": "/api/cron/provider-sync/litellm", "schedule": "24 * * * *" },
     { "path": "/api/cron/provider-sync/chatgpt_enterprise", "schedule": "27 * * * *" },
+    { "path": "/api/cron/provider-sync/github_copilot", "schedule": "33 * * * *" },
     { "path": "/api/cron/discovery-scan/google_workspace", "schedule": "30 * * * *" },
     { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },

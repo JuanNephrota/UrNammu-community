@@ -3,6 +3,7 @@ import { fetchOpenAIOrgData, isOpenAIAdminConfigured, listAssistants } from "./o
 import { isAnthropicAdminConfigured } from "./anthropic-admin";
 import { isClaudeCodeAnalyticsAvailable } from "./claude-code-analytics";
 import { isCursorAdminConfigured } from "./cursor-admin";
+import { isGitHubCopilotConfigured } from "./github-copilot-admin";
 import { isChatGPTEnterpriseConfigured } from "./chatgpt-enterprise-admin";
 import { isGeminiBillingConfigured } from "./gemini-admin";
 import { isOpenRouterConfigured } from "./openrouter-admin";
@@ -17,12 +18,15 @@ import {
   syncClaudeCodeAnalytics,
   syncCursorTelemetry,
   syncGeminiTelemetry,
+  syncGitHubCopilotTelemetry,
   syncHeliconeTelemetry,
   syncLiteLLMTelemetry,
   syncOpenAITelemetry,
   syncOpenRouterTelemetry,
   syncPortkeyTelemetry,
+  type SyncResult,
 } from "./provider-telemetry";
+import { computeSyncWindow, DEFAULT_OVERLAP_DAYS, type SyncWindow } from "./provider-sync-window";
 import { executeScan } from "./scan-executor";
 import {
   GOVERNANCE_AUTOMATION_SETTINGS_KEYS,
@@ -80,15 +84,14 @@ import {
 
 type BackgroundActor = string;
 
-type TelemetrySyncResult = Awaited<ReturnType<typeof syncAnthropicTelemetry>>;
-
 const PROVIDER_SYNC_FUNCTIONS: Record<
   SyncProviderId,
-  (triggeredByUserId: BackgroundActor) => Promise<TelemetrySyncResult>
+  (triggeredByUserId: BackgroundActor, window: SyncWindow) => Promise<SyncResult>
 > = {
   anthropic: syncAnthropicTelemetry,
   claude_code: syncClaudeCodeAnalytics,
   cursor: syncCursorTelemetry,
+  github_copilot: syncGitHubCopilotTelemetry,
   gemini: syncGeminiTelemetry,
   openai: syncOpenAITelemetry,
   openrouter: syncOpenRouterTelemetry,
@@ -102,6 +105,7 @@ const PROVIDER_CONFIGURED_CHECKS: Record<SyncProviderId, () => Promise<boolean>>
   anthropic: isAnthropicAdminConfigured,
   claude_code: isClaudeCodeAnalyticsAvailable,
   cursor: isCursorAdminConfigured,
+  github_copilot: isGitHubCopilotConfigured,
   gemini: isGeminiBillingConfigured,
   openai: isOpenAIAdminConfigured,
   openrouter: isOpenRouterConfigured,
@@ -151,6 +155,10 @@ export type ProviderSyncOutcome = {
   actorsUpserted: number;
   /** OpenAI only: assistant inventory follow-up discovery. */
   assistants?: { found: number; created: number; updated: number; error?: string };
+  /** The window the run was asked to cover (ISO strings). */
+  window?: { from: string; to: string };
+  /** True when a paginated fetch hit its page cap (see run metadata + alert). */
+  truncated?: boolean;
 };
 
 /** Aggregate shape kept for the manual "Sync now" panel (POST /api/admin-sync). */
@@ -164,6 +172,8 @@ export type ProviderSyncJobResult = {
   geminiUsageSynced: number;
   claudeCodeUsageSynced: number;
   cursorUsageSynced: number;
+  githubCopilotUsageSynced: number;
+  chatgptEnterpriseUsageSynced: number;
   anthropicCostBucketsSynced: number;
   openaiCostBucketsSynced: number;
   openRouterCostBucketsSynced: number;
@@ -173,6 +183,8 @@ export type ProviderSyncJobResult = {
   geminiCostBucketsSynced: number;
   claudeCodeCostsSynced: number;
   cursorCostBucketsSynced: number;
+  githubCopilotCostBucketsSynced: number;
+  chatgptEnterpriseCostBucketsSynced: number;
   rawSnapshotsStored: number;
   assistantsFound: number;
   agentsCreated: number;
@@ -183,6 +195,27 @@ export type ProviderSyncJobResult = {
   errors: string[];
   /** Per-provider detail behind the aggregate counters. */
   providers: ProviderSyncOutcome[];
+  /** When set, only this provider was run (targeted re-sync / backfill). */
+  provider?: SyncProviderId;
+  /** The window each provider that ran was asked to cover (ISO strings). */
+  windows: Partial<Record<SyncProviderId, { from: string; to: string }>>;
+  /** Providers whose run hit a pagination cap; see the run metadata + alert. */
+  truncated: SyncProviderId[];
+};
+
+/** Options for a single-provider run (`runProviderSync`). */
+export type ProviderSyncOptions = {
+  /**
+   * Explicit `{ from, to }` for a targeted re-sync or backfill chunk. Without
+   * it the window is derived from the provider's watermark.
+   */
+  window?: SyncWindow;
+  now?: Date;
+};
+
+export type ProviderSyncJobOptions = ProviderSyncOptions & {
+  /** Restrict the run to one provider. Required when `window` is given. */
+  provider?: SyncProviderId;
 };
 
 export type ProviderSyncRunSummary = {
@@ -420,25 +453,77 @@ async function discoverOpenAIAssistants(
   return summary;
 }
 
+function parseOverlapDays(value: string | null) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_OVERLAP_DAYS;
+  return parsed;
+}
+
+/**
+ * The scheduled window for one provider, derived from its
+ * `ProviderSyncWatermark` (see `computeSyncWindow`). A provider without a
+ * watermark gets the capped initial window.
+ */
+export async function getProviderSyncWindow(provider: SyncProviderId, now = new Date()): Promise<SyncWindow> {
+  const [watermark, overlapRaw] = await Promise.all([
+    prisma.providerSyncWatermark.findUnique({ where: { provider }, select: { watermark: true } }),
+    getSetting(PROVIDER_SYNC_SETTINGS_KEYS.OVERLAP_DAYS),
+  ]);
+  return computeSyncWindow({
+    provider,
+    watermark: watermark?.watermark ?? null,
+    now,
+    overlapDays: parseOverlapDays(overlapRaw),
+  });
+}
+
+/** The scheduled window for every provider (one watermark read). */
+export async function getProviderSyncWindows(now = new Date()): Promise<Record<SyncProviderId, SyncWindow>> {
+  const [watermarks, overlapRaw] = await Promise.all([
+    prisma.providerSyncWatermark.findMany({ select: { provider: true, watermark: true } }),
+    getSetting(PROVIDER_SYNC_SETTINGS_KEYS.OVERLAP_DAYS),
+  ]);
+  const overlapDays = parseOverlapDays(overlapRaw);
+  const watermarkByProvider = new Map(watermarks.map((row) => [row.provider, row.watermark]));
+
+  const windows = {} as Record<SyncProviderId, SyncWindow>;
+  for (const provider of SYNC_PROVIDERS) {
+    windows[provider] = computeSyncWindow({
+      provider,
+      watermark: watermarkByProvider.get(provider) ?? null,
+      now,
+      overlapDays,
+    });
+  }
+  return windows;
+}
+
 /**
  * Sync exactly one provider. This is the unit of work behind
- * `/api/cron/provider-sync/[provider]`; a provider that is not configured is
- * reported as skipped without touching the upstream API or ProviderSyncRun.
+ * `/api/cron/provider-sync/[provider]` and each Backfill chunk; a provider
+ * that is not configured is reported as skipped without touching the
+ * upstream API or ProviderSyncRun. The window comes from the provider's
+ * watermark unless an explicit one is given.
  */
 export async function runProviderSync(
   provider: SyncProviderId,
-  triggeredByUserId: BackgroundActor
+  triggeredByUserId: BackgroundActor,
+  options: ProviderSyncOptions = {},
 ): Promise<ProviderSyncOutcome> {
   const label = SYNC_PROVIDER_LABELS[provider];
+  const window = options.window ?? (await getProviderSyncWindow(provider, options.now ?? new Date()));
+  const windowIso = { from: window.from.toISOString(), to: window.to.toISOString() };
+
   logger.info("provider_sync.requested", {
     provider,
     userId: triggeredByUserId,
-    trigger: triggeredByUserId === "system" ? "scheduler" : "manual",
+    trigger: triggeredByUserId === "system" ? "scheduler" : options.window ? "backfill" : "manual",
+    window: windowIso,
   });
 
-  let raw: TelemetrySyncResult;
+  let raw: SyncResult;
   try {
-    raw = await PROVIDER_SYNC_FUNCTIONS[provider](triggeredByUserId);
+    raw = await PROVIDER_SYNC_FUNCTIONS[provider](triggeredByUserId, window);
   } catch (error) {
     // The sync functions catch their own errors and fail the run row, so this
     // is only reached for programming errors (e.g. a thrown non-Error).
@@ -460,9 +545,13 @@ export async function runProviderSync(
     rawSnapshotsStored: raw.success ? raw.rawSnapshotsStored : 0,
     projectsUpserted: raw.success ? raw.projectsUpserted : 0,
     actorsUpserted: raw.success ? raw.actorsUpserted : 0,
+    window: windowIso,
+    truncated: raw.success ? raw.truncated : false,
   };
 
-  if (provider === "openai" && raw.success) {
+  // Assistant inventory rides along with a regular OpenAI sync; a backfill
+  // chunk is about history, so it skips the inventory pass.
+  if (provider === "openai" && raw.success && !options.window) {
     outcome.assistants = await discoverOpenAIAssistants(triggeredByUserId);
   }
 
@@ -471,6 +560,8 @@ export async function runProviderSync(
     userId: triggeredByUserId,
     status: outcome.status,
     error: outcome.error,
+    window: windowIso,
+    truncated: outcome.truncated,
     usageBucketsUpserted: outcome.usageBucketsUpserted,
     costBucketsUpserted: outcome.costBucketsUpserted,
     assistants: outcome.assistants,
@@ -480,15 +571,27 @@ export async function runProviderSync(
 }
 
 /**
- * Sync every provider at once. Used by the manual "Sync now" button
- * (POST /api/admin-sync); the scheduler runs providers individually via
- * `runScheduledProviderSync` so one slow provider cannot starve the others.
+ * Sync every provider at once, or one provider (optionally over an explicit
+ * window — a Backfill chunk). Used by POST /api/admin-sync; the scheduler
+ * runs providers individually via `runScheduledProviderSync` so one slow
+ * provider cannot starve the others.
  */
-export async function runProviderSyncJob(triggeredByUserId: BackgroundActor): Promise<ProviderSyncJobResult> {
+export async function runProviderSyncJob(
+  triggeredByUserId: BackgroundActor,
+  options: ProviderSyncJobOptions = {},
+): Promise<ProviderSyncJobResult> {
+  const now = options.now ?? new Date();
+  const only = options.provider;
+  if (options.window && !only) {
+    throw new Error("A provider is required when an explicit sync window is given.");
+  }
+  const providers: readonly SyncProviderId[] = only ? [only] : SYNC_PROVIDERS;
   const outcomes = await Promise.all(
-    SYNC_PROVIDERS.map((provider) => runProviderSync(provider, triggeredByUserId))
+    providers.map((provider) =>
+      runProviderSync(provider, triggeredByUserId, { window: only === provider ? options.window : undefined, now })
+    )
   );
-  return aggregateProviderSyncOutcomes(outcomes);
+  return { ...aggregateProviderSyncOutcomes(outcomes), provider: only };
 }
 
 export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): ProviderSyncJobResult {
@@ -498,10 +601,14 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
 
   const skipped: string[] = [];
   const errors: string[] = [];
+  const truncated: SyncProviderId[] = [];
+  const windows: ProviderSyncJobResult["windows"] = {};
   for (const outcome of outcomes) {
     if (outcome.status === "skipped") skipped.push(`${outcome.label}: ${outcome.error}`);
     else if (outcome.status === "failed") errors.push(`${outcome.label}: ${outcome.error}`);
     if (outcome.assistants?.error) errors.push(`OpenAI assistants: ${outcome.assistants.error}`);
+    if (outcome.status === "succeeded" && outcome.window) windows[outcome.provider] = outcome.window;
+    if (outcome.truncated) truncated.push(outcome.provider);
   }
 
   const assistants = byProvider.get("openai")?.assistants;
@@ -516,6 +623,8 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
     geminiUsageSynced: usage("gemini"),
     claudeCodeUsageSynced: usage("claude_code"),
     cursorUsageSynced: usage("cursor"),
+    githubCopilotUsageSynced: usage("github_copilot"),
+    chatgptEnterpriseUsageSynced: usage("chatgpt_enterprise"),
     anthropicCostBucketsSynced: cost("anthropic"),
     openaiCostBucketsSynced: cost("openai"),
     openRouterCostBucketsSynced: cost("openrouter"),
@@ -525,6 +634,8 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
     geminiCostBucketsSynced: cost("gemini"),
     claudeCodeCostsSynced: cost("claude_code"),
     cursorCostBucketsSynced: cost("cursor"),
+    githubCopilotCostBucketsSynced: cost("github_copilot"),
+    chatgptEnterpriseCostBucketsSynced: cost("chatgpt_enterprise"),
     rawSnapshotsStored: outcomes.reduce((sum, outcome) => sum + outcome.rawSnapshotsStored, 0),
     assistantsFound: assistants?.found ?? 0,
     agentsCreated: assistants?.created ?? 0,
@@ -532,6 +643,8 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
     skipped,
     errors,
     providers: outcomes,
+    windows,
+    truncated,
   };
 }
 

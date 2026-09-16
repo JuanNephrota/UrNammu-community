@@ -11,6 +11,8 @@ const SECRET_KEYS = new Set([
   // Bearer token for the Shadow AI blocklist feed. Ends in `_token`, which the
   // suffix rules below don't catch, so it's listed explicitly to be encrypted.
   "shadow_ai_blocklist_token",
+  // GitHub token for the Copilot usage metrics sync — same `_token` suffix gap.
+  "github_copilot_token",
 ]);
 
 function getEncryptionKey(): Buffer | null {

@@ -22,6 +22,8 @@ export default async function IntegrationsPage() {
     hasPortkeyKey,
     hasLiteLLMKey,
     hasGeminiBillingConfig,
+    hasGitHubCopilotConfig,
+    githubCopilot,
     azureMonitor,
   } = await getSettingsPageData();
 
@@ -101,6 +103,8 @@ export default async function IntegrationsPage() {
         hasPortkeyKey={hasPortkeyKey}
         hasLiteLLMKey={hasLiteLLMKey}
         hasGeminiBillingConfig={hasGeminiBillingConfig}
+        hasGitHubCopilotConfig={hasGitHubCopilotConfig}
+        githubCopilot={githubCopilot}
         chatgptEnterprise={{
           workspaceId: settingsMap.chatgpt_workspace_id ?? "",
           hasAdminKey: !!settingsMap.chatgpt_enterprise_admin_key,

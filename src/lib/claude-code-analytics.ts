@@ -52,9 +52,22 @@ interface ClaudeCodeReportPage {
  * Fetch Claude Code analytics for a single day (handles pagination).
  * `date` must be YYYY-MM-DD.
  */
-export async function getClaudeCodeReport(date: string): Promise<ClaudeCodeEntry[]> {
+export const CLAUDE_CODE_MAX_PAGES_PER_DAY = 50;
+
+export interface ClaudeCodeDayResult {
+  entries: ClaudeCodeEntry[];
+  /** Pages fetched for this day. */
+  pages: number;
+  /** True when the page cap was reached while the API still had more. */
+  truncated: boolean;
+}
+
+/** One day of Claude Code analytics with page accounting (page-capped). */
+export async function getClaudeCodeReportPaged(date: string): Promise<ClaudeCodeDayResult> {
   const entries: ClaudeCodeEntry[] = [];
   let page: string | undefined;
+  let pages = 0;
+  let truncated = false;
 
   do {
     const query = new URLSearchParams();
@@ -65,12 +78,21 @@ export async function getClaudeCodeReport(date: string): Promise<ClaudeCodeEntry
     const res = (await adminFetch(
       `/v1/organizations/usage_report/claude_code?${query}`
     )) as unknown as ClaudeCodeReportPage;
+    pages++;
 
     entries.push(...res.data);
     page = res.has_more ? (res.next_page ?? undefined) : undefined;
+    if (page && pages >= CLAUDE_CODE_MAX_PAGES_PER_DAY) {
+      truncated = true;
+      break;
+    }
   } while (page);
 
-  return entries;
+  return { entries, pages, truncated };
+}
+
+export async function getClaudeCodeReport(date: string): Promise<ClaudeCodeEntry[]> {
+  return (await getClaudeCodeReportPaged(date)).entries;
 }
 
 export interface ClaudeCodeRangeResult {
@@ -79,6 +101,12 @@ export interface ClaudeCodeRangeResult {
   daysSucceeded: number;
   daysFailed: number;
   errors: string[];
+  /** Total pages fetched across every day in the range. */
+  pages: number;
+  /** True when any day hit the per-day page cap. */
+  truncated: boolean;
+  /** Days (YYYY-MM-DD) that hit the page cap. */
+  truncatedDays: string[];
 }
 
 /**
@@ -95,13 +123,17 @@ export async function getClaudeCodeReportRange(
   const end = new Date(`${endDate}T00:00:00Z`);
   let daysRequested = 0;
   let daysSucceeded = 0;
+  let pages = 0;
+  const truncatedDays: string[] = [];
 
   for (let d = new Date(start); d < end; d.setUTCDate(d.getUTCDate() + 1)) {
     const dateStr = d.toISOString().split("T")[0];
     daysRequested++;
     try {
-      const dayEntries = await getClaudeCodeReport(dateStr);
-      entries.push(...dayEntries);
+      const day = await getClaudeCodeReportPaged(dateStr);
+      entries.push(...day.entries);
+      pages += day.pages;
+      if (day.truncated) truncatedDays.push(dateStr);
       daysSucceeded++;
     } catch (err) {
       errors.push(`${dateStr}: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -114,5 +146,8 @@ export async function getClaudeCodeReportRange(
     daysSucceeded,
     daysFailed: daysRequested - daysSucceeded,
     errors,
+    pages,
+    truncated: truncatedDays.length > 0,
+    truncatedDays,
   };
 }

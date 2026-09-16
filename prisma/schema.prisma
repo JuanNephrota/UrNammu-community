@@ -580,6 +580,21 @@ model ProviderSyncRun {
   assistantDailyStats AssistantDailyStat[]
 }
 
+model ProviderSyncWatermark {
+  // One row per SyncProvider (anthropic, openai, cursor, ...) driving the
+  // incremental window each scheduled provider sync pulls, plus one row per
+  // cursor-based stream (e.g. `chatgpt_enterprise`, `chatgpt_enterprise:AUTH_LOG`)
+  // recording the instant that stream has been ingested through.
+  provider   String   @id
+  // Last bucket day fully ingested (UTC midnight). The next scheduled sync
+  // starts `overlapDays` before this so providers that revise recent days
+  // are re-pulled.
+  watermark  DateTime
+  // Earliest day ever ingested — lets the UI say "history from X".
+  earliest   DateTime
+  updatedAt  DateTime @updatedAt
+}
+
 model ProviderRawSnapshot {
   id            String          @id @default(cuid())
   provider      String
@@ -687,23 +702,6 @@ model AssistantDailyStat {
   @@index([provider, day])
   @@index([actorExternalId, day])
   @@index([syncRunId])
-}
-
-// One row per sync stream (e.g. `chatgpt_enterprise`, or a per-log-type
-// stream such as `chatgpt_enterprise:AUTH_LOG`). Drives the incremental
-// `after` cursor each scheduled provider sync resumes from.
-//
-// Shape matches the ProviderSyncWatermark introduced by the sync-watermarks
-// work (PR #113, currently merged to feat/data-collection-tier1 rather than
-// main) so the two land as one table.
-model ProviderSyncWatermark {
-  provider   String   @id
-  // Last instant fully ingested (UTC). The next scheduled sync starts here
-  // (log streams) or re-pulls a short overlap before it (day-bucketed data).
-  watermark  DateTime
-  // Earliest instant ever ingested — lets the UI say "history from X".
-  earliest   DateTime
-  updatedAt  DateTime @updatedAt
 }
 
 // Immutable compliance / audit events pulled from provider compliance feeds

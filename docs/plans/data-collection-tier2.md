@@ -55,6 +55,14 @@ per-provider last-run and next-due.
 
 ## 2.2 Sync watermarks and backfill
 
+Status: **shipped** in `feat/provider-sync-watermarks` (2026-09-16). Migration
+`20260916150000_provider_sync_watermarks` must be applied to production by
+hand. Implementation notes: the window formula below is implemented as
+`max(watermark - overlapDays, now - maxLookbackDays)` (the `min` as written
+would always pick the older bound); scheduled windows are additionally capped
+at 31 days so a fresh install's first hourly run fits its function budget —
+deeper history comes from Backfill. See `src/lib/provider-sync-window.ts`.
+
 **Problem.** Every sync recomputes a fixed `now - 7d` window inline
 (`src/lib/provider-telemetry.ts`, one `startingAt` per provider). No cursor,
 no watermark, no backfill. Cursor retains ~30 days upstream but a fresh
@@ -269,7 +277,7 @@ path; reports cannot filter or sum them.
 | 1 | 2.1 Split maintenance route + per-provider settings | no | M |
 | 2 | 2.4 Retention cron | no | S |
 | 3 | 2.5 Proxy-health cron | no | S |
-| 4 | 2.2 Watermarks + backfill + truncation alerts | yes | L |
+| 4 | ~~2.2 Watermarks + backfill + truncation alerts~~ (done) | yes | L |
 | 5 | ~~2.3 Cost attribution + workspace grouping~~ (done) | yes (both schemas) | M |
 | 6 | 2.6 Assistant daily stats | yes | M |
 | 7 | 2.7 Docs | no | S |

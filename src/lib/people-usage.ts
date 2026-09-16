@@ -20,6 +20,11 @@ import { prisma } from "@/lib/prisma";
 //     one row per member per day). Per-user spend is the `estimatedCost`
 //     column, which syncCursorTelemetry fills from the usage-events feed and
 //     leaves null when that feed returned nothing.
+//   • GitHub Copilot — usage metrics sync (AssistantDailyStat
+//     provider="github_copilot"). The actor is the seat's email when GitHub
+//     exposes one, otherwise the GitHub login — logins are not emails, so
+//     those rows land in `unattributed` until directory sync can resolve them.
+//     Copilot is seat-licensed: no cost column.
 //   • API (proxy) — the transparent Anthropic/OpenAI proxy writes hourly
 //     UsageBucket/CostBucket rows tagged source=proxy with the `x-user-email`
 //     header as the actor. Flag counts come from APIUsageLog (which only
@@ -89,6 +94,15 @@ export interface CursorUsage {
   lastActiveAt: Date | null;
 }
 
+export interface CopilotUsage {
+  email: string | null;
+  interactions: number;
+  tokens: number;
+  linesAccepted: number;
+  activeDays: number;
+  lastActiveAt: Date | null;
+}
+
 export interface ProxyUsage {
   email: string | null;
   requests: number;
@@ -108,6 +122,7 @@ export interface PeopleUsageInputs {
   otel: OtelSurfaceUsage[];
   claudeCodeAdmin: ClaudeCodeAdminUsage[];
   cursor: CursorUsage[];
+  copilot: CopilotUsage[];
   proxy: ProxyUsage[];
   /** Registered Users first, then provider member directories (first wins). */
   identities: PersonIdentity[];
@@ -164,6 +179,10 @@ function emptyRow(email: string): PersonUsageRow {
     cursorLinesAccepted: 0,
     cursorActiveDays: 0,
     cursorCost: null,
+    copilotInteractions: 0,
+    copilotTokens: 0,
+    copilotLinesAccepted: 0,
+    copilotActiveDays: 0,
     proxyRequests: 0,
     proxyTokens: 0,
     proxyCost: 0,
@@ -184,6 +203,7 @@ function emptyUnattributed(): UnattributedUsage {
       claude_code: { cost: 0, tokens: 0 },
       cowork: { cost: 0, tokens: 0 },
       cursor: { cost: 0, tokens: 0 },
+      github_copilot: { cost: 0, tokens: 0 },
       proxy: { cost: 0, tokens: 0 },
     },
   };
@@ -279,6 +299,22 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
     r.lastActiveAt = later(r.lastActiveAt, c.lastActiveAt);
   }
 
+  for (const c of inputs.copilot) {
+    const email = normalizeEmail(c.email);
+    if (!email) {
+      // Copilot rows keyed by GitHub login (no seat email) cannot be merged
+      // with a person yet; count their tokens as unattributed, never as cost.
+      drop("github_copilot", 0, n(c.tokens));
+      continue;
+    }
+    const r = get(email);
+    r.copilotInteractions += n(c.interactions);
+    r.copilotTokens += n(c.tokens);
+    r.copilotLinesAccepted += n(c.linesAccepted);
+    r.copilotActiveDays += n(c.activeDays);
+    r.lastActiveAt = later(r.lastActiveAt, c.lastActiveAt);
+  }
+
   for (const p of inputs.proxy) {
     const email = resolve(p.email);
     if (!email) {
@@ -321,10 +357,13 @@ export function mergePeopleUsage(inputs: PeopleUsageInputs): {
     if (r.cursorRequests > 0 || r.cursorTokens > 0 || (r.cursorCost ?? 0) > 0 || r.cursorLinesAccepted > 0 || r.cursorActiveDays > 0) {
       r.surfaces.push("cursor");
     }
+    if (r.copilotInteractions > 0 || r.copilotTokens > 0 || r.copilotLinesAccepted > 0 || r.copilotActiveDays > 0) {
+      r.surfaces.push("github_copilot");
+    }
     if (r.proxyRequests > 0 || r.proxyTokens > 0 || r.proxyCost > 0) r.surfaces.push("proxy");
     r.surfaceCount = r.surfaces.length;
     r.totalCost = round2(r.claudeCodeCost + r.coworkCost + (r.cursorCost ?? 0) + r.proxyCost);
-    r.totalTokens = r.claudeCodeTokens + r.coworkTokens + r.cursorTokens + r.proxyTokens;
+    r.totalTokens = r.claudeCodeTokens + r.coworkTokens + r.cursorTokens + r.copilotTokens + r.proxyTokens;
     r.claudeCodeCost = round2(r.claudeCodeCost);
     r.coworkCost = round2(r.coworkCost);
     r.proxyCost = round2(r.proxyCost);
@@ -356,12 +395,14 @@ export function summarizePeopleUsage(
       if (surface === "claude_code") return acc + r.claudeCodeCost;
       if (surface === "cowork") return acc + r.coworkCost;
       if (surface === "cursor") return acc + (r.cursorCost ?? 0);
+      if (surface === "github_copilot") return acc; // seat-licensed, no metered cost
       return acc + r.proxyCost;
     }, 0);
     const tokens = withSurface.reduce((acc, r) => {
       if (surface === "claude_code") return acc + r.claudeCodeTokens;
       if (surface === "cowork") return acc + r.coworkTokens;
       if (surface === "cursor") return acc + r.cursorTokens;
+      if (surface === "github_copilot") return acc + r.copilotTokens;
       return acc + r.proxyTokens;
     }, 0);
     return { surface, label: SURFACE_LABELS[surface], people: withSurface.length, cost: round2(cost), tokens };
@@ -471,14 +512,18 @@ export interface AssistantDailyStatRow {
  *     and "last active" only advances on active days;
  *   - Cursor cost stays null until at least one day carried charged spend;
  *   - Cursor members with nothing to report in the window are dropped (the
- *     daily-usage feed lists every seat every day, active or not).
+ *     daily-usage feed lists every seat every day, active or not);
+ *   - GitHub Copilot rows count `requests` as interactions and `isActive`
+ *     days as active days; cost is never derived (seat-licensed).
  */
 export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
   claudeCodeAdmin: ClaudeCodeAdminUsage[];
   cursor: CursorUsage[];
+  copilot: CopilotUsage[];
 } {
   const claudeCode = new Map<string, ClaudeCodeAdminUsage>();
   const cursor = new Map<string, CursorUsage>();
+  const copilot = new Map<string, CopilotUsage>();
   for (const row of rows) {
     const tokens = n(row.inputTokens) + n(row.outputTokens);
     if (row.provider === "claude_code") {
@@ -507,6 +552,19 @@ export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
         agg.lastActiveAt = later(agg.lastActiveAt, row.day);
       }
       if (row.estimatedCost != null) agg.cost = (agg.cost ?? 0) + n(row.estimatedCost);
+    } else if (row.provider === "github_copilot") {
+      let agg = copilot.get(row.actorExternalId);
+      if (!agg) {
+        agg = { email: row.actorExternalId, interactions: 0, tokens: 0, linesAccepted: 0, activeDays: 0, lastActiveAt: null };
+        copilot.set(row.actorExternalId, agg);
+      }
+      agg.interactions += n(row.requests);
+      agg.tokens += tokens;
+      agg.linesAccepted += n(row.linesAccepted);
+      if (row.isActive !== false) {
+        agg.activeDays += 1;
+        agg.lastActiveAt = later(agg.lastActiveAt, row.day);
+      }
     }
   }
   return {
@@ -514,13 +572,16 @@ export function rollupAssistantDailyStats(rows: AssistantDailyStatRow[]): {
     cursor: [...cursor.values()].filter(
       (c) => c.activeDays > 0 || c.requests > 0 || c.tokens > 0 || c.linesAccepted > 0 || (c.cost ?? 0) > 0,
     ),
+    copilot: [...copilot.values()].filter(
+      (c) => c.activeDays > 0 || c.interactions > 0 || c.tokens > 0 || c.linesAccepted > 0,
+    ),
   };
 }
 
 async function loadAssistantDailyStatRows(since: Date, until: Date): Promise<AssistantDailyStatRow[]> {
   return prisma.assistantDailyStat.findMany({
     where: {
-      provider: { in: ["claude_code", "cursor"] },
+      provider: { in: ["claude_code", "cursor", "github_copilot"] },
       day: { gte: since, lt: until },
     },
     select: {
@@ -654,10 +715,10 @@ export async function loadPeopleUsage(window: { since: Date; until: Date }): Pro
     loadAssistantDailyStatRows(since, until),
     loadProxyUsage(since, until),
   ]);
-  const { claudeCodeAdmin, cursor } = rollupAssistantDailyStats(assistantRows);
+  const { claudeCodeAdmin, cursor, copilot } = rollupAssistantDailyStats(assistantRows);
 
   const observed = new Set<string>();
-  for (const s of [...otel, ...claudeCodeAdmin, ...cursor, ...proxy]) {
+  for (const s of [...otel, ...claudeCodeAdmin, ...cursor, ...copilot, ...proxy]) {
     const e = normalizeEmail(s.email);
     if (e) observed.add(e);
   }
@@ -672,7 +733,15 @@ export async function loadPeopleUsage(window: { since: Date; until: Date }): Pro
   }
   const identities = await loadIdentities([...emails]);
 
-  const { rows, unattributed } = mergePeopleUsage({ otel, claudeCodeAdmin, cursor, proxy, identities, directory });
+  const { rows, unattributed } = mergePeopleUsage({
+    otel,
+    claudeCodeAdmin,
+    cursor,
+    copilot,
+    proxy,
+    identities,
+    directory,
+  });
   return { rows, unattributed, summary: summarizePeopleUsage(rows, unattributed), since, until };
 }
 

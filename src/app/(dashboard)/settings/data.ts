@@ -62,6 +62,10 @@ const SETTINGS_KEYS = [
   "anthropic_managed_system_id",
   "cursor_admin_key",
   "cursor_managed_system_id",
+  "github_copilot_token",
+  "github_copilot_org",
+  "github_copilot_enterprise",
+  "github_copilot_managed_system_id",
   "openai_admin_key",
   "openai_managed_system_id",
   "litellm_managed_system_id",
@@ -193,6 +197,14 @@ export async function getSettingsPageData() {
     azureMonitor,
     hasAnthropicAdminKey: !!settingsMap.anthropic_admin_key,
     hasCursorAdminKey: !!settingsMap.cursor_admin_key,
+    hasGitHubCopilotConfig:
+      !!settingsMap.github_copilot_token &&
+      (!!settingsMap.github_copilot_org || !!settingsMap.github_copilot_enterprise),
+    githubCopilot: {
+      org: settingsMap.github_copilot_org ?? "",
+      enterprise: settingsMap.github_copilot_enterprise ?? "",
+      hasToken: !!settingsMap.github_copilot_token,
+    },
     hasOpenAIAdminKey: !!settingsMap.openai_admin_key,
     hasOpenRouterKey: !!settingsMap.openrouter_provisioning_key,
     hasHeliconeKey: !!settingsMap.helicone_api_key,

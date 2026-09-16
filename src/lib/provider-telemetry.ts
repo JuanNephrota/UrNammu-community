@@ -1,12 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
+  ANTHROPIC_DEFAULT_MAX_PAGES,
   fetchAnthropicOrgData,
-  getCostReport,
-  getUsageReport,
+  getAllCostReport,
+  getAllUsageReport,
   isAnthropicAdminConfigured,
-  listAPIKeys,
-  listMembers,
+  listAllAPIKeys,
+  listAllMembers,
   listWorkspaces,
 } from "./anthropic-admin";
 import {
@@ -23,9 +24,11 @@ import {
   normalizeOpenRouterActivityRows,
 } from "./openrouter-admin";
 import {
+  HELICONE_DEFAULT_MAX_PAGES,
+  HELICONE_DEFAULT_PAGE_SIZE,
   isHeliconeConfigured,
-  normalizeHeliconeRequestRows,
   queryHeliconeRequests,
+  readHeliconeRequestPages,
 } from "./helicone-admin";
 import {
   isLiteLLMConfigured,
@@ -48,23 +51,45 @@ import {
   type PortkeyGroupedRow,
 } from "./portkey-admin";
 import {
+  GEMINI_BILLING_ROW_LIMIT,
   getGeminiBillingOverview,
-  getGeminiBillingRows,
+  getGeminiBillingRowsForWindow,
   getGeminiUsageMetadata,
   isGeminiBillingConfigured,
 } from "./gemini-admin";
 import {
+  CLAUDE_CODE_MAX_PAGES_PER_DAY,
   getClaudeCodeActorExternalId,
   getClaudeCodeReportRange,
   isClaudeCodeAnalyticsAvailable,
   type ClaudeCodeRangeResult,
 } from "./claude-code-analytics";
 import {
+  CURSOR_DAILY_USAGE_MAX_PAGES,
+  CURSOR_USAGE_EVENTS_MAX_PAGES,
   isCursorAdminConfigured,
   getCursorDailyUsage,
   getCursorSpend,
   getCursorUsageEvents,
 } from "./cursor-admin";
+import {
+  getCopilotAggregateReport,
+  getCopilotScope,
+  getCopilotUsersReport,
+  isGitHubCopilotConfigured,
+  listCopilotSeats,
+} from "./github-copilot-admin";
+import {
+  buildSeatIndex,
+  COPILOT_MAX_DAYS_PER_RUN,
+  copilotActorExternalId,
+  copilotOrgDayToTotals,
+  copilotUserRowToStat,
+  isCopilotReportPending,
+  planCopilotDayWalk,
+  resolveCopilotWatermarkWindow,
+  type CopilotSeat,
+} from "./github-copilot-metrics";
 import {
   ChatGPTEnterpriseApiError,
   downloadChatGPTLogFile,
@@ -97,7 +122,6 @@ import {
   type ComplianceActivityValues,
   type ComplianceLogEnvelope,
 } from "./chatgpt-enterprise-compliance";
-import { notifyDatadog } from "./datadog-client";
 import {
   getSetting,
   PROVIDER_KEY_SYSTEM_MAP_SETTING_KEY,
@@ -120,6 +144,16 @@ import {
   parseProviderKeySystemMap,
   type SystemResolver,
 } from "./system-attribution";
+import { notifyDatadog } from "./datadog-client";
+import {
+  advanceWatermark,
+  SYNC_PROVIDER_LABELS,
+  type SyncProvider,
+  type SyncWindow,
+} from "./provider-sync-window";
+
+export { SYNC_PROVIDER_LABELS };
+export type { SyncProvider, SyncWindow };
 
 type SyncSummary = {
   syncRunId: string;
@@ -131,21 +165,25 @@ type SyncSummary = {
   apiUsageLogsCreated: number;
 };
 
-type SyncProvider =
-  | "anthropic"
-  | "openai"
-  | "claude_code"
-  | "gemini"
-  | "openrouter"
-  | "helicone"
-  | "portkey"
-  | "litellm"
-  | "cursor"
-  | "chatgpt_enterprise";
-
-type SyncResult =
-  | ({ provider: SyncProvider; success: true } & SyncSummary)
+export type SyncResult =
+  | ({
+      provider: SyncProvider;
+      success: true;
+      /** The window this run actually covered. */
+      window: SyncWindow;
+      /** True when any paginated fetch hit its page cap (see run metadata). */
+      truncated: boolean;
+    } & SyncSummary)
   | { provider: SyncProvider; success: false; error: string; skipped?: boolean };
+
+/**
+ * Per-fetch pagination accounting recorded in `ProviderSyncRun.metadata`.
+ * Every paginated upstream read reports `{ pages, truncated }`; `truncated`
+ * means the page cap was reached while the provider still had more rows,
+ * so the window is under-counted and a `provider_sync_truncated` alert is
+ * raised (deduped per provider for 24h).
+ */
+export type PaginationReport = Record<string, unknown> & { truncated: boolean };
 
 function toJsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -354,20 +392,137 @@ async function failSyncRun(syncRunId: string, error: unknown) {
   return errorMessage;
 }
 
-async function completeSyncRun(syncRunId: string, summary: Omit<SyncSummary, "syncRunId">, metadata?: Record<string, unknown>) {
+const TRUNCATION_ALERT_SOURCE = "provider_sync_truncated";
+const TRUNCATION_ALERT_DEDUPE_MS = 24 * 60 * 60 * 1000;
+
+function formatWindow(window: SyncWindow) {
+  return `${window.from.toISOString().slice(0, 10)} → ${window.to.toISOString().slice(0, 10)}`;
+}
+
+/**
+ * Raise a `provider_sync_truncated` alert for a run whose paginated fetches
+ * hit a page cap. Deduped per provider: if an alert with the same source and
+ * title was created in the last 24h nothing new is written.
+ */
+async function raiseTruncationAlert(args: {
+  provider: SyncProvider;
+  syncRunId: string;
+  window: SyncWindow;
+  pagination: PaginationReport;
+}) {
+  const label = SYNC_PROVIDER_LABELS[args.provider];
+  const title = `Provider sync truncated: ${label}`;
+  const since = new Date(Date.now() - TRUNCATION_ALERT_DEDUPE_MS);
+
+  const recent = await prisma.alert.findFirst({
+    where: { source: TRUNCATION_ALERT_SOURCE, title, createdAt: { gte: since } },
+    select: { id: true },
+  });
+  if (recent) {
+    logger.info("provider_sync.truncated_alert_deduped", {
+      provider: args.provider,
+      syncRunId: args.syncRunId,
+      alertId: recent.id,
+    });
+    return false;
+  }
+
+  const description =
+    `The ${label} sync for ${formatWindow(args.window)} reached a pagination cap before reading every row upstream, ` +
+    `so Oversight usage and cost for this window are under-counted. ` +
+    `Re-run a Backfill for this range in Settings → Provider Admin APIs using a narrower window, or raise the page cap. ` +
+    `Pagination: ${JSON.stringify(args.pagination)}. Sync run ${args.syncRunId}.`;
+
+  await prisma.alert.create({
+    data: {
+      title,
+      description,
+      severity: "MEDIUM",
+      source: TRUNCATION_ALERT_SOURCE,
+    },
+  });
+
+  await notifyDatadog({
+    title: `[UrNammu] ${title}`,
+    text: description,
+    tags: ["source:urnammu", `alert_source:${TRUNCATION_ALERT_SOURCE}`, "severity:medium", `provider:${args.provider}`],
+    alertType: "warning",
+    aggregationKey: `urnammu:${TRUNCATION_ALERT_SOURCE}:${args.provider}`,
+  });
+
+  logger.warn("provider_sync.truncated", {
+    provider: args.provider,
+    syncRunId: args.syncRunId,
+    window: { from: args.window.from.toISOString(), to: args.window.to.toISOString() },
+    pagination: args.pagination,
+  });
+  return true;
+}
+
+/**
+ * Mark a sync run SUCCEEDED, persist its window + pagination accounting in
+ * `metadata`, advance the provider's watermark, and raise the truncation
+ * alert when any paginated fetch was cut short.
+ */
+async function finishSyncRun(args: {
+  syncRunId: string;
+  provider: SyncProvider;
+  window: SyncWindow;
+  summary: Omit<SyncSummary, "syncRunId">;
+  pagination?: PaginationReport;
+  metadata?: Record<string, unknown>;
+}) {
+  const truncated = args.pagination?.truncated ?? false;
+  const metadata: Record<string, unknown> = {
+    ...(args.metadata ?? {}),
+    window: { from: args.window.from.toISOString(), to: args.window.to.toISOString() },
+    pagination: args.pagination ?? { truncated: false },
+    truncated,
+  };
+
   await prisma.providerSyncRun.update({
-    where: { id: syncRunId },
+    where: { id: args.syncRunId },
     data: {
       status: "SUCCEEDED",
       completedAt: new Date(),
       recordsProcessed:
-        summary.usageBucketsUpserted +
-        summary.costBucketsUpserted +
-        summary.projectsUpserted +
-        summary.actorsUpserted,
-      metadata: metadata ? toJsonValue(metadata) : undefined,
+        args.summary.usageBucketsUpserted +
+        args.summary.costBucketsUpserted +
+        args.summary.projectsUpserted +
+        args.summary.actorsUpserted,
+      metadata: toJsonValue(metadata),
     },
   });
+
+  // Watermark: advance even when truncated — the alert tells the operator to
+  // backfill the window; re-pulling the same capped window on every schedule
+  // would never make progress.
+  const existing = await prisma.providerSyncWatermark.findUnique({
+    where: { provider: args.provider },
+    select: { watermark: true, earliest: true },
+  });
+  const next = advanceWatermark(existing, args.window);
+  await prisma.providerSyncWatermark.upsert({
+    where: { provider: args.provider },
+    update: { watermark: next.watermark, earliest: next.earliest },
+    create: { provider: args.provider, watermark: next.watermark, earliest: next.earliest },
+  });
+
+  if (truncated && args.pagination) {
+    await raiseTruncationAlert({
+      provider: args.provider,
+      syncRunId: args.syncRunId,
+      window: args.window,
+      pagination: args.pagination,
+    }).catch((error) => {
+      logger.error("provider_sync.truncated_alert_failed", {
+        provider: args.provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  return truncated;
 }
 
 async function storeSnapshot(syncRunId: string, provider: string, resourceType: string, payload: unknown) {
@@ -439,12 +594,13 @@ async function upsertDerivedUsageLog(args: {
 }
 
 export async function getAdminSyncOverview() {
-  const [latestRuns, anthropicLive, openaiLive, geminiLive] = await Promise.all([
+  const [latestRuns, watermarks, anthropicLive, openaiLive, geminiLive] = await Promise.all([
     prisma.providerSyncRun.findMany({
       where: { syncType: "telemetry" },
       orderBy: { startedAt: "desc" },
       take: 8,
     }),
+    prisma.providerSyncWatermark.findMany({ orderBy: { provider: "asc" } }),
     isAnthropicAdminConfigured().then((configured) =>
       configured ? fetchAnthropicOrgData().catch((err) => ({ error: err instanceof Error ? err.message : "Failed" })) : null
     ),
@@ -465,10 +621,11 @@ export async function getAdminSyncOverview() {
     openai: openaiLive,
     gemini: geminiLive,
     syncRuns: latestRuns,
+    watermarks,
   };
 }
 
-export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncAnthropicTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   // Skip cleanly when no admin key is configured — do not create a
   // ProviderSyncRun row, do not call the upstream API.
   if (!(await isAnthropicAdminConfigured())) {
@@ -483,17 +640,18 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
   const syncRun = await createSyncRun("anthropic", triggeredByUserId);
 
   try {
-    const today = new Date();
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const startingAt = sevenDaysAgo.toISOString();
-    const endingAt = today.toISOString();
+    const startingAt = window.from.toISOString();
+    const endingAt = window.to.toISOString();
 
     const systems = await loadSystemResolver("anthropic", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.ANTHROPIC);
 
+    // Every list/report call follows `has_more` (page-capped) — the usage
+    // report defaults to 7 one-day buckets per page, so any window longer
+    // than a week would otherwise be silently cut off.
     const [org, keys, members, workspaces, usageByModelAndKey, usageByKey, costReport] = await Promise.all([
       fetchAnthropicOrgData(),
-      listAPIKeys({ status: "active", limit: 100 }).catch(() => null),
-      listMembers({ limit: 100 }).catch(() => null),
+      listAllAPIKeys({ status: "active" }).catch(() => null),
+      listAllMembers().catch(() => null),
       listWorkspaces({ limit: 100 }).catch(() => null),
       // Multi-dim group_by so each UsageBucket row is attributable to a
       // specific (model, api_key, workspace) triple. Fields missing from the
@@ -501,14 +659,34 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       // would collide into one row per (model, day) without api_key_id here.
       // workspace_id is added for the workspace columns; it does not enter the
       // dimension key because a key belongs to exactly one workspace.
-      getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["model", "api_key_id", "workspace_id"] }),
+      getAllUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["model", "api_key_id", "workspace_id"] }),
       // Kept for forensics / raw snapshot only — the flattened attribution
       // above supersedes this for UsageBucket writes.
-      getUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["api_key_id"] }).catch(() => null),
+      getAllUsageReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["api_key_id"] }).catch(() => null),
       // The cost report cannot be grouped by api_key_id; workspace is the
       // finest attribution the API offers for spend.
-      getCostReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["workspace_id", "description"] }).catch(() => null),
+      getAllCostReport({ starting_at: startingAt, ending_at: endingAt, group_by: ["workspace_id", "description"] }).catch(() => null),
     ]);
+
+    const pagination: PaginationReport = {
+      pageCap: ANTHROPIC_DEFAULT_MAX_PAGES,
+      usagePages: usageByModelAndKey.pages,
+      usageTruncated: usageByModelAndKey.truncated,
+      usageByKeyPages: usageByKey?.pages ?? 0,
+      usageByKeyTruncated: usageByKey?.truncated ?? false,
+      costPages: costReport?.pages ?? 0,
+      costTruncated: costReport?.truncated ?? false,
+      keysPages: keys?.pages ?? 0,
+      keysTruncated: keys?.truncated ?? false,
+      membersPages: members?.pages ?? 0,
+      membersTruncated: members?.truncated ?? false,
+      truncated:
+        usageByModelAndKey.truncated ||
+        (usageByKey?.truncated ?? false) ||
+        (costReport?.truncated ?? false) ||
+        (keys?.truncated ?? false) ||
+        (members?.truncated ?? false),
+    };
 
     // Build id → name lookup for API keys so each UsageBucket row carries a
     // human-readable apiKeyName.
@@ -809,26 +987,33 @@ export async function syncAnthropicTelemetry(triggeredByUserId: string): Promise
       apiUsageLogsCreated,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      coverage: {
-        keys: asArray(asRecord(keys).data).length,
-        members: asArray(asRecord(members).data).length,
-        workspaces: asArray(asRecord(workspaces).data).length,
-      },
-      attribution: {
-        defaultSystemId: systems.defaultSystemId,
-        costGroupedByWorkspace: true,
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "anthropic",
+      window,
+      summary,
+      pagination,
+      metadata: {
+        coverage: {
+          keys: asArray(asRecord(keys).data).length,
+          members: asArray(asRecord(members).data).length,
+          workspaces: asArray(asRecord(workspaces).data).length,
+        },
+        attribution: {
+          defaultSystemId: systems.defaultSystemId,
+          costGroupedByWorkspace: true,
+        },
       },
     });
 
-    return { provider: "anthropic", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "anthropic", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "anthropic", success: false, error: errorMessage };
   }
 }
 
-export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncClaudeCodeAnalytics(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isClaudeCodeAnalyticsAvailable())) {
     return {
       provider: "claude_code",
@@ -841,10 +1026,11 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
   const syncRun = await createSyncRun("claude_code", triggeredByUserId);
 
   try {
-    const today = new Date();
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const startDate = sevenDaysAgo.toISOString().split("T")[0];
-    const endDate = today.toISOString().split("T")[0];
+    // The analytics API is one call per UTC day; the range is inclusive of
+    // the start day and exclusive of the end day, so round `to` up to the
+    // next midnight to include the (partial) current day.
+    const startDate = startOfDayUtc(window.from).toISOString().split("T")[0];
+    const endDate = endOfDayUtc(new Date(window.to.getTime() - 1)).toISOString().split("T")[0];
 
     const rangeResult: ClaudeCodeRangeResult = await getClaudeCodeReportRange(startDate, endDate);
     const entries = rangeResult.entries;
@@ -986,18 +1172,30 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
       apiUsageLogsCreated: 0,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      entriesProcessed: entries.length,
-      assistantDailyStatsUpserted: assistantStatsUpserted,
-      uniqueUsers: seenActors.size,
-      dateRange: { startDate, endDate },
-      daysRequested: rangeResult.daysRequested,
-      daysSucceeded: rangeResult.daysSucceeded,
-      daysFailed: rangeResult.daysFailed,
-      fetchErrors: rangeResult.errors,
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "claude_code",
+      window,
+      summary,
+      pagination: {
+        pageCapPerDay: CLAUDE_CODE_MAX_PAGES_PER_DAY,
+        pages: rangeResult.pages,
+        truncatedDays: rangeResult.truncatedDays,
+        truncated: rangeResult.truncated,
+      },
+      metadata: {
+        entriesProcessed: entries.length,
+        assistantDailyStatsUpserted: assistantStatsUpserted,
+        uniqueUsers: seenActors.size,
+        dateRange: { startDate, endDate },
+        daysRequested: rangeResult.daysRequested,
+        daysSucceeded: rangeResult.daysSucceeded,
+        daysFailed: rangeResult.daysFailed,
+        fetchErrors: rangeResult.errors,
+      },
     });
 
-    return { provider: "claude_code", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "claude_code", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "claude_code", success: false, error: errorMessage };
@@ -1013,7 +1211,7 @@ export async function syncClaudeCodeAnalytics(triggeredByUserId: string): Promis
 // token/spend enrichment; spend → per-member ProviderActor + cycle spend
 // metadata. ~30-day API retention, so the scheduled sync builds history over
 // time.
-export async function syncCursorTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncCursorTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isCursorAdminConfigured())) {
     return {
       provider: "cursor",
@@ -1026,20 +1224,29 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
   const syncRun = await createSyncRun("cursor", triggeredByUserId);
 
   try {
-    const today = new Date();
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const startMs = startOfDayUtc(sevenDaysAgo).getTime();
-    const endMs = today.getTime();
+    const startMs = startOfDayUtc(window.from).getTime();
+    const endMs = window.to.getTime();
 
     const managedSystemId = (
       await loadSystemResolver("cursor", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.CURSOR)
     ).defaultSystemId;
 
-    const [dailyRows, spend, events] = await Promise.all([
+    const [dailyPaged, spend, eventsPaged] = await Promise.all([
       getCursorDailyUsage(startMs, endMs),
       getCursorSpend().catch(() => ({ members: [], cycleStartMs: null })),
-      getCursorUsageEvents(startMs, endMs).catch(() => []),
+      getCursorUsageEvents(startMs, endMs).catch(() => ({ rows: [], pages: 0, truncated: false })),
     ]);
+    const dailyRows = dailyPaged.rows;
+    const events = eventsPaged.rows;
+    const pagination: PaginationReport = {
+      dailyUsagePageCap: CURSOR_DAILY_USAGE_MAX_PAGES,
+      dailyUsagePages: dailyPaged.pages,
+      dailyUsageTruncated: dailyPaged.truncated,
+      usageEventsPageCap: CURSOR_USAGE_EVENTS_MAX_PAGES,
+      usageEventsPages: eventsPaged.pages,
+      usageEventsTruncated: eventsPaged.truncated,
+      truncated: dailyPaged.truncated || eventsPaged.truncated,
+    };
 
     let rawSnapshotsStored = 0;
     await storeSnapshot(syncRun.id, "cursor", "daily_usage", {
@@ -1289,22 +1496,285 @@ export async function syncCursorTelemetry(triggeredByUserId: string): Promise<Sy
       apiUsageLogsCreated: 0,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      dailyRows: dailyRows.length,
-      assistantDailyStatsUpserted: assistantStatsUpserted,
-      usageEvents: events.length,
-      members: spend.members.length,
-      dateRange: { startMs, endMs },
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "cursor",
+      window,
+      summary,
+      pagination,
+      metadata: {
+        dailyRows: dailyRows.length,
+        assistantDailyStatsUpserted: assistantStatsUpserted,
+        usageEvents: events.length,
+        members: spend.members.length,
+        dateRange: { startMs, endMs },
+      },
     });
 
-    return { provider: "cursor", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "cursor", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "cursor", success: false, error: errorMessage };
   }
 }
 
-export async function syncGeminiTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+// ─── GitHub Copilot (usage metrics reports + seats) ──────────────────────
+// Report-based API: one `{ download_links }` call per day per report, then
+// the NDJSON files. `users-1-day` → one AssistantDailyStat per user per day
+// (actorExternalId = seat email when GitHub exposes one, else the login,
+// lower-cased); `organization-1-day` / `enterprise-1-day` → one UsageBucket
+// per day carrying the org totals (DAU/WAU/MAU, PR metrics, feature / IDE /
+// model breakdowns) in metadata; the seats endpoint → ProviderActor rows
+// with last_activity_at for the identity join. Reports land within two
+// days, so recent 404s are "pending" and hold the watermark back; the walk
+// covers at most COPILOT_MAX_DAYS_PER_RUN days (newest first) per run.
+export async function syncGitHubCopilotTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
+  if (!(await isGitHubCopilotConfigured())) {
+    return {
+      provider: "github_copilot",
+      success: false,
+      skipped: true,
+      error: "GitHub Copilot token and organization / enterprise are not configured",
+    };
+  }
+
+  const syncRun = await createSyncRun("github_copilot", triggeredByUserId);
+
+  try {
+    const scope = await getCopilotScope();
+    if (!scope) throw new Error("GitHub Copilot organization / enterprise is not configured");
+    const managedSystemId = (
+      await loadSystemResolver("github_copilot", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.GITHUB_COPILOT)
+    ).defaultSystemId;
+
+    const now = new Date();
+    const walk = planCopilotDayWalk(window);
+
+    // ── Seats: identity join (login → email) + last activity ──
+    let seats: CopilotSeat[] = [];
+    let seatsError: string | null = null;
+    let seatsTotal: number | null = null;
+    let requestCount = 0;
+    try {
+      const result = await listCopilotSeats(scope);
+      seats = result.seats;
+      seatsTotal = result.totalSeats;
+      requestCount += result.pages;
+    } catch (error) {
+      seatsError = error instanceof Error ? error.message : String(error);
+      logger.warn("provider_sync.copilot_seats_failed", { error: seatsError });
+    }
+    const seatIndex = buildSeatIndex(seats);
+
+    let rawSnapshotsStored = 0;
+    await storeSnapshot(syncRun.id, "github_copilot", "seats", {
+      scope,
+      totalSeats: seatsTotal,
+      seats: seats.length,
+      error: seatsError,
+      sample: seats.slice(0, 5),
+    });
+    rawSnapshotsStored++;
+
+    // ── Day walk ──
+    let assistantStatsUpserted = 0;
+    let usageBucketsUpserted = 0;
+    const daysSucceeded: string[] = [];
+    const pendingDays: string[] = [];
+    const emptyDays: string[] = [];
+    const failedDays: { day: string; error: string }[] = [];
+    const rejectedLines: { day: string; report: string; count: number; sample: string[] }[] = [];
+    const seenActors = new Map<string, { login: string; seat: CopilotSeat | null }>();
+    let sampleStored = false;
+
+    for (const day of walk.days) {
+      try {
+        const [users, aggregate] = await Promise.all([
+          getCopilotUsersReport(scope, day),
+          getCopilotAggregateReport(scope, day),
+        ]);
+        requestCount += 2 + users.files + aggregate.files;
+
+        if (!users.found && !aggregate.found) {
+          if (isCopilotReportPending(day, now)) pendingDays.push(day);
+          else emptyDays.push(day);
+          continue;
+        }
+        if (users.rejected.length > 0) {
+          rejectedLines.push({ day, report: "users-1-day", count: users.rejected.length, sample: users.rejected.slice(0, 3).map((r) => `line ${r.line}: ${r.reason}`) });
+        }
+        if (aggregate.rejected.length > 0) {
+          rejectedLines.push({ day, report: "aggregate-1-day", count: aggregate.rejected.length, sample: aggregate.rejected.slice(0, 3).map((r) => `line ${r.line}: ${r.reason}`) });
+        }
+        if (!sampleStored) {
+          await storeSnapshot(syncRun.id, "github_copilot", "reports", {
+            day,
+            users: { rows: users.rows.length, files: users.files, sample: users.rows.slice(0, 3) },
+            aggregate: { rows: aggregate.rows.length, files: aggregate.files, sample: aggregate.rows.slice(0, 1) },
+          });
+          rawSnapshotsStored++;
+          sampleStored = true;
+        }
+
+        for (const row of users.rows) {
+          if (row.day.slice(0, 10) !== day) continue; // defensive: a file only carries its own day
+          const seat = seatIndex.get(row.user_login.toLowerCase()) ?? null;
+          const actorId = copilotActorExternalId(row.user_login, seat?.email);
+          seenActors.set(actorId, { login: row.user_login, seat });
+          await upsertAssistantDailyStat(
+            syncRun.id,
+            copilotUserRowToStat(row, { externalId: actorId, name: row.user_login }),
+          );
+          assistantStatsUpserted++;
+        }
+
+        for (const orgDay of aggregate.rows) {
+          if (orgDay.day.slice(0, 10) !== day) continue;
+          const totals = copilotOrgDayToTotals(orgDay);
+          const bucketStart = new Date(`${totals.day}T00:00:00.000Z`);
+          const bucketEnd = new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000);
+          const dimensionKey = makeDimensionKey({ date: totals.day, scope: scope.kind });
+          const inputTokens = totals.inputTokens ?? 0;
+          const outputTokens = totals.outputTokens ?? 0;
+          const data = {
+            model: null,
+            actorExternalId: null,
+            actorName: scope.slug,
+            inputTokens,
+            outputTokens,
+            totalTokens: inputTokens + outputTokens,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            requestCount: totals.interactions,
+            aiSystemId: managedSystemId,
+            metadata: toJsonValue({ ...totals.metadata, scopeKind: scope.kind, scopeSlug: scope.slug }),
+            syncRunId: syncRun.id,
+          };
+          await prisma.usageBucket.upsert({
+            where: {
+              provider_bucketStart_bucketEnd_granularity_dimensionKey: {
+                provider: "github_copilot",
+                bucketStart,
+                bucketEnd,
+                granularity: "day",
+                dimensionKey,
+              },
+            },
+            update: data,
+            create: { provider: "github_copilot", bucketStart, bucketEnd, granularity: "day", dimensionKey, ...data },
+          });
+          usageBucketsUpserted++;
+        }
+        daysSucceeded.push(day);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failedDays.push({ day, error: message });
+        logger.warn("provider_sync.copilot_day_failed", { day, error: message });
+        // A 403 (policy disabled / wrong scopes) will repeat for every day —
+        // stop early and fail the run so the operator sees one clear error.
+        if (/\(403\)/.test(message) || /\(401\)/.test(message)) throw error;
+      }
+    }
+
+    if (walk.days.length > 0 && daysSucceeded.length === 0 && failedDays.length > 0) {
+      throw new Error(`Every requested day failed; first error: ${failedDays[0].error}`);
+    }
+
+    // ── ProviderActor per seat / seen user ──
+    let actorsUpserted = 0;
+    const actorRows = new Map<string, { login: string; seat: CopilotSeat | null }>(seenActors);
+    for (const seat of seats) {
+      const actorId = copilotActorExternalId(seat.login, seat.email);
+      if (!actorRows.has(actorId)) actorRows.set(actorId, { login: seat.login, seat });
+    }
+    for (const [actorId, { login, seat }] of actorRows) {
+      const metadata = toJsonValue({
+        login,
+        userId: seat?.userId ?? null,
+        lastActivityAt: seat?.lastActivityAt ?? null,
+        lastActivityEditor: seat?.lastActivityEditor ?? null,
+        planType: seat?.planType ?? null,
+        seatCreatedAt: seat?.createdAt ?? null,
+        pendingCancellationDate: seat?.pendingCancellationDate ?? null,
+        hasSeat: !!seat,
+        scopeKind: scope.kind,
+        scopeSlug: scope.slug,
+      });
+      const lastSeenAt = seat?.lastActivityAt ? new Date(seat.lastActivityAt) : new Date();
+      await prisma.providerActor.upsert({
+        where: { provider_externalId: { provider: "github_copilot", externalId: actorId } },
+        update: {
+          email: seat?.email?.toLowerCase() ?? (actorId.includes("@") ? actorId : null),
+          name: login,
+          role: seat?.planType ?? null,
+          metadata,
+          lastSeenAt: Number.isNaN(lastSeenAt.getTime()) ? new Date() : lastSeenAt,
+          syncRunId: syncRun.id,
+        },
+        create: {
+          provider: "github_copilot",
+          externalId: actorId,
+          email: seat?.email?.toLowerCase() ?? (actorId.includes("@") ? actorId : null),
+          name: login,
+          role: seat?.planType ?? null,
+          metadata,
+          lastSeenAt: Number.isNaN(lastSeenAt.getTime()) ? new Date() : lastSeenAt,
+          syncRunId: syncRun.id,
+        },
+      });
+      actorsUpserted++;
+    }
+
+    const summary = {
+      usageBucketsUpserted,
+      costBucketsUpserted: 0,
+      rawSnapshotsStored,
+      projectsUpserted: 0,
+      actorsUpserted,
+      apiUsageLogsCreated: 0,
+    };
+
+    // Skipped days (window longer than the per-run cap) under-count the
+    // window exactly like a hit page cap does, so they flow through the same
+    // truncation accounting and alert.
+    const pagination: PaginationReport = {
+      requests: requestCount,
+      pages: requestCount,
+      daysRequested: walk.days.length,
+      maxDaysPerRun: COPILOT_MAX_DAYS_PER_RUN,
+      skippedDays: walk.skippedDays,
+      truncated: walk.skippedDays.length > 0,
+    };
+
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "github_copilot",
+      window: resolveCopilotWatermarkWindow(window, pendingDays),
+      summary,
+      pagination,
+      metadata: {
+        scope,
+        requestedWindow: { from: window.from.toISOString(), to: window.to.toISOString() },
+        daysSucceeded,
+        pendingDays,
+        emptyDays,
+        failedDays,
+        beforeDataStart: walk.beforeDataStart,
+        rejectedLines,
+        assistantDailyStatsUpserted: assistantStatsUpserted,
+        seats: { total: seatsTotal, fetched: seats.length, withEmail: seats.filter((s) => !!s.email).length, error: seatsError },
+        usersSeen: seenActors.size,
+      },
+    });
+
+    return { provider: "github_copilot", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
+  } catch (error) {
+    const errorMessage = await failSyncRun(syncRun.id, error);
+    return { provider: "github_copilot", success: false, error: errorMessage };
+  }
+}
+
+export async function syncGeminiTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isGeminiBillingConfigured())) {
     return {
       provider: "gemini",
@@ -1317,7 +1787,8 @@ export async function syncGeminiTelemetry(triggeredByUserId: string): Promise<Sy
   const syncRun = await createSyncRun("gemini", triggeredByUserId);
 
   try {
-    const rows = await getGeminiBillingRows(7);
+    const billing = await getGeminiBillingRowsForWindow(window);
+    const rows = billing.rows;
 
     await storeSnapshot(syncRun.id, "gemini", "billing_export_summary", {
       rows: rows.length,
@@ -1456,18 +1927,27 @@ export async function syncGeminiTelemetry(triggeredByUserId: string): Promise<Sy
       apiUsageLogsCreated: 0,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      billingRows: rows.length,
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "gemini",
+      window,
+      summary,
+      pagination: {
+        rowLimit: GEMINI_BILLING_ROW_LIMIT,
+        pages: billing.pages,
+        truncated: billing.truncated,
+      },
+      metadata: { billingRows: rows.length },
     });
 
-    return { provider: "gemini", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "gemini", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "gemini", success: false, error: errorMessage };
   }
 }
 
-export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncOpenAITelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   // Skip cleanly when no admin key is configured — do not create a
   // ProviderSyncRun row, do not call the upstream API.
   if (!(await isOpenAIAdminConfigured())) {
@@ -1482,21 +1962,21 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
   const syncRun = await createSyncRun("openai", triggeredByUserId);
 
   try {
-    const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
-    const now = Math.floor(Date.now() / 1000);
+    const startSeconds = Math.floor(window.from.getTime() / 1000);
+    const endSeconds = Math.floor(window.to.getTime() / 1000);
 
     // Both endpoints paginate with `has_more` / `next_page`; follow the cursor
     // (page-capped) so a busy org is not silently cut off at the first page.
     const [usage, costs, assistants] = await Promise.all([
       getAllUsage({
-        start_time: sevenDaysAgo,
-        end_time: now,
+        start_time: startSeconds,
+        end_time: endSeconds,
         group_by: ["model", "project_id", "user_id", "api_key_id"],
         bucket_width: "1d",
       }),
       getAllCosts({
-        start_time: sevenDaysAgo,
-        end_time: now,
+        start_time: startSeconds,
+        end_time: endSeconds,
         bucket_width: "1d",
       }).catch(() => null),
       listAssistants({ limit: 100, order: "desc" }).catch(() => null),
@@ -1747,26 +2227,32 @@ export async function syncOpenAITelemetry(triggeredByUserId: string): Promise<Sy
       apiUsageLogsCreated,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      assistantsCount: asArray(asRecord(assistants).data).length,
+    await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "openai",
+      window,
+      summary,
       pagination: {
         pageCap: OPENAI_DEFAULT_MAX_PAGES,
         usagePages: usage.pages,
         usageTruncated: usage.truncated,
         costsPages: costs?.pages ?? 0,
         costsTruncated: costs?.truncated ?? false,
+        truncated,
       },
-      truncated,
+      metadata: {
+        assistantsCount: asArray(asRecord(assistants).data).length,
+      },
     });
 
-    return { provider: "openai", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "openai", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "openai", success: false, error: errorMessage };
   }
 }
 
-export async function syncOpenRouterTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncOpenRouterTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isOpenRouterConfigured())) {
     return {
       provider: "openrouter",
@@ -1779,8 +2265,13 @@ export async function syncOpenRouterTelemetry(triggeredByUserId: string): Promis
   const syncRun = await createSyncRun("openrouter", triggeredByUserId);
 
   try {
+    // /activity returns per-day rows for roughly the last 30 days and has no
+    // range parameters, so the window is applied client-side.
     const activity = await getOpenRouterActivity();
-    const rows = normalizeOpenRouterActivityRows(activity);
+    const allRows = normalizeOpenRouterActivityRows(activity);
+    const fromDay = window.from.toISOString().slice(0, 10);
+    const toDay = window.to.toISOString().slice(0, 10);
+    const rows = allRows.filter((row) => row.date >= fromDay && row.date <= toDay);
 
     await storeSnapshot(syncRun.id, "openrouter", "activity_summary", {
       rowCount: rows.length,
@@ -1959,13 +2450,22 @@ export async function syncOpenRouterTelemetry(triggeredByUserId: string): Promis
       apiUsageLogsCreated,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      coverage: {
-        rows: rows.length,
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "openrouter",
+      window,
+      summary,
+      // /activity is a single unpaginated response.
+      pagination: { pages: 1, truncated: false },
+      metadata: {
+        coverage: {
+          rows: rows.length,
+          rowsOutsideWindow: allRows.length - rows.length,
+        },
       },
     });
 
-    return { provider: "openrouter", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "openrouter", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "openrouter", success: false, error: errorMessage };
@@ -2174,7 +2674,7 @@ export function planPortkeyDayBuckets(args: {
   return { date, usageBuckets, costBuckets, actors, totals };
 }
 
-export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncPortkeyTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isPortkeyConfigured())) {
     return {
       provider: "portkey",
@@ -2187,8 +2687,8 @@ export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<S
   const syncRun = await createSyncRun("portkey", triggeredByUserId);
 
   try {
-    const end = new Date();
-    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const start = window.from;
+    const end = window.to;
     // One grouped call per UTC day keeps Portkey buckets at day granularity
     // (Portkey's grouped endpoints otherwise aggregate the whole window).
     const windows = buildPortkeyDayWindows(start, end);
@@ -2426,11 +2926,15 @@ export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<S
     const graphTotalTokens = tokenPoints.reduce((sum, point) => sum + point.total, 0);
     const graphCostUsd = portkeyCostToUsd(costPoints.reduce((sum, point) => sum + point.total, 0));
 
-    await completeSyncRun(syncRun.id, summary, {
-      window: { start: startTime, end: endTime, days: windows.length },
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "portkey",
+      window,
+      summary,
+      pagination: { ...pagination, pages: pagination.modelPages + pagination.userPages },
+      metadata: {
+      dayWindows: { start: startTime, end: endTime, days: windows.length },
       coverage,
-      pagination,
-      truncated: pagination.truncated,
       // Grouped totals should match the org-level graphs. A persistent
       // 100x gap in cost means the grouped `cost` unit assumption is wrong.
       reconciliation: {
@@ -2448,16 +2952,17 @@ export async function syncPortkeyTelemetry(triggeredByUserId: string): Promise<S
         model: "date=<YYYY-MM-DD>|model=<model>",
         actor: "actorExternalId=<user>|date=<YYYY-MM-DD>|partition=actor",
       },
+      },
     });
 
-    return { provider: "portkey", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "portkey", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "portkey", success: false, error: errorMessage };
   }
 }
 
-export async function syncHeliconeTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncHeliconeTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isHeliconeConfigured())) {
     return {
       provider: "helicone",
@@ -2470,22 +2975,19 @@ export async function syncHeliconeTelemetry(triggeredByUserId: string): Promise<
   const syncRun = await createSyncRun("helicone", triggeredByUserId);
 
   try {
-    const end = new Date();
-    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const allRows = [];
-    const pageSize = 500;
-
-    for (let page = 0; page < 20; page++) {
-      const payload = await queryHeliconeRequests({
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-        offset: page * pageSize,
-        limit: pageSize,
-      });
-      const rows = normalizeHeliconeRequestRows(payload);
-      allRows.push(...rows);
-      if (rows.length < pageSize) break;
-    }
+    const paged = await readHeliconeRequestPages(queryHeliconeRequests, {
+      startTime: window.from.toISOString(),
+      endTime: window.to.toISOString(),
+      pageSize: HELICONE_DEFAULT_PAGE_SIZE,
+      maxPages: HELICONE_DEFAULT_MAX_PAGES,
+    });
+    const allRows = paged.rows;
+    const pagination: PaginationReport = {
+      pageSize: HELICONE_DEFAULT_PAGE_SIZE,
+      pageCap: HELICONE_DEFAULT_MAX_PAGES,
+      pages: paged.pages,
+      truncated: paged.truncated,
+    };
 
     await storeSnapshot(syncRun.id, "helicone", "request_summary", {
       rowCount: allRows.length,
@@ -2698,21 +3200,28 @@ export async function syncHeliconeTelemetry(triggeredByUserId: string): Promise<
       apiUsageLogsCreated,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      coverage: {
-        rows: allRows.length,
-        uniqueActors: seenActors.size,
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "helicone",
+      window,
+      summary,
+      pagination,
+      metadata: {
+        coverage: {
+          rows: allRows.length,
+          uniqueActors: seenActors.size,
+        },
       },
     });
 
-    return { provider: "helicone", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "helicone", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "helicone", success: false, error: errorMessage };
   }
 }
 
-export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<SyncResult> {
+export async function syncLiteLLMTelemetry(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isLiteLLMConfigured())) {
     return {
       provider: "litellm",
@@ -2725,11 +3234,9 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
   const syncRun = await createSyncRun("litellm", triggeredByUserId);
 
   try {
-    const end = new Date();
-    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
     const payload = await queryLiteLLMSpendLogs({
-      startDate: start.toISOString().slice(0, 10),
-      endDate: end.toISOString().slice(0, 10),
+      startDate: window.from.toISOString().slice(0, 10),
+      endDate: window.to.toISOString().slice(0, 10),
     });
     const rows = normalizeLiteLLMSpendRows(payload);
     const systems = await loadSystemResolver("litellm", PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS.LITELLM);
@@ -3001,15 +3508,23 @@ export async function syncLiteLLMTelemetry(triggeredByUserId: string): Promise<S
       apiUsageLogsCreated,
     };
 
-    await completeSyncRun(syncRun.id, summary, {
-      coverage: {
-        rows: rows.length,
-        uniqueActors: seenActors.size,
-        uniqueTeams: seenTeams.size,
+    const truncated = await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "litellm",
+      window,
+      summary,
+      // /spend/logs returns the whole date range in one response.
+      pagination: { pages: 1, truncated: false },
+      metadata: {
+        coverage: {
+          rows: rows.length,
+          uniqueActors: seenActors.size,
+          uniqueTeams: seenTeams.size,
+        },
       },
     });
 
-    return { provider: "litellm", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "litellm", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "litellm", success: false, error: errorMessage };
@@ -3147,7 +3662,12 @@ function countBy(values: readonly (string | null)[]): Record<string, number> {
   return out;
 }
 
-export async function syncChatGPTEnterprise(triggeredByUserId: string): Promise<SyncResult> {
+/**
+ * The Compliance API is cursor-based (one watermark per log stream, see
+ * chatgptStreamWatermarkKey), so the scheduled `window` is echoed back for
+ * the run report rather than used to bound the upstream reads.
+ */
+export async function syncChatGPTEnterprise(triggeredByUserId: string, window: SyncWindow): Promise<SyncResult> {
   if (!(await isChatGPTEnterpriseConfigured())) {
     return {
       provider: "chatgpt_enterprise",
@@ -3412,11 +3932,6 @@ export async function syncChatGPTEnterprise(triggeredByUserId: string): Promise<
     await storeSnapshot(syncRun.id, "chatgpt_enterprise", "logs", { streams });
     rawSnapshotsStored++;
 
-    await saveSyncWatermark(overallKey, {
-      watermark: now,
-      earliest: previousRun?.earliest ?? now,
-    });
-
     const summary = {
       usageBucketsUpserted: 0,
       costBucketsUpserted: 0,
@@ -3427,17 +3942,40 @@ export async function syncChatGPTEnterprise(triggeredByUserId: string): Promise<
     };
 
     const unauthorizedStreams = (Object.keys(streams) as ChatGPTLogEventType[]).filter((t) => streams[t]?.skipped);
-    await completeSyncRun(syncRun.id, summary, {
-      workspaceId,
-      users: users.length,
-      newUsers: newUsers.length,
-      directoryCheck: "skipped: DirectoryPerson (Tier 3 item 3.3) is not present",
-      gpts: gptsReport,
-      streams,
-      unauthorizedStreams,
-      complianceActivitiesInserted,
-      assistantDailyStatsUpserted,
-      alertsCreated,
+    // A capped stream is not a gap the operator must backfill — the next
+    // hourly run resumes from that stream's cursor — so it is reported in
+    // the run metadata and the result without raising provider_sync_truncated
+    // (no `pagination` is passed to finishSyncRun).
+    const truncated =
+      usersTruncated ||
+      gptsReport.truncated === true ||
+      Object.values(streams).some((report) => report.truncated);
+    await finishSyncRun({
+      syncRunId: syncRun.id,
+      provider: "chatgpt_enterprise",
+      window,
+      summary,
+      metadata: {
+        workspaceId,
+        users: users.length,
+        newUsers: newUsers.length,
+        directoryCheck: "skipped: DirectoryPerson (Tier 3 item 3.3) is not present",
+        gpts: gptsReport,
+        streams,
+        streamsTruncated: truncated,
+        unauthorizedStreams,
+        complianceActivitiesInserted,
+        assistantDailyStatsUpserted,
+        alertsCreated,
+      },
+    });
+
+    // The overall cursor is the instant this run observed the workspace
+    // (detectNewWorkspaceUsers compares against it next run). Written after
+    // finishSyncRun so its day-snapped window watermark does not win.
+    await saveSyncWatermark(overallKey, {
+      watermark: now,
+      earliest: previousRun?.earliest ?? now,
     });
 
     logger.info("provider_sync.chatgpt_enterprise.completed", {
@@ -3449,7 +3987,7 @@ export async function syncChatGPTEnterprise(triggeredByUserId: string): Promise<
       unauthorizedStreams,
     });
 
-    return { provider: "chatgpt_enterprise", success: true, syncRunId: syncRun.id, ...summary };
+    return { provider: "chatgpt_enterprise", success: true, syncRunId: syncRun.id, window, truncated, ...summary };
   } catch (error) {
     const errorMessage = await failSyncRun(syncRun.id, error);
     return { provider: "chatgpt_enterprise", success: false, error: errorMessage };

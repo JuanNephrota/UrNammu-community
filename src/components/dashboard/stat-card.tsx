@@ -15,6 +15,9 @@ import {
   MousePointer2,
   Wrench,
   Users,
+  GitBranch,
+  GitPullRequest,
+  Percent,
   type LucideIcon,
 } from "lucide-react";
 
@@ -31,6 +34,9 @@ const iconMap: Record<string, LucideIcon> = {
   MousePointer2,
   Wrench,
   Users,
+  GitBranch,
+  GitPullRequest,
+  Percent,
 };
 
 interface StatCardProps {

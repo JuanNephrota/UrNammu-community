@@ -130,7 +130,7 @@ RESEND_API_KEY=
 REPORT_EMAIL_FROM=
 ```
 
-Most integration credentials (Cursor Admin API, Azure Monitor, Netskope) are configured at runtime in **Settings > Integrations** / **Settings > Shadow AI** rather than via env vars.
+Most integration credentials (Cursor Admin API, GitHub Copilot, Azure Monitor, Netskope) are configured at runtime in **Settings > Integrations** / **Settings > Shadow AI** rather than via env vars. The GitHub Copilot sync also accepts `GITHUB_COPILOT_TOKEN`, `GITHUB_COPILOT_ORG`, and `GITHUB_COPILOT_ENTERPRISE` as env fallbacks.
 
 3. Run Prisma migrations and seed data:
 
@@ -199,10 +199,11 @@ Integration secrets are stored in `AppSetting`, but secret values are encrypted 
 Phase 2 introduces a normalized telemetry foundation alongside the legacy `APIUsageLog` table:
 
 - `ProviderSyncRun`: tracks each sync attempt
+- `ProviderSyncWatermark`: per-provider last-ingested day and earliest-ingested day; drives incremental sync windows
 - `ProviderRawSnapshot`: stores raw provider payloads for audit/debug
 - `UsageBucket`: normalized usage aggregates
 - `CostBucket`: normalized cost aggregates, carrying the same attribution columns as `UsageBucket` (`apiKeyExternalId`, `apiKeyName`, `workspaceExternalId`, `workspaceName`, `aiSystemId`) so spend rolls up by governed system and by key
-- `AssistantDailyStat`: per-person, per-day coding-assistant stats (Claude Code analytics, Cursor Admin API) as columns — sessions, requests, lines, commits, PRs, tool accept/reject, tokens, cost
+- `AssistantDailyStat`: per-person, per-day coding-assistant stats (Claude Code analytics, Cursor Admin API, GitHub Copilot usage metrics) as columns — sessions, requests, lines, commits, PRs, tool accept/reject, tokens, cost
 - `ProviderProject`: discovered provider-side projects/workspaces (for Anthropic these are Console workspaces)
 - `ProviderActor`: discovered provider-side users/members
 
@@ -215,6 +216,8 @@ All four proxy paths account tokens the same way: `inputTokens` / `promptTokens`
 Provider sync runs on one global switch and cadence — `provider_sync_enabled` / `provider_sync_interval_hours` in **Settings > Provider Admin APIs** — covering Anthropic, OpenAI, Claude Code analytics, Cursor, Gemini, and every AI gateway. Per-provider settings are planned in [docs/plans/data-collection-tier2.md](docs/plans/data-collection-tier2.md).
 
 **Cost attribution.** Admin-sync'd usage *and* cost rows resolve to a registered AI system through two settings on **Settings > Provider Admin APIs**: a per-provider default (`anthropic_managed_system_id`, `openai_managed_system_id`, `litellm_managed_system_id`, `cursor_managed_system_id`) and a per-API-key override map (`provider_key_system_map`, JSON `{ provider: { apiKeyId: aiSystemId } }`). A key mapping wins over the provider default. Where a provider reports cost per workspace or project rather than per key (Anthropic, OpenAI), the cost row inherits the system when every key seen in that workspace/project maps to the same one, otherwise the provider default. The Oversight overview shows **Cost by Governed System** (with an attribution-coverage percentage) and **Cost by API Key** (Anthropic rows are workspaces, because its cost report has no key dimension). Logic lives in `src/lib/system-attribution.ts` and `src/lib/cost-attribution.ts`.
+
+Syncs are incremental: each provider resumes from its `ProviderSyncWatermark`, re-pulling the last `provider_sync_overlap_days` (default 2) and never reaching further back than the provider's max lookback (Cursor 30 days; Anthropic, OpenAI, Gemini 90; gateways 30). A fresh install's first scheduled run covers up to 31 days; **Settings > Provider Admin APIs > Sync History & Backfill** pulls older history in 7-day chunks via `POST /api/admin-sync { provider, from, to }`. Every paginated fetch records `{ pages, truncated }` in the sync run's metadata, and a truncated run raises a `provider_sync_truncated` alert (deduped 24h per provider).
 
 When traffic flows through the built-in proxy, Oversight can also raise dangerous-prompt alerts from redacted prompt-risk signals without storing full prompt bodies by default.
 
@@ -343,6 +346,10 @@ Ingest is idempotent: each row carries a content-hash `dedupeKey` (unique column
 
 Adds Cursor tokens, requests, spend (`provider="cursor"`), and per-user "lines produced" metrics to the Cursor dashboard and Usage by Person. The Cursor OTel hook carries no token or cost data, so this sync is the source for both. Requires a team-admin Cursor API key (configured in `Settings > Provider Admin APIs`).
 
+### GitHub Copilot usage metrics
+
+Pulls the GitHub Copilot usage metrics reports (`X-GitHub-Api-Version: 2026-03-10`) for an organization or enterprise: `users-1-day` becomes one `AssistantDailyStat` row per developer per day (`provider="github_copilot"` — interactions, accepted lines, CLI/app tokens, feature / IDE / model / language breakdowns), `organization-1-day` / `enterprise-1-day` becomes one `UsageBucket` per day with the org totals (DAU/WAU/MAU, pull-request metrics) in metadata, and `GET …/copilot/billing/seats` becomes `ProviderActor` rows with `last_activity_at` for the identity join and the idle-seat list. The actor id is the seat's email when GitHub exposes one, otherwise the lower-cased login. Powers the **GitHub Copilot** oversight dashboard and the GitHub Copilot surface on Usage by Person. Copilot is seat-licensed, so no cost is derived. Reports land within two days and are kept one year; the sync walks day by day from its watermark (at most 28 days per run) and holds the watermark at days GitHub has not published yet. Requires the org/enterprise **Copilot usage metrics** policy and a token with `read:org` (org) or `manage_billing:copilot` / `read:enterprise` (enterprise), configured in `Settings > Provider Admin APIs` or `Settings > Integrations`.
+
 ### Azure Monitor (proxy health)
 
 Pulls Function App metrics (invocations, response time, HTTP status distribution) into `ProxyHealthSnapshot` records for the Proxy Health board, every 15 minutes via `/api/cron/proxy-health` and on demand from the board. Configure subscription / resource group / function app / region plus a service principal in `Settings > Integrations`.
@@ -357,7 +364,7 @@ Background work runs as **one Vercel Cron entry per job**, all guarded by `Autho
 
 | Route | Schedule | What it does |
 |---|---|---|
-| `/api/cron/provider-sync/<provider>` | hourly, one entry per provider (`anthropic`, `claude_code`, `cursor`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry into `UsageBucket` / `CostBucket`. The OpenAI entry also refreshes the Assistants inventory. |
+| `/api/cron/provider-sync/<provider>` | hourly, one entry per provider (`anthropic`, `claude_code`, `cursor`, `github_copilot`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`) | Pulls that provider's admin telemetry into `UsageBucket` / `CostBucket`. The OpenAI entry also refreshes the Assistants inventory. |
 | `/api/cron/discovery-scan/<source>` | hourly, one entry per source (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan and fails any scan of the same source stuck in `running` for 10+ minutes. |
 | `/api/cron/governance-automation` | hourly | Review-renewal, exception-renewal, ownership-escalation, and usage-after-deactivation alerts. |
 | `/api/cron/directory-sync/<source>` | daily, one entry per source (`google_workspace` 04:10 UTC, `microsoft_365` 04:20 UTC) | Full people-directory sync into `DirectoryPerson` when that source's `directory_sync_<source>_enabled` is on (default off) and its interval (default 24 h) has elapsed; fails runs stuck in `RUNNING` for 30+ minutes. |
@@ -436,7 +443,7 @@ npm run db:reset
 - **Policy-as-code runtime enforcement**: the proxy evaluates machine-readable policy rules with an org-wide gate (`off` / `dry-run` / `enforce`), per-policy advisory-vs-blocking semantics, and a ~30s policy cache. Denials (and dangerous-prompt content blocks) are recorded and surfaced in a filterable, CSV-exportable Policy Denials viewer.
 - **Per-surface developer-AI oversight** via an OpenTelemetry pipeline: dedicated Claude Platform/API, Claude Code (+ searchable audit log), Cowork (local-agent surface), and Cursor dashboards, with per-user attribution and retention-prune crons. Prompt/code text is stripped at ingest; only metadata, decisions, and prompt-risk verdicts are stored.
 - **Custom reporting suite**: nine data sources (including the computed Usage by Person rollup) and ten starter templates, detail/grouped output, PDF/CSV/JSON export, and scheduled email delivery via Resend.
-- **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync.
+- **AI gateway oversight** (Helicone, OpenRouter, Portkey, LiteLLM) normalized into the shared usage/cost pipeline, plus Cursor Admin API spend/lines sync and GitHub Copilot usage metrics sync.
 - **Shadow AI** gained a single "Scan All Sources" action, Hexnode UEM device discovery, Netskope log-shipper ingestion, and an Unblock action for blocked tools.
 - **Shadow AI observation detail**: `DiscoveredAITool` stores `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` as queryable columns (previously notes text), shown as first/last seen, user chips, and OAuth scopes on the page. A rescan from the same source replaces the user count (it can go down); a different source keeps the max. DNS/proxy imports and the Netskope webhook read a timestamp column/field (ISO or epoch) for first/last seen; the CSV importer maps vendor-native headers via presets (Umbrella, Cloudflare Gateway, Zscaler, Netskope, Prisma Access, DNSFilter, NextDNS). Microsoft 365 scans need `User.Read.All` to resolve principals to emails. GitHub Copilot detection now keys on the hostnames its IDE extensions actually resolve.
 - **Data collection Tier 1**: cache read/creation tokens captured on every proxy path with one accounting convention and one pricing module (unknown models cost `0` with `pricingMatched: false`); OpenAI streaming usage + response DLP through the proxy; Portkey per-day per-model and per-user buckets with a cost `reconciliation` block; OpenAI sync pagination, cached-token capture, and a request-count fix (`num_model_requests`); idempotent OTel ingest via `dedupeKey`. Requires migration `20260916120000_collection_tier1`. Next tier: [docs/plans/data-collection-tier2.md](docs/plans/data-collection-tier2.md).

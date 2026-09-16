@@ -146,3 +146,48 @@ export async function testHelicone(): Promise<{ success: boolean; message: strin
     };
   }
 }
+
+export const HELICONE_DEFAULT_PAGE_SIZE = 500;
+export const HELICONE_DEFAULT_MAX_PAGES = 20;
+
+export type HeliconeRequestPagesResult = {
+  rows: HeliconeRequestRow[];
+  /** Number of pages actually fetched. */
+  pages: number;
+  /** True when the page cap was reached while the last page was still full. */
+  truncated: boolean;
+};
+
+/**
+ * Read every page of Helicone requests for a window using offset/limit.
+ * Stops on the first short page; when `maxPages` is exhausted while the last
+ * page was still full the result is flagged `truncated` so the sync run can
+ * record it instead of silently under-counting. Pure apart from the
+ * injected fetcher.
+ */
+export async function readHeliconeRequestPages(
+  fetchPage: (args: { startTime: string; endTime: string; offset: number; limit: number }) => Promise<unknown>,
+  options: { startTime: string; endTime: string; pageSize?: number; maxPages?: number },
+): Promise<HeliconeRequestPagesResult> {
+  const pageSize = options.pageSize ?? HELICONE_DEFAULT_PAGE_SIZE;
+  const maxPages = options.maxPages ?? HELICONE_DEFAULT_MAX_PAGES;
+  const rows: HeliconeRequestRow[] = [];
+  let pages = 0;
+  let truncated = false;
+
+  for (let page = 0; page < maxPages; page++) {
+    const payload = await fetchPage({
+      startTime: options.startTime,
+      endTime: options.endTime,
+      offset: page * pageSize,
+      limit: pageSize,
+    });
+    pages++;
+    const pageRows = normalizeHeliconeRequestRows(payload);
+    rows.push(...pageRows);
+    if (pageRows.length < pageSize) return { rows, pages, truncated };
+    if (page === maxPages - 1) truncated = true;
+  }
+
+  return { rows, pages, truncated };
+}

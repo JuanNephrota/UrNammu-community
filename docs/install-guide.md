@@ -325,6 +325,7 @@ All optional; the Settings UI is the normal place to change these.
 | Variable | Purpose |
 |----------|---------|
 | `PROVIDER_SYNC_ENABLED`, `PROVIDER_SYNC_INTERVAL_HOURS` | Provider telemetry sync toggle and cadence. One global switch covers every provider and gateway sync; per-provider schedules are planned ([Tier 2 plan](./plans/data-collection-tier2.md)). |
+| `PROVIDER_SYNC_OVERLAP_DAYS` | Default 2. Days re-pulled before each provider's sync watermark on every scheduled run so late-arriving usage and cost corrections are captured. Also settable as `provider_sync_overlap_days` in Settings. |
 | `PROVIDER_SECURITY_SCAN_ENABLED`, `PROVIDER_SECURITY_SCAN_INTERVAL_HOURS` | Provider secure-use / privacy scan toggle and cadence. |
 | `ANOMALY_RECENT_WINDOW_DAYS`, `ANOMALY_BASELINE_WINDOW_DAYS` | Comparison windows for cost / usage anomaly detection. |
 | `ANOMALY_MIN_RECENT_TOKENS`, `ANOMALY_MIN_RECENT_COST` | Floors that suppress anomaly alerts on trivial volume. |
@@ -653,7 +654,6 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 2. Paste it into **Settings → Provider Admin APIs → Cursor** and enable sync.
 
 Supplies per-user, per-day tokens, requests, accepted lines, and charged spend to the Cursor dashboard and Usage by Person.
-
 ### 8.6b ChatGPT Enterprise Compliance API (telemetry + audit)
 
 Requires a ChatGPT Enterprise or Edu workspace.
@@ -665,6 +665,13 @@ Requires a ChatGPT Enterprise or Edu workspace.
 
 The hourly `/api/cron/provider-sync/chatgpt_enterprise` job then pulls users, auth/audit events, per-user daily ChatGPT message counts, and Codex activity, and raises alerts for admin-role grants and new GPTs with custom actions. Streams the key is not scoped for are skipped and listed in the sync-run metadata. Reference: [OpenAI Admin API](https://chatgpt.com/public/admin/api-reference).
 
+### 8.6c GitHub Copilot usage metrics (telemetry)
+
+1. In GitHub, enable the **Copilot usage metrics** policy for the organization (enterprise: *Enabled everywhere*). Report endpoints answer `403` until it is on.
+2. As an org owner, create a token — classic PAT with `read:org` (organization) or `manage_billing:copilot` / `read:enterprise` (enterprise); fine-grained tokens need *View Organization Copilot Metrics* plus Copilot billing read.
+3. Enter the organization login and/or enterprise slug and the token in **Settings → Provider Admin APIs → GitHub Copilot**, click **Test**, and enable sync (env fallbacks: `GITHUB_COPILOT_TOKEN`, `GITHUB_COPILOT_ORG`, `GITHUB_COPILOT_ENTERPRISE`).
+
+Supplies per-developer daily interactions, accepted lines, CLI / app tokens, and feature / IDE / model breakdowns, organization DAU / WAU / MAU and pull-request metrics, and seat assignments (idle-seat list) to the GitHub Copilot dashboard and Usage by Person. Reports land within two days; the sync walks at most 28 days per run, so use Backfill for older history (kept one year upstream). No migration beyond the shared `ProviderSyncWatermark` table.
 ### 8.7 Google Gemini / Vertex AI oversight
 
 UrNammu supports Gemini oversight through Google Cloud Billing export data in BigQuery.
@@ -811,7 +818,7 @@ The prune jobs matter more than they look: the developer-AI telemetry tables and
 
 ### 9.3 Vercel Cron (recommended if deploying to Vercel)
 
-All of the above are already configured in `vercel.json` (21 entries, staggered so the hourly jobs do not all fire at minute zero):
+All of the above are already configured in `vercel.json` (26 entries, staggered so the hourly jobs do not all fire at minute zero):
 
 ```json
 {
@@ -826,6 +833,7 @@ All of the above are already configured in `vercel.json` (21 entries, staggered 
     { "path": "/api/cron/provider-sync/portkey", "schedule": "21 * * * *" },
     { "path": "/api/cron/provider-sync/litellm", "schedule": "24 * * * *" },
     { "path": "/api/cron/provider-sync/chatgpt_enterprise", "schedule": "27 * * * *" },
+    { "path": "/api/cron/provider-sync/github_copilot", "schedule": "33 * * * *" },
     { "path": "/api/cron/discovery-scan/google_workspace", "schedule": "30 * * * *" },
     { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
@@ -871,7 +879,7 @@ The response reports whether the job was `due`, and if not, the `skippedReason` 
 
 ### 9.6 Verifying cron health
 
-- **Settings → Provider Admin APIs** shows each provider's last run, outcome, and next-due time.
+- **Settings → Provider Admin APIs** shows each provider's last run, outcome, and next-due time, and the **Sync History & Backfill** card shows each provider's ingested date range (earliest day → watermark). Scheduled syncs are incremental from the watermark; on a fresh install the first run reaches back at most 31 days. Use **Backfill** there to pull older history (7-day chunks, one request each) up to the provider's retention — Cursor keeps ~30 days upstream, so backfill it soon after connecting.
 - **Shadow AI** page shows the most recent `ScanHistory` row.
 - Any failures show up with an error message in the relevant admin page.
 

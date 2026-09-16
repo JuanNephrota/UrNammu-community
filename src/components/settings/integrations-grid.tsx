@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Eye,
   Gauge,
+  GitBranch,
   Network,
   Search,
   Shield,
@@ -37,6 +38,7 @@ import { GeminiBillingSettings } from "./gemini-billing-settings";
 import { LiteLLMSettings } from "./litellm-settings";
 import { ChatGPTEnterpriseSettings } from "./chatgpt-enterprise-settings";
 import { DatadogSettings } from "./datadog-settings";
+import { GitHubCopilotSettings } from "./github-copilot-settings";
 
 type Category =
   | "AI Models"
@@ -74,6 +76,12 @@ export interface IntegrationsGridProps {
   hasPortkeyKey: boolean;
   hasLiteLLMKey: boolean;
   hasGeminiBillingConfig: boolean;
+  hasGitHubCopilotConfig: boolean;
+  githubCopilot: {
+    org: string;
+    enterprise: string;
+    hasToken: boolean;
+  };
   chatgptEnterprise: {
     workspaceId: string;
     hasAdminKey: boolean;
@@ -159,6 +167,19 @@ export function IntegrationsGrid(props: IntegrationsGridProps) {
       description: "Gemini and Vertex AI cost data from a BigQuery billing export.",
       icon: Database,
       connected: props.hasGeminiBillingConfig,
+    },
+    {
+      id: "github-copilot",
+      category: "Provider Telemetry",
+      name: "GitHub Copilot",
+      description: "Per-user daily Copilot usage, organization totals, and seat assignments from the Copilot usage metrics reports.",
+      icon: GitBranch,
+      connected: props.hasGitHubCopilotConfig,
+      statusLabel: props.githubCopilot.enterprise
+        ? `enterprise · ${props.githubCopilot.enterprise}`
+        : props.githubCopilot.org
+          ? `org · ${props.githubCopilot.org}`
+          : undefined,
     },
     {
       id: "openrouter",
@@ -399,6 +420,8 @@ function renderModalBody(id: string, props: IntegrationsGridProps) {
       return <ChatGPTEnterpriseSettings initial={props.chatgptEnterprise} />;
     case "gemini-billing":
       return <GeminiBillingSettings initial={props.geminiBilling} />;
+    case "github-copilot":
+      return <GitHubCopilotSettings initial={props.githubCopilot} />;
     case "azure-monitor":
       return <AzureMonitorSettings initial={props.azureMonitor} />;
     case "datadog":

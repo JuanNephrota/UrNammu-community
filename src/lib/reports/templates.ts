@@ -19,7 +19,7 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
     key: "usage-by-person",
     name: "Usage by Person",
     description:
-      "Per-person AI cost and activity across Claude Code, Cowork, Cursor, and proxied API calls over the last 30 days, highest spend first.",
+      "Per-person AI cost and activity across Claude Code, Cowork, Cursor, GitHub Copilot, and proxied API calls over the last 30 days, highest spend first.",
     icon: "Users",
     dataSource: "PEOPLE_USAGE",
     config: {

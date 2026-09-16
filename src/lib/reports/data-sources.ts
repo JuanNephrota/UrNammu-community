@@ -281,7 +281,7 @@ export const DATA_SOURCES: Record<ReportDataSourceKey, DataSourceDef> = {
     key: "PEOPLE_USAGE",
     label: "Usage by Person",
     description:
-      "One row per person: Claude Code, Cowork, Cursor, and proxied API cost and activity, merged by email.",
+      "One row per person: Claude Code, Cowork, Cursor, GitHub Copilot, and proxied API cost and activity, merged by email.",
     loader: ({ range }) => loadPeopleUsageReportRows(range),
     dateField: "lastActiveAt",
     columns: [
@@ -312,6 +312,10 @@ export const DATA_SOURCES: Record<ReportDataSourceKey, DataSourceDef> = {
       { key: "cursorTokens", label: "Cursor Tokens", type: "number", field: "cursorTokens", aggregate: "sum" },
       { key: "cursorLinesAccepted", label: "Cursor Lines Accepted", type: "number", field: "cursorLinesAccepted", aggregate: "sum" },
       { key: "cursorActiveDays", label: "Cursor Active Days", type: "number", field: "cursorActiveDays", aggregate: "sum" },
+      { key: "copilotInteractions", label: "GitHub Copilot Interactions", type: "number", field: "copilotInteractions", aggregate: "sum" },
+      { key: "copilotTokens", label: "GitHub Copilot Tokens", type: "number", field: "copilotTokens", aggregate: "sum" },
+      { key: "copilotLinesAccepted", label: "GitHub Copilot Lines Accepted", type: "number", field: "copilotLinesAccepted", aggregate: "sum" },
+      { key: "copilotActiveDays", label: "GitHub Copilot Active Days", type: "number", field: "copilotActiveDays", aggregate: "sum" },
       { key: "proxyCost", label: "API (proxy) Cost", type: "currency", field: "proxyCost", aggregate: "sum" },
       { key: "proxyRequests", label: "API (proxy) Requests", type: "number", field: "proxyRequests", aggregate: "sum" },
       { key: "proxyTokens", label: "API (proxy) Tokens", type: "number", field: "proxyTokens", aggregate: "sum" },

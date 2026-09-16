@@ -47,6 +47,7 @@ export async function getSetting(key: string): Promise<string | null> {
     gemini_billing_location: process.env.GEMINI_BILLING_LOCATION,
     provider_sync_enabled: process.env.PROVIDER_SYNC_ENABLED,
     provider_sync_interval_hours: process.env.PROVIDER_SYNC_INTERVAL_HOURS,
+    provider_sync_overlap_days: process.env.PROVIDER_SYNC_OVERLAP_DAYS,
     provider_security_scan_enabled: process.env.PROVIDER_SECURITY_SCAN_ENABLED,
     provider_security_scan_interval_hours:
       process.env.PROVIDER_SECURITY_SCAN_INTERVAL_HOURS,
@@ -79,6 +80,9 @@ export async function getSetting(key: string): Promise<string | null> {
     datadog_site: process.env.DATADOG_SITE,
     datadog_enabled: process.env.DATADOG_ENABLED,
     claude_code_telemetry_secret: process.env.CLAUDE_CODE_TELEMETRY_SECRET,
+    github_copilot_token: process.env.GITHUB_COPILOT_TOKEN,
+    github_copilot_org: process.env.GITHUB_COPILOT_ORG,
+    github_copilot_enterprise: process.env.GITHUB_COPILOT_ENTERPRISE,
     prompt_hash_salt: process.env.PROMPT_HASH_SALT,
     // Retention windows for every prune cron (OTel telemetry plus the
     // collection tables). One list in collection-retention.ts feeds both this
@@ -192,6 +196,15 @@ export const CROWDSTRIKE_SETTINGS_KEYS = {
   SCAN_INTERVAL_HOURS: "crowdstrike_scan_interval_hours",
 } as const;
 
+// GitHub Copilot usage metrics sync (src/lib/github-copilot-admin.ts). The
+// token needs `read:org` for an organization or `manage_billing:copilot` /
+// `read:enterprise` for an enterprise; ENTERPRISE wins over ORG when both are set.
+export const GITHUB_COPILOT_SETTINGS_KEYS = {
+  TOKEN: "github_copilot_token",
+  ORG: "github_copilot_org",
+  ENTERPRISE: "github_copilot_enterprise",
+} as const;
+
 export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
   SERVICE_ACCOUNT_KEY: "gemini_billing_service_account_key",
   PROJECT_ID: "gemini_billing_project_id",
@@ -207,6 +220,9 @@ export const GEMINI_OVERSIGHT_SETTINGS_KEYS = {
 export const PROVIDER_SYNC_SETTINGS_KEYS = {
   ENABLED: "provider_sync_enabled",
   INTERVAL_HOURS: "provider_sync_interval_hours",
+  // Days re-pulled before each provider's watermark on every scheduled sync
+  // (default 2). See src/lib/provider-sync-window.ts.
+  OVERLAP_DAYS: "provider_sync_overlap_days",
 } as const;
 
 const PROVIDER_SYNC_OVERRIDE_KEY_PATTERN = /^provider_sync_[a-z0-9_]+_(enabled|interval_hours)$/;
@@ -252,6 +268,7 @@ export const PROVIDER_SECURITY_SCAN_SETTINGS_KEYS = {
 export const PROVIDER_MANAGED_SYSTEM_SETTINGS_KEYS = {
   ANTHROPIC: "anthropic_managed_system_id",
   CURSOR: "cursor_managed_system_id",
+  GITHUB_COPILOT: "github_copilot_managed_system_id",
   OPENAI: "openai_managed_system_id",
   LITELLM: "litellm_managed_system_id",
 } as const;

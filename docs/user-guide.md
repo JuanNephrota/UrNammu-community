@@ -785,26 +785,35 @@ If the AI provider isn't configured, times out (12-second limit), or returns unp
 **Sidebar → Governance → AI Oversight** centralizes provider usage, cost, anomaly, model drift, dangerous prompt, vendor, and investigation telemetry. The Governance group also carries a cross-surface **Usage by Person** view and dedicated **per-surface** dashboards — **Claude Platform / API**, **Claude Code**, **Cowork**, and **Cursor** — described below.
 
 ### How Provider Sync Works
-
-With Anthropic, OpenAI, or Cursor admin keys configured in Settings → Provider Admin APIs, a ChatGPT Enterprise Admin key on the Integrations page, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
+With Anthropic, OpenAI, or Cursor admin keys or a GitHub Copilot token configured in Settings → Provider Admin APIs, a ChatGPT Enterprise Admin key on the Integrations page, plus optional Google Gemini / Vertex AI billing-export settings and any AI gateway keys, each provider's own cron at `/api/cron/provider-sync/<provider>` pulls oversight data once that provider's sync interval has elapsed since its last successful run, and normalizes it into:
 
 - **`UsageBucket`** — tokens / requests per provider / model / project / actor / time bucket.
 - **`CostBucket`** — amount and line-item cost, same dimension keys, plus the same attribution columns as `UsageBucket` (API key, workspace, governed system) so cost can be rolled up by system and by key.
-- **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API) and for ChatGPT Enterprise (`chatgpt`: messages sent and conversations per day; `codex`: prompts, sessions, tool calls, tokens, cost): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code and Cursor dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
+- **`AssistantDailyStat`** — one row per person per day for the coding assistants (Claude Code analytics from the Anthropic Admin API, Cursor from the Cursor Admin API, GitHub Copilot from the Copilot usage metrics reports) and for ChatGPT Enterprise (`chatgpt`: messages sent and conversations per day; `codex`: prompts, sessions, tool calls, tokens, cost): sessions, requests, lines added / removed / accepted, commits, PRs, tool accept / reject, tokens, and cost as columns. This is what the Claude Code, Cursor, and GitHub Copilot dashboards, Usage by Person, and the Usage by Person report read. The syncs still write the older per-day `UsageBucket` rows with the same data as metadata JSON for one more release.
 - **`ComplianceActivity`** — immutable auth and admin-audit events from provider compliance feeds (ChatGPT Enterprise `AUTH_LOG` / `AUDIT_LOG`, provider `openai`), keyed by the upstream event id. Metadata only: actor, IP, user agent, action, and action data — never message content.
-- **`ProviderSyncWatermark`** — one row per incremental stream (for example `chatgpt_enterprise:AUTH_LOG`) recording the instant the stream has been ingested through, so each scheduled run resumes where the last one stopped.
-- **`ProviderProject`** / **`ProviderActor`** — discovered workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members.
+- **`ProviderSyncWatermark`** — one row per provider or incremental stream (for example `cursor`, or `chatgpt_enterprise:AUTH_LOG`) recording the instant the provider or stream has been ingested through, so each scheduled run resumes where the last one stopped and Backfill knows how far back history already reaches.- **`ProviderProject`** / **`ProviderActor`** — discovered workspaces (Anthropic Console workspaces, OpenAI projects, LiteLLM teams) and members.
 - **`ProviderSyncRun`** — a record of each sync attempt (status `RUNNING` / `SUCCEEDED` / `FAILED`).
 
 Each provider is gated on its own credentials. **If a provider's admin key (or billing-export config, for Gemini) is not set, that provider is skipped** — no `ProviderSyncRun` row is created and no upstream API call is made. The manual-sync panel surfaces this explicitly as "Skipped (not configured): …" so it is clear which providers are active and which are simply not configured yet.
 
+**Incremental windows.** Every sync pulls an explicit `{ from, to }` window rather than a fixed "last 7 days". The window is derived from the provider's **watermark** (`ProviderSyncWatermark` — the last UTC day fully ingested, plus the earliest day ever ingested):
+
+- `from = max(watermark − overlap days, now − max lookback)`, snapped to UTC midnight; `to = now`.
+- **Overlap** (default 2 days, `provider_sync_overlap_days`) re-pulls the most recent days so late-arriving usage and cost corrections are picked up.
+- **Max lookback** is per provider: Cursor 30 days (its API retention), Anthropic / Claude Code / OpenAI / Gemini 90 days, gateways (Helicone, OpenRouter, Portkey, LiteLLM) 30 days.
+- A provider with **no watermark yet** (fresh install) starts at `now − min(max lookback, 31 days)`, so a new database captures Cursor's full 30-day history on its first scheduled run. Deeper history is pulled with **Backfill**.
+- The watermark advances only after a run succeeds, so a failed run is retried over the same window next time. Bucket writes are idempotent upserts, so overlapping windows never double count — deleting a week of `UsageBucket` rows and re-running the sync restores them.
+
+**Backfill.** **Settings → Provider Admin APIs → Sync History & Backfill** shows each provider's "history from" / watermark dates and lets an admin pull older history: pick a provider and a UTC date range, and the browser walks the range in 7-day chunks, one `POST /api/admin-sync { provider, from, to }` per chunk (so no single request outruns its function budget), with a per-chunk log and a Cancel button. A single request may cover at most 31 days. Backfilling an older range never moves the watermark backwards; it only extends "history from".
+
+**Truncation.** Every paginated upstream read reports `{ pages, truncated }` into the sync run's `metadata.pagination` — Anthropic usage/cost reports and key/member lists (`has_more`), OpenAI `next_page`, Helicone 20 × 500-row pages, Portkey 20 × 100-row pages per day, Cursor daily-usage (50 pages) and usage-events (200 pages), Claude Code analytics (50 pages per day), and the Gemini BigQuery `LIMIT 5000`. When a cap is hit the run is marked `truncated: true` and a **`provider_sync_truncated`** alert (MEDIUM) is raised, deduplicated per provider for 24 hours. The window is under-counted; re-run a Backfill over a narrower range for that period.
+
 What each sync contributes:
 
 - **Anthropic Admin API** — organization usage per model, API key, and **workspace**, cost per workspace, model, and cost type (the Anthropic cost report cannot be grouped by API key, so per-key spend is available only at workspace granularity; the organization's default workspace is labelled "Default workspace"), the workspace list (stored as `ProviderProject` rows), plus the **Claude Code analytics** feed (per-developer sessions, lines, commits, estimated cost) used by Usage by Person when a machine has no OTel data.
-- **OpenAI Admin API** — usage per model / project with prompt-cache hits recorded as `cacheReadTokens` (OpenAI's `input_cached_tokens`), request counts (`num_model_requests`), and cost. Both the usage and cost endpoints are paginated; the sync follows the cursor up to a page cap and records `truncated: true` in the sync-run metadata if the cap was hit.
-- **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. Cursor's OTel hook does not carry tokens or cost; this sync is where they come from.
-- **ChatGPT Enterprise Compliance API** — workspace users (`ProviderActor`, provider `chatgpt`, with role and status), auth and admin-audit events (`ComplianceActivity`), per-user daily ChatGPT message counts and Codex activity (`AssistantDailyStat` providers `chatgpt` and `codex`), and alerts for admin-role grants and new GPTs with custom actions. Log streams (`AUTH_LOG`, `AUDIT_LOG`, `CONVERSATION_MESSAGE`, `CODEX_LOG`, `CODEX_TURN`) each keep their own cursor; a stream the key is not scoped for is skipped and listed under `unauthorizedStreams` in the sync-run metadata. Conversation and prompt content is never read into UrNammu — only counts, identifiers, models, and token totals.
-- **Portkey** — one `UsageBucket` + `CostBucket` per day per model, and one `UsageBucket` per day per user (dimension key `partition=actor`). Portkey reports cost in cents; the sync converts to USD and stores a `reconciliation` block (graph total vs. summed per-model and per-user totals) in the sync-run metadata so the unit assumption can be checked against the Portkey console.
+- **OpenAI Admin API** — usage per model / project with prompt-cache hits recorded as `cacheReadTokens` (OpenAI's `input_cached_tokens`), request counts (`num_model_requests`), and cost. Both the usage and cost endpoints are paginated; the sync follows the cursor up to a page cap and records the page count and any truncation in the sync-run metadata (see **Truncation** above).
+- **Cursor Admin API** — per-user, per-day requests, tokens, accepted lines, and charged spend. Cursor's OTel hook does not carry tokens or cost; this sync is where they come from.- **GitHub Copilot usage metrics** — the report-based API (`X-GitHub-Api-Version: 2026-03-10`): `users-1-day` → one `AssistantDailyStat` per developer per day (`requests` = explicit interactions, `linesAdded` / `linesAccepted` = Copilot-produced lines that landed, `linesRemoved`, `toolAccepted` = accepted generations, CLI / Copilot-app sessions and tokens; feature, IDE, model, language, third-party-agent breakdowns and `ai_credits_used` in metadata); `organization-1-day` (or `enterprise-1-day`) → one `UsageBucket` per day with DAU / WAU / MAU and pull-request metrics in metadata; `GET …/copilot/billing/seats` → `ProviderActor` rows with `last_activity_at`. The actor is the seat's email when GitHub exposes one, otherwise the lower-cased login. The sync walks day by day from the watermark — never the current (partial) UTC day, at most 28 days per run (older days in a longer window are reported as skipped/truncated so Backfill can pull them) — and a day GitHub has not published yet (reports land within two full days) is recorded as *pending* and holds the watermark back so it is retried next run. Copilot is seat-licensed: `estimatedCost` is always null and no `CostBucket` is written.
+- **ChatGPT Enterprise Compliance API** — workspace users (`ProviderActor`, provider `chatgpt`, with role and status), auth and admin-audit events (`ComplianceActivity`), per-user daily ChatGPT message counts and Codex activity (`AssistantDailyStat` providers `chatgpt` and `codex`), and alerts for admin-role grants and new GPTs with custom actions. Log streams (`AUTH_LOG`, `AUDIT_LOG`, `CONVERSATION_MESSAGE`, `CODEX_LOG`, `CODEX_TURN`) each keep their own cursor; a stream the key is not scoped for is skipped and listed under `unauthorizedStreams` in the sync-run metadata. Conversation and prompt content is never read into UrNammu — only counts, identifiers, models, and token totals.- **Portkey** — one `UsageBucket` + `CostBucket` per day per model, and one `UsageBucket` per day per user (dimension key `partition=actor`). Portkey reports cost in cents; the sync converts to USD and stores a `reconciliation` block (graph total vs. summed per-model and per-user totals) in the sync-run metadata so the unit assumption can be checked against the Portkey console.
 - **Helicone, OpenRouter, LiteLLM** — gateway request and cost records normalized into the same buckets.
 - **Gemini / Vertex AI** — spend and best-effort project attribution from the BigQuery billing export.
 
@@ -1015,6 +1024,19 @@ Two caveats worth knowing before you use durations as evidence:
 
 **Governance → Cowork** is the same analytics view as Claude Code, scoped to the **Claude Cowork / Desktop (local-agent) surface** only. Use it to see Cowork session activity, decisions, per-user cost, and recent events separately from terminal Claude Code usage.
 
+### GitHub Copilot Oversight
+
+**Governance → GitHub Copilot** shows the last 28 days of Copilot activity from the usage metrics sync (Copilot has no OTel hook; everything here comes from the reports). It shows:
+
+- Stat cards: active developers vs assigned seats, lines accepted (with lines suggested), acceptance rate (accepted ÷ generated code activities), and interactions (with CLI / Copilot-app tokens and AI credits when reported).
+- **Organization adoption** — the latest synced organization day: daily / weekly / monthly active users, chat and agent users (28d), seats, and the AI adoption phase distribution across developers.
+- **Pull requests** — created, created by Copilot, merged, Copilot-authored merges, reviewed by Copilot, and applied review suggestions summed over the window, plus the latest day's median minutes to merge.
+- Breakdowns **by feature** (`code_completion`, `chat_panel_agent_mode`, `agent_edit`, `copilot_cli`, …), **by IDE**, **by model**, and **by language**, each with lines accepted, acceptance rate, and user count.
+- **Third-party agents via Copilot** — agent apps (Claude, Codex, …) used through the Copilot seat; check they are registered AI systems.
+- **Developers** — per-developer lines, prompts, acceptance rate, active days, last active day, IDEs, and adoption phase (clickable to filter). Developers keyed by GitHub login (no seat email) appear as `@login`.
+- **Idle seats** — assigned seats with no activity for 30+ days (from the seats endpoint's `last_activity_at`), candidates for reclaiming or an access review.
+- **Daily activity** — the last 14 synced days with the sync status, watermark, and any days GitHub has not published yet.
+
 ### Cursor Oversight
 
 **Governance → Cursor** shows Cursor telemetry from the Cursor OTel hook (spans + metrics), plus tokens, requests, spend, and "lines produced" data from the **Cursor Admin API** when configured. The OTel hook itself carries no token or cost data, so without the Admin API sync this page is activity-only. It shows:
@@ -1033,6 +1055,7 @@ The Cursor Admin API sync writes one `AssistantDailyStat` row per developer per 
 
 - **Claude Code** and **Cowork** — live OTel metrics. Cowork is the Claude Desktop `local-agent` surface; everything else counts as Claude Code, so the two columns never overlap. When a person has no OTel data in the window, the Anthropic Admin API analytics sync (`AssistantDailyStat`) fills in sessions, lines, commits, and an estimated cost (marked *est.*), so people whose machines are not instrumented still appear.
 - **Cursor** — the Cursor Admin API sync (`AssistantDailyStat`): requests, tokens, accepted lines, active days (only days Cursor marks the seat active), and per-user spend. When the usage-events feed returned nothing for the synced window, Cursor cost shows as *n/a* rather than zero.
+- **GitHub Copilot** — the Copilot usage metrics sync (`AssistantDailyStat`): interactions, CLI / Copilot-app tokens, accepted lines, and active days. Copilot is seat-licensed, so it never contributes to a person's cost. A person is matched by the seat's email when GitHub exposes one; seats keyed only by GitHub login stay in *unattributed* until an identity source maps the login to an email.
 - **API (proxy)** — Anthropic and OpenAI calls made through the governance proxy, attributed by the `x-user-email` header, plus a count of flagged requests.
 
 The page shows:
@@ -1254,6 +1277,7 @@ Configure organization-level telemetry pulls.
 
 - **Anthropic admin key** (encrypted) + **Test Connection** + enable toggle + sync interval (hours).
 - **OpenAI admin key** (encrypted) + **Test Connection** + enable toggle + sync interval.
+- **Sync History & Backfill**: per-provider "history from" and watermark dates with each provider's max lookback, plus a **Backfill** control (provider + UTC date range) that walks the range in 7-day chunks and logs each chunk's result. See *How Provider Sync Works*.
 - **Anomaly detection**: recent window days, baseline window days, min-token threshold, min-cost threshold, per-dimension multipliers.
 - **Governance automation**: review-notice days, exception-notice days, escalation-overdue days.
 - **Usage Attribution**: maps admin-sync'd telemetry (usage *and* cost) to registered AI systems.
@@ -1365,6 +1389,13 @@ The sync records cached input tokens and request counts per model, and pages thr
 2. Paste it into **Settings → Provider Admin APIs → Cursor** and enable sync.
 
 Provides per-user tokens, requests, accepted lines, and charged spend for the Cursor dashboard and Usage by Person — the Cursor OTel hook carries none of these.
+### GitHub Copilot Token
+
+1. In GitHub, enable the **Copilot usage metrics** policy for the organization (or set it to *Enabled everywhere* for the enterprise). Every report endpoint returns `403 The 'Copilot usage metrics' policy must be enabled to use this API` until this is on; the seats endpoint works regardless.
+2. As an organization owner, create a token: a classic PAT with `read:org` for an organization, or `manage_billing:copilot` / `read:enterprise` for an enterprise. A fine-grained token needs the *View Organization Copilot Metrics* permission plus Copilot billing read for the seats join.
+3. Enter the organization login and/or enterprise slug (enterprise wins when both are set) and the token in **Settings → Provider Admin APIs → GitHub Copilot** (also reachable from **Settings → Integrations → GitHub Copilot**), click **Test**, and run a sync.
+
+Reports exist from 2025-10-10, are kept one year, and land within two days. Env fallbacks: `GITHUB_COPILOT_TOKEN`, `GITHUB_COPILOT_ORG`, `GITHUB_COPILOT_ENTERPRISE`. The token is encrypted at rest.
 
 ### ChatGPT Enterprise Compliance API
 
@@ -1376,7 +1407,6 @@ Provides per-user tokens, requests, accepted lines, and charged spend for the Cu
 What the sync writes: workspace users → `ProviderActor` (provider `chatgpt`), `AUTH_LOG` / `AUDIT_LOG` → `ComplianceActivity` (provider `openai`), `CONVERSATION_MESSAGE` → per-user daily `AssistantDailyStat` rows (provider `chatgpt`: messages sent, conversations, models, client surfaces), `CODEX_LOG` + `CODEX_TURN` → per-user daily rows (provider `codex`: prompts, sessions, tool calls, tokens, USD cost). Alerts (`chatgpt_compliance_api`): a member's role changed to `account-owner` / `account-admin`, an audit event granted an admin role, or a GPT with `custom_action` tools was created or reconfigured since the last run.
 
 Cursors: every log stream and the GPT catalog keep their own row in `ProviderSyncWatermark`. The Compliance Logs Platform retains files for 30 days; the first sync reaches back 7 days, and each run downloads at most 40 files (60 MB) per stream — when more are waiting the sync-run metadata records `truncated: true` for that stream and the next hourly run continues. A day's counts arrive across several runs and are added onto the existing row, so per-day totals grow during the day rather than being overwritten.
-
 ### DNS / Proxy Ingestion
 
 - **CSV**: upload a native gateway export via **Shadow AI → Import CSV** (choose the vendor preset), or `POST` it as multipart `file` + `source` to `/api/discovered-tools/import`.
@@ -1537,6 +1567,11 @@ Runs on every maintenance call. Produces alerts for:
 - Is the provider sync enabled (toggle on)?
 - Has `provider_sync_interval_hours` elapsed since the last sync? The sync only runs when the cron fires *and* the interval is due.
 - Check **Oversight → Sync history** for `FAILED` entries with error messages.
+
+**Why is older history missing, or why did I get a `provider_sync_truncated` alert?**
+- Scheduled syncs resume from each provider's watermark and, on a fresh install, reach back at most 31 days. Use **Settings → Provider Admin APIs → Backfill** to pull older history (up to the provider's max lookback — Cursor keeps only ~30 days upstream; GitHub Copilot keeps one year but each run walks at most 28 days, so backfill in 7-day chunks).
+- GitHub Copilot: a `403` naming the *Copilot usage metrics* policy means the org/enterprise policy is off; the newest day or two show as "not yet published" until GitHub lands them (within two days). Developers shown as `@login` have no seat email and cannot be merged into Usage by Person yet.
+- A `provider_sync_truncated` alert means a paginated read hit its page cap for that window, so totals are under-counted. The alert names the run and window; re-run a Backfill over a narrower range for that period. The sync run's `metadata.pagination` shows which fetch was cut short.
 
 **Why can't I approve this system?**
 - Your role must be `ADMIN` or `COMPLIANCE_OFFICER` for most stages.

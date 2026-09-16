@@ -15,6 +15,7 @@ const empty = (): PeopleUsageInputs => ({
   otel: [],
   claudeCodeAdmin: [],
   cursor: [],
+  copilot: [],
   proxy: [],
   identities: [],
 });
@@ -270,7 +271,7 @@ test("rollup sums Claude Code admin stats per actor and keeps cache tokens out o
   // them to unattributed.
   const key = claudeCodeAdmin.find((a) => a.email === "ci-key")!;
   assert.equal(key.sessions, 9);
-  const { rows, unattributed } = mergePeopleUsage({ otel: [], claudeCodeAdmin, cursor, proxy: [], identities: [] });
+  const { rows, unattributed } = mergePeopleUsage({ otel: [], claudeCodeAdmin, cursor, copilot: [], proxy: [], identities: [] });
   assert.equal(rows.length, 1);
   assert.equal(unattributed.bySurface.claude_code.cost, 4);
 });
@@ -351,7 +352,7 @@ test("rollup keeps Cursor cost null until a day carried spend, and drops idle se
   assert.deepEqual(cursor.map((c) => c.email), ["quiet@example.com"]);
   assert.equal(cursor[0].cost, null);
   assert.equal(cursor[0].activeDays, 2);
-  const { rows } = mergePeopleUsage({ otel: [], claudeCodeAdmin: [], cursor, proxy: [], identities: [] });
+  const { rows } = mergePeopleUsage({ otel: [], claudeCodeAdmin: [], cursor, copilot: [], proxy: [], identities: [] });
   assert.equal(rows[0].cursorCost, null);
   assert.deepEqual(rows[0].surfaces, ["cursor"]);
 });
@@ -460,7 +461,87 @@ test("deactivated directory people are flagged even when only an alias was obser
 
 test("rollup ignores providers it does not know", () => {
   const out = rollupAssistantDailyStats([
-    statRow({ provider: "copilot", actorExternalId: "x@example.com", day: new Date(), sessions: 1 }),
+    statRow({ provider: "windsurf", actorExternalId: "x@example.com", day: new Date(), sessions: 1 }),
   ]);
-  assert.deepEqual(out, { claudeCodeAdmin: [], cursor: [] });
+  assert.deepEqual(out, { claudeCodeAdmin: [], cursor: [], copilot: [] });
+});
+
+test("GitHub Copilot rows merge by seat email, never add cost, and login-only rows stay unattributed", () => {
+  const inputs = empty();
+  inputs.copilot.push(
+    { email: "Ada@Example.com", interactions: 12, tokens: 900, linesAccepted: 40, activeDays: 3, lastActiveAt: new Date("2026-09-14T00:00:00.000Z") },
+    { email: "octocat", interactions: 5, tokens: 100, linesAccepted: 7, activeDays: 1, lastActiveAt: null },
+  );
+  inputs.cursor.push({ email: "ada@example.com", requests: 1, tokens: 50, linesAccepted: 0, activeDays: 1, cost: 2, lastActiveAt: null });
+  const { rows, unattributed } = mergePeopleUsage(inputs);
+  assert.equal(rows.length, 1);
+  const ada = rows[0];
+  assert.equal(ada.copilotInteractions, 12);
+  assert.equal(ada.copilotTokens, 900);
+  assert.equal(ada.copilotLinesAccepted, 40);
+  assert.equal(ada.copilotActiveDays, 3);
+  assert.deepEqual(ada.surfaces, ["cursor", "github_copilot"]);
+  // Seat-licensed: Copilot never contributes to cost, but its tokens count.
+  assert.equal(ada.totalCost, 2);
+  assert.equal(ada.totalTokens, 950);
+  assert.equal(unattributed.bySurface.github_copilot.tokens, 100);
+  assert.equal(unattributed.bySurface.github_copilot.cost, 0);
+  const summary = summarizePeopleUsage(rows, unattributed);
+  const copilot = summary.bySurface.find((s) => s.surface === "github_copilot")!;
+  assert.equal(copilot.people, 1);
+  assert.equal(copilot.cost, 0);
+  assert.equal(copilot.tokens, 900);
+});
+
+test("rollup turns Copilot daily stats into interactions, tokens, accepted lines, and active days", () => {
+  const { copilot } = rollupAssistantDailyStats([
+    {
+      provider: "github_copilot",
+      day: new Date("2026-09-10T00:00:00.000Z"),
+      actorExternalId: "dev@example.com",
+      isActive: true,
+      sessions: 2,
+      requests: 8,
+      linesAdded: 30,
+      linesAccepted: 30,
+      commits: null,
+      estimatedCost: null,
+      inputTokens: 400,
+      outputTokens: 100,
+    },
+    {
+      provider: "github_copilot",
+      day: new Date("2026-09-11T00:00:00.000Z"),
+      actorExternalId: "dev@example.com",
+      isActive: false,
+      sessions: null,
+      requests: 0,
+      linesAdded: 0,
+      linesAccepted: 0,
+      commits: null,
+      estimatedCost: null,
+      inputTokens: null,
+      outputTokens: null,
+    },
+    {
+      provider: "github_copilot",
+      day: new Date("2026-09-11T00:00:00.000Z"),
+      actorExternalId: "idle-login",
+      isActive: false,
+      sessions: null,
+      requests: 0,
+      linesAdded: 0,
+      linesAccepted: 0,
+      commits: null,
+      estimatedCost: null,
+      inputTokens: null,
+      outputTokens: null,
+    },
+  ]);
+  assert.deepEqual(copilot.map((c) => c.email), ["dev@example.com"]);
+  assert.equal(copilot[0].interactions, 8);
+  assert.equal(copilot[0].tokens, 500);
+  assert.equal(copilot[0].linesAccepted, 30);
+  assert.equal(copilot[0].activeDays, 1);
+  assert.equal(copilot[0].lastActiveAt?.toISOString(), "2026-09-10T00:00:00.000Z");
 });

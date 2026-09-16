@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { type ColumnDef, type Column } from "@tanstack/react-table";
-import { ArrowUpDown, Bot, Download, MousePointer2, Network, Terminal, UserX } from "lucide-react";
+import {
+  ArrowUpDown,
+  Bot,
+  Download,
+  GitBranch,
+  MousePointer2,
+  Network,
+  Terminal,
+  UserX,
+} from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { formatCompactNumber, formatDate } from "@/lib/utils";
@@ -24,6 +33,7 @@ const SURFACE_LINKS: Record<PersonSurface, ((email: string) => string) | null> =
   claude_code: (email) => `/oversight/claude-code?user=${encodeURIComponent(email)}`,
   cowork: (email) => `/oversight/cowork?user=${encodeURIComponent(email)}`,
   cursor: (email) => `/oversight/cursor?user=${encodeURIComponent(email)}`,
+  github_copilot: (email) => `/oversight/github-copilot?user=${encodeURIComponent(email)}`,
   proxy: null,
 };
 
@@ -32,6 +42,7 @@ function SurfaceIcon({ surface }: { surface: PersonSurface }) {
   if (surface === "claude_code") return <Terminal className={cls} />;
   if (surface === "cowork") return <Bot className={cls} />;
   if (surface === "cursor") return <MousePointer2 className={cls} />;
+  if (surface === "github_copilot") return <GitBranch className={cls} />;
   return <Network className={cls} />;
 }
 
@@ -78,6 +89,10 @@ const CSV_COLUMNS: { key: keyof PersonUsageTableRow; label: string }[] = [
   { key: "cursorTokens", label: "Cursor Tokens" },
   { key: "cursorLinesAccepted", label: "Cursor Lines Accepted" },
   { key: "cursorActiveDays", label: "Cursor Active Days" },
+  { key: "copilotInteractions", label: "GitHub Copilot Interactions" },
+  { key: "copilotTokens", label: "GitHub Copilot Tokens" },
+  { key: "copilotLinesAccepted", label: "GitHub Copilot Lines Accepted" },
+  { key: "copilotActiveDays", label: "GitHub Copilot Active Days" },
   { key: "proxyCost", label: "API (proxy) Cost (USD)" },
   { key: "proxyRequests", label: "API (proxy) Requests" },
   { key: "proxyTokens", label: "API (proxy) Tokens" },
@@ -201,6 +216,22 @@ const columns: ColumnDef<PersonUsageTableRow>[] = [
     cell: ({ row }) => (
       <div className="text-right">
         <Money value={row.original.cursorCost} />
+      </div>
+    ),
+  },
+  {
+    accessorKey: "copilotLinesAccepted",
+    header: ({ column }) => <SortableHeader column={column} label="Copilot" align="right" />,
+    cell: ({ row }) => (
+      <div className="text-right tabular-nums" title="GitHub Copilot: lines accepted · active days (seat-licensed, no metered cost)">
+        {row.original.copilotLinesAccepted > 0 || row.original.copilotActiveDays > 0 ? (
+          <>
+            {formatCompactNumber(row.original.copilotLinesAccepted)}
+            <span className="ml-1 text-[10px] text-[var(--text-faint)]">lines · {row.original.copilotActiveDays}d</span>
+          </>
+        ) : (
+          <span className="text-[var(--text-faint)]">—</span>
+        )}
       </div>
     ),
   },

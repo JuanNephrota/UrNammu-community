@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
@@ -12,13 +12,24 @@ import {
   Eye,
   Clock,
   RefreshCw,
+  History,
 } from "lucide-react";
+import {
+  addDays,
+  BACKFILL_CHUNK_DAYS,
+  buildBackfillChunks,
+  PROVIDER_MAX_LOOKBACK_DAYS,
+  SYNC_PROVIDER_LABELS,
+  SYNC_PROVIDERS,
+  type SyncProvider,
+} from "@/lib/provider-sync-window";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
+import { GitHubCopilotSettings } from "@/components/settings/github-copilot-settings";
 
 /** Serialisable view of `ProviderSyncStatus` (Dates as ISO strings). */
 export type ProviderSyncStatusView = {
@@ -212,9 +223,40 @@ export const PROVIDERS: ProviderConfig[] = [
   },
 ];
 
+export interface ProviderSyncWatermarkView {
+  provider: string;
+  /** ISO — last UTC day fully ingested. */
+  watermark: string;
+  /** ISO — earliest day ever ingested. */
+  earliest: string;
+  updatedAt: string;
+}
+
+/** Which ProviderSyncJobResult counters belong to each provider. */
+const BACKFILL_RESULT_KEYS: Record<SyncProvider, { usage: string; cost: string }> = {
+  anthropic: { usage: "anthropicUsageSynced", cost: "anthropicCostBucketsSynced" },
+  openai: { usage: "openaiUsageSynced", cost: "openaiCostBucketsSynced" },
+  openrouter: { usage: "openRouterUsageSynced", cost: "openRouterCostBucketsSynced" },
+  helicone: { usage: "heliconeUsageSynced", cost: "heliconeCostBucketsSynced" },
+  portkey: { usage: "portkeyUsageSynced", cost: "portkeyCostBucketsSynced" },
+  litellm: { usage: "litellmUsageSynced", cost: "litellmCostBucketsSynced" },
+  gemini: { usage: "geminiUsageSynced", cost: "geminiCostBucketsSynced" },
+  claude_code: { usage: "claudeCodeUsageSynced", cost: "claudeCodeCostsSynced" },
+  cursor: { usage: "cursorUsageSynced", cost: "cursorCostBucketsSynced" },
+  github_copilot: { usage: "githubCopilotUsageSynced", cost: "githubCopilotCostBucketsSynced" },
+  chatgpt_enterprise: { usage: "chatgptEnterpriseUsageSynced", cost: "chatgptEnterpriseCostBucketsSynced" },
+};
+
+function toDateInput(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
 interface Props {
   hasAnthropicAdminKey: boolean;
   hasCursorAdminKey: boolean;
+  hasGitHubCopilotConfig: boolean;
+  githubCopilot: { org: string; enterprise: string; hasToken: boolean };
+  hasChatGPTEnterpriseConfig: boolean;
   hasOpenAIAdminKey: boolean;
   hasOpenRouterKey: boolean;
   hasHeliconeKey: boolean;
@@ -246,6 +288,7 @@ interface Props {
   /** Provider API keys seen in recent telemetry, for the per-key editor. */
   knownApiKeys: { provider: string; apiKeyExternalId: string; apiKeyName: string | null }[];
   aiSystems: { id: string; name: string; vendor: string | null }[];
+  watermarks: ProviderSyncWatermarkView[];
 }
 
 const KEY_MAPPABLE_PROVIDER_LABELS: Record<KeyMappableProvider, string> = {
@@ -257,6 +300,9 @@ const KEY_MAPPABLE_PROVIDER_LABELS: Record<KeyMappableProvider, string> = {
 export function AdminAPISettings({
   hasAnthropicAdminKey,
   hasCursorAdminKey,
+  hasGitHubCopilotConfig,
+  githubCopilot,
+  hasChatGPTEnterpriseConfig,
   hasOpenAIAdminKey,
   hasOpenRouterKey,
   hasHeliconeKey,
@@ -286,6 +332,7 @@ export function AdminAPISettings({
   keySystemMap: initialKeySystemMap,
   knownApiKeys,
   aiSystems,
+  watermarks,
 }: Props) {
   const router = useRouter();
   const [providerSyncEnabled, setProviderSyncEnabled] = useState(initialProviderSyncEnabled);
@@ -332,6 +379,36 @@ export function AdminAPISettings({
   const [keySystemMap, setKeySystemMap] = useState<ProviderKeySystemMap>(initialKeySystemMap);
   const [savingAttribution, setSavingAttribution] = useState(false);
   const [attributionResult, setAttributionResult] = useState<string | null>(null);
+  const [backfillProvider, setBackfillProvider] = useState<SyncProvider>("anthropic");
+  const [backfillFrom, setBackfillFrom] = useState("");
+  const [backfillTo, setBackfillTo] = useState("");
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ done: number; total: number; current: string | null } | null>(null);
+  const [backfillLog, setBackfillLog] = useState<string[]>([]);
+  const [backfillResult, setBackfillResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const backfillCancelRef = useRef(false);
+
+  const providerConfigured: Record<SyncProvider, boolean> = {
+    anthropic: hasAnthropicAdminKey,
+    claude_code: hasAnthropicAdminKey,
+    openai: hasOpenAIAdminKey,
+    cursor: hasCursorAdminKey,
+    github_copilot: hasGitHubCopilotConfig,
+    gemini: hasGeminiBillingConfig,
+    openrouter: hasOpenRouterKey,
+    helicone: hasHeliconeKey,
+    portkey: hasPortkeyKey,
+    litellm: hasLiteLLMKey,
+    chatgpt_enterprise: hasChatGPTEnterpriseConfig,
+  };
+
+  // Default the backfill range to the provider's full retention window.
+  // Computed on the client after mount so server and client markup match.
+  useEffect(() => {
+    const now = new Date();
+    setBackfillFrom(toDateInput(addDays(now, -PROVIDER_MAX_LOOKBACK_DAYS[backfillProvider])));
+    setBackfillTo(toDateInput(now));
+  }, [backfillProvider]);
 
   const providers = PROVIDERS.map((p) => ({
     ...p,
@@ -352,6 +429,117 @@ export function AdminAPISettings({
                     ? hasLiteLLMKey
                     : false,
   }));
+
+  async function handleBackfill() {
+    const provider = backfillProvider;
+    const from = new Date(`${backfillFrom}T00:00:00.000Z`);
+    const now = new Date();
+    const toDayEnd = addDays(new Date(`${backfillTo}T00:00:00.000Z`), 1);
+    const to = toDayEnd < now ? toDayEnd : now;
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+      setBackfillResult({ ok: false, message: "Pick a valid date range (start before end)." });
+      return;
+    }
+
+    const chunks = buildBackfillChunks(from, to, BACKFILL_CHUNK_DAYS);
+    const keys = BACKFILL_RESULT_KEYS[provider];
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+    backfillCancelRef.current = false;
+    setBackfillRunning(true);
+    setBackfillResult(null);
+    setBackfillLog([]);
+    setBackfillProgress({ done: 0, total: chunks.length, current: null });
+
+    let usage = 0;
+    let cost = 0;
+    let failures = 0;
+    let truncatedChunks = 0;
+    let stopped: string | null = null;
+
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        if (backfillCancelRef.current) {
+          stopped = `Cancelled after ${i} of ${chunks.length} chunks.`;
+          break;
+        }
+        const chunk = chunks[i]!;
+        const label = `${fmt(chunk.from)} → ${fmt(chunk.to)}`;
+        setBackfillProgress({ done: i, total: chunks.length, current: label });
+
+        const res = await fetch("/api/admin-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider,
+            from: chunk.from.toISOString(),
+            to: chunk.to.toISOString(),
+          }),
+        });
+        const text = await res.text();
+        let body: Record<string, unknown> = {};
+        try { body = JSON.parse(text) as Record<string, unknown>; } catch { body = {}; }
+
+        if (!res.ok) {
+          failures++;
+          const msg = typeof body.error === "string" ? body.error : text.slice(0, 160);
+          setBackfillLog((log) => [...log, `${label}: HTTP ${res.status} — ${msg}`]);
+          if (res.status === 400 || res.status === 401 || res.status === 403) {
+            stopped = "Stopped: the server rejected the request.";
+            break;
+          }
+          continue;
+        }
+
+        const skipped = Array.isArray(body.skipped) ? (body.skipped as string[]) : [];
+        if (skipped.length > 0) {
+          setBackfillLog((log) => [...log, `${label}: ${skipped.join("; ")}`]);
+          stopped = "Stopped: this provider is not configured, so there is nothing to backfill.";
+          break;
+        }
+
+        const errors = Array.isArray(body.errors) ? (body.errors as string[]) : [];
+        if (errors.length > 0) {
+          failures++;
+          setBackfillLog((log) => [...log, `${label}: ${errors.join("; ")}`]);
+          continue;
+        }
+
+        const chunkUsage = Number(body[keys.usage] ?? 0);
+        const chunkCost = Number(body[keys.cost] ?? 0);
+        usage += chunkUsage;
+        cost += chunkCost;
+        const truncated = Array.isArray(body.truncated) && (body.truncated as string[]).includes(provider);
+        if (truncated) truncatedChunks++;
+        setBackfillLog((log) => [
+          ...log,
+          `${label}: ${chunkUsage} usage buckets, ${chunkCost} cost buckets${truncated ? " — truncated, see alert" : ""}`,
+        ]);
+        setBackfillProgress({ done: i + 1, total: chunks.length, current: null });
+      }
+
+      if (stopped) {
+        setBackfillResult({ ok: false, message: stopped });
+      } else {
+        const parts = [`${usage} usage buckets`, `${cost} cost buckets`, `${chunks.length} chunk${chunks.length === 1 ? "" : "s"}`];
+        if (failures > 0) parts.push(`${failures} failed`);
+        if (truncatedChunks > 0) parts.push(`${truncatedChunks} truncated`);
+        setBackfillResult({
+          ok: failures === 0,
+          message: `Backfill ${failures === 0 ? "complete" : "finished with errors"}: ${parts.join(", ")}.`,
+        });
+      }
+      router.refresh();
+    } catch (err) {
+      setBackfillResult({
+        ok: false,
+        message: `Backfill failed: ${err instanceof Error ? err.message : "Network error"}`,
+      });
+    } finally {
+      setBackfillRunning(false);
+      setBackfillProgress(null);
+    }
+  }
 
   async function handleSaveSchedule() {
     setSavingSchedule(true);
@@ -687,6 +875,116 @@ export function AdminAPISettings({
 
         <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-4">
           <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h4 className="text-sm font-semibold">Sync History &amp; Backfill</h4>
+              <p className="text-xs text-[var(--text-muted)]">
+                Each scheduled sync resumes from the provider&apos;s watermark (re-pulling the last two days). Use Backfill to pull older history in {BACKFILL_CHUNK_DAYS}-day chunks, one request per chunk.
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[var(--text-muted)]">
+                  <th className="py-1.5 pr-3 font-medium">Provider</th>
+                  <th className="py-1.5 pr-3 font-medium">History from</th>
+                  <th className="py-1.5 pr-3 font-medium">Watermark</th>
+                  <th className="py-1.5 pr-3 font-medium">Max lookback</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SYNC_PROVIDERS.map((provider) => {
+                  const mark = watermarks.find((row) => row.provider === provider);
+                  return (
+                    <tr key={provider} className="border-t border-[var(--border-subtle)]">
+                      <td className="py-1.5 pr-3 text-[var(--text-primary)]">
+                        {SYNC_PROVIDER_LABELS[provider]}
+                        {!providerConfigured[provider] && (
+                          <span className="ml-1 text-[var(--text-faint)]">(not configured)</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-3 text-[var(--text-secondary)]">
+                        {mark ? mark.earliest.slice(0, 10) : <span className="text-[var(--text-faint)]">no history yet</span>}
+                      </td>
+                      <td className="py-1.5 pr-3 text-[var(--text-secondary)]">
+                        {mark ? mark.watermark.slice(0, 10) : "—"}
+                      </td>
+                      <td className="py-1.5 pr-3 text-[var(--text-secondary)]">
+                        {PROVIDER_MAX_LOOKBACK_DAYS[provider]} days
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label className="text-xs">Provider</Label>
+              <select
+                value={backfillProvider}
+                onChange={(e) => setBackfillProvider(e.target.value as SyncProvider)}
+                disabled={backfillRunning}
+                className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none"
+              >
+                {SYNC_PROVIDERS.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {SYNC_PROVIDER_LABELS[provider]}{providerConfigured[provider] ? "" : " (not configured)"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">From (UTC day)</Label>
+              <Input type="date" value={backfillFrom} max={backfillTo} disabled={backfillRunning} onChange={(e) => setBackfillFrom(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">To (UTC day, inclusive)</Label>
+              <Input type="date" value={backfillTo} min={backfillFrom} disabled={backfillRunning} onChange={(e) => setBackfillTo(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={handleBackfill}
+              disabled={backfillRunning || !providerConfigured[backfillProvider] || !backfillFrom || !backfillTo}
+            >
+              {backfillRunning ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <History className="mr-1.5 h-3 w-3" />}
+              {backfillRunning ? "Backfilling..." : "Backfill"}
+            </Button>
+            {backfillRunning && (
+              <Button size="sm" variant="outline" onClick={() => { backfillCancelRef.current = true; }}>
+                Cancel
+              </Button>
+            )}
+            {backfillProgress && (
+              <span className="text-xs text-[var(--text-muted)]">
+                Chunk {Math.min(backfillProgress.done + 1, backfillProgress.total)} of {backfillProgress.total}
+                {backfillProgress.current ? ` — ${backfillProgress.current}` : ""}
+              </span>
+            )}
+            {backfillResult && !backfillRunning && (
+              <span className={`text-xs ${backfillResult.ok ? "text-[var(--success)]" : "text-[var(--critical)]"}`}>
+                {backfillResult.message}
+              </span>
+            )}
+          </div>
+
+          {backfillLog.length > 0 && (
+            <ul className="max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-2 font-mono text-[11px] text-[var(--text-secondary)]">
+              {backfillLog.map((line, index) => (
+                <li key={index}>{line}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-4">
+          <div className="flex items-center gap-2">
             <Eye className="h-4 w-4 text-[var(--accent)]" />
             <div>
               <h4 className="text-sm font-semibold">Anomaly Detection</h4>
@@ -968,6 +1266,23 @@ export function AdminAPISettings({
         {providers.map((provider) => (
           <ProviderSection key={provider.id} provider={provider} />
         ))}
+
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-semibold">GitHub Copilot usage metrics</h4>
+              <p className="text-xs text-[var(--text-muted)]">
+                Per-user daily Copilot activity (interactions, accepted lines, features, IDEs, models) and organization totals from the Copilot usage metrics reports, plus seat assignments for identity. Feeds the Copilot dashboard and Usage by Person.
+              </p>
+            </div>
+            {hasGitHubCopilotConfig ? (
+              <Badge variant="success" className="gap-1"><Wifi className="h-3 w-3" /> Configured</Badge>
+            ) : (
+              <Badge variant="outline" className="gap-1"><WifiOff className="h-3 w-3" /> Not configured</Badge>
+            )}
+          </div>
+          <GitHubCopilotSettings initial={githubCopilot} />
+        </div>
       </CardContent>
     </Card>
   );

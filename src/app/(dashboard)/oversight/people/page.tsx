@@ -47,7 +47,7 @@ export default async function PeopleUsagePage({
     <div className="space-y-6">
       <PageHeader
         title="Usage by Person"
-        description={`Who is using which AI surface, and what it costs — Claude Code, Cowork, Cursor, and proxied API calls merged by email. ${rangeLabel}.`}
+        description={`Who is using which AI surface, and what it costs — Claude Code, Cowork, Cursor, GitHub Copilot, and proxied API calls merged by email. ${rangeLabel}.`}
       >
         <PeopleRangeFilter initialRange={range} />
         {canAuthorReports && template && (
@@ -132,7 +132,8 @@ export default async function PeopleUsagePage({
           {tableRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--text-muted)]">
               No per-person telemetry in this window. Claude Code and Cowork need the OTel pipeline or the
-              Anthropic Admin API key; Cursor needs the Cursor Admin API key; proxy traffic needs the{" "}
+              Anthropic Admin API key; Cursor needs the Cursor Admin API key; GitHub Copilot needs the Copilot usage
+              metrics token; proxy traffic needs the{" "}
               <code className="text-xs">x-user-email</code> header. See{" "}
               <Link href="/settings" className="text-[var(--accent)] hover:underline">
                 Settings
@@ -176,6 +177,13 @@ export default async function PeopleUsagePage({
               comes from the Cursor Admin API sync. Per-user
               spend is recorded from the usage-events feed on each sync; days synced before that field existed show
               Cursor cost as <span className="text-[var(--text-faint)]">n/a</span> rather than zero.
+            </li>
+            <li>
+              <span className="text-[var(--text-secondary)]">GitHub Copilot</span>{" "}
+              comes from the Copilot usage metrics sync: explicit interactions, CLI / Copilot-app tokens, accepted
+              lines, and active days. Copilot is seat-licensed, so it never adds to cost. A person is matched by the
+              seat&apos;s email when GitHub exposes one; seats keyed only by GitHub login stay unattributed until an
+              identity source maps the login to an email.
             </li>
             <li>
               <span className="text-[var(--text-secondary)]">API (proxy)</span>{" "}

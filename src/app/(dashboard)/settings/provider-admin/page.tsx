@@ -11,6 +11,9 @@ export default async function ProviderAdminSettingsPage() {
   const {
     hasAnthropicAdminKey,
     hasCursorAdminKey,
+    hasGitHubCopilotConfig,
+    githubCopilot,
+    hasChatGPTEnterpriseConfig,
     hasOpenAIAdminKey,
     hasOpenRouterKey,
     hasHeliconeKey,
@@ -74,11 +77,22 @@ export default async function ProviderAdminSettingsPage() {
     seenKeys.add(dedupeKey);
     return [{ provider: row.provider, apiKeyExternalId: row.apiKeyExternalId, apiKeyName: row.apiKeyName }];
   });
+  const watermarks = (
+    await prisma.providerSyncWatermark.findMany({ orderBy: { provider: "asc" } })
+  ).map((row) => ({
+    provider: row.provider,
+    watermark: row.watermark.toISOString(),
+    earliest: row.earliest.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
 
   return (
     <AdminAPISettings
       hasAnthropicAdminKey={hasAnthropicAdminKey}
       hasCursorAdminKey={hasCursorAdminKey}
+      hasGitHubCopilotConfig={hasGitHubCopilotConfig}
+      githubCopilot={githubCopilot}
+      hasChatGPTEnterpriseConfig={hasChatGPTEnterpriseConfig}
       hasOpenAIAdminKey={hasOpenAIAdminKey}
       hasOpenRouterKey={hasOpenRouterKey}
       hasHeliconeKey={hasHeliconeKey}
@@ -108,6 +122,7 @@ export default async function ProviderAdminSettingsPage() {
       keySystemMap={parseProviderKeySystemMap(settingsMap.provider_key_system_map ?? null)}
       knownApiKeys={knownApiKeys}
       aiSystems={aiSystems}
+      watermarks={watermarks}
     />
   );
 }

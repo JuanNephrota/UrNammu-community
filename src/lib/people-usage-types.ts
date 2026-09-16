@@ -23,16 +23,17 @@ export function resolvePeopleUsageWindow(
   return { since: new Date(now.getTime() - days * 24 * 60 * 60 * 1000), until: now };
 }
 
-export type PersonSurface = "claude_code" | "cowork" | "cursor" | "proxy";
+export type PersonSurface = "claude_code" | "cowork" | "cursor" | "github_copilot" | "proxy";
 
 export const SURFACE_LABELS: Record<PersonSurface, string> = {
   claude_code: "Claude Code",
   cowork: "Cowork",
   cursor: "Cursor",
+  github_copilot: "GitHub Copilot",
   proxy: "API (proxy)",
 };
 
-export const SURFACE_ORDER: PersonSurface[] = ["claude_code", "cowork", "cursor", "proxy"];
+export const SURFACE_ORDER: PersonSurface[] = ["claude_code", "cowork", "cursor", "github_copilot", "proxy"];
 
 /**
  * Where the person stands in the synced identity-provider directory:
@@ -69,6 +70,15 @@ export interface PersonUsageRow {
   cursorLinesAccepted: number;
   cursorActiveDays: number;
   cursorCost: number | null;
+
+  // GitHub Copilot — usage metrics sync. Seat-licensed, so there is no per-user
+  // cost column; `copilotInteractions` are explicit prompts, `copilotTokens`
+  // only cover the CLI + Copilot app (IDE features report no tokens), and
+  // `copilotLinesAccepted` are Copilot-produced lines that landed in the editor.
+  copilotInteractions: number;
+  copilotTokens: number;
+  copilotLinesAccepted: number;
+  copilotActiveDays: number;
 
   // Direct API calls through the governance proxy.
   proxyRequests: number;
