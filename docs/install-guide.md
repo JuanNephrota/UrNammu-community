@@ -286,6 +286,7 @@ Shared secrets for the OpenTelemetry ingest routes that feed the Claude Code, Co
 | Variable | Purpose |
 |----------|---------|
 | `CLAUDE_CODE_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/claude-code`. |
+| `ENDPOINT_AGENT_ENROLLMENT_SECRET` | Org-wide secret the endpoint agent trades once for a per-device token. Prefer setting it in Settings → Endpoint Agent (encrypted at rest); the env var is the fallback. It is low-value by design — it can enroll a device and nothing else. |
 | `CURSOR_TELEMETRY_SECRET` | Bearer token for `POST /api/telemetry/cursor`. |
 | `CLAUDE_CODE_TELEMETRY_RETENTION_DAYS` | Retention window (days) enforced by the Claude Code prune cron. Default 30. |
 | `CURSOR_TELEMETRY_RETENTION_DAYS` | Retention window (days) enforced by the Cursor prune cron. Default 30. |
@@ -781,6 +782,34 @@ All of this is metadata only — no prompt text and no code content is transmitt
 
 Ingest is idempotent. Each row is stored with a content-hash `dedupeKey`, so a collector that retries a timed-out batch (the shipped config uses `retry_on_failure` + `sending_queue`) does not double-write; the `202` response reports `accepted` (rows inserted) and `duplicates` (rows skipped). Bodies that flatten to more than 5000 rows are rejected with `413` — raise `TELEMETRY_MAX_ROWS` only if you have deliberately increased the collector's batch size (default flush is 1000).
 
+### 8.15a Endpoint agent (shadow-AI discovery from managed machines)
+
+A signed binary pushed by MDM to macOS and Windows that reports which AI tools a machine actually runs and reaches. It is the only source that sees a laptop off the VPN, a personal-tier account, a desktop app with no SaaS audit trail, or a model served from loopback. Source lives in `ops/endpoint-agent/`.
+
+1. **Generate the enrollment secret** in Settings → Endpoint Agent (stored encrypted; `ENDPOINT_AGENT_ENROLLMENT_SECRET` is the env fallback).
+2. **Build and sign.** `cd ops/endpoint-agent && make` produces a macOS universal binary and a Windows amd64 exe. Both **must** be signed — Gatekeeper blocks unsigned Mac binaries and SmartScreen flags unsigned Windows ones, and both deploy scripts refuse to install one.
+   ```bash
+   make notarize-darwin DEVELOPER_ID="Developer ID Application: … (TEAMID)" NOTARY_PROFILE=<profile>
+   ```
+   Windows needs an Authenticode signature from your own code-signing certificate.
+3. **Host the binaries** somewhere the fleet can reach over HTTPS.
+4. **Push the deploy script** as a Hexnode custom script per platform, with `CONSOLE_URL`, `ENROLLMENT_SECRET` and `BINARY_URL` set:
+   - macOS — `ops/endpoint-agent/mdm/hexnode-deploy-endpoint-agent.sh` (installs a **LaunchAgent** in the console user's session)
+   - Windows — `ops/endpoint-agent/mdm/hexnode-deploy-endpoint-agent.ps1` (registers an at-logon **Scheduled Task** in the user's context)
+
+   Both run as the *user*, not root/SYSTEM, because browser profiles live in the user's home and Full Disk Access is per-user. A privileged daemon would need far broader access to see less.
+5. **Grant Full Disk Access on macOS** via a PPPC profile for `/usr/local/bin/urnammu-agent` (`SystemPolicyAllFiles`), or Safari history is skipped and the device reports the browser collector as `partial_no_access`.
+6. **Schedule `/api/cron/endpoint-agent-sweep`** (§9.1) so agents that stop reporting are marked stale rather than silently reading as "no AI activity".
+
+Cadence and which collectors run are console-side settings delivered in the manifest, so changing them applies fleet-wide with no redeploy.
+
+Verify a machine before the fleet rollout — this prints the exact bytes that would be transmitted, without sending them:
+
+```bash
+urnammu-agent --config /path/to/agent.json --dry-run
+```
+
+The agent reports identifiers and counts only: never prompts, responses, URL paths, query strings, page titles, window titles, file paths or command lines. Hostnames are allowlisted server-side against the AI tools registry, so a host that is not a known AI tool never leaves the machine. See `ops/endpoint-agent/README.md`.
 ### 8.16 Scheduled report email (Resend)
 
 Required for report schedules to actually deliver.
@@ -817,6 +846,7 @@ UrNammu schedules **one cron entry per background job**. Every route authenticat
 | `/api/cron/discovery-scan/<source>` | 4 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. |
 | `/api/cron/governance-automation` | 1 | Review-renewal, exception-renewal, and ownership-escalation alerts. |
 | `/api/cron/key-usage-rules` | 1 | Key usage rule evaluation. |
+| `/api/cron/endpoint-agent-sweep` | 1 | Marks endpoint agents that have stopped reporting as `STALE`, so a fleet of dead agents reads as "no data" rather than "no AI activity". |
 
 Running each provider and each scan source in its own function means a slow or failing one cannot delay the others, and each provider's schedule is tracked from its own last success.
 

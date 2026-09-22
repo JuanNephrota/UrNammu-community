@@ -36,6 +36,7 @@ const ORDER = [
   ["integrations", "Integrations"],
   ["proxy-health", "Proxy Health"],
   ["sensitive-scan", "Sensitive Scan"],
+  ["endpoints", "Endpoints"],
   ["settings", "Settings"],
 ];
 
@@ -47,6 +48,7 @@ const ROUTES = [
   ["/risk-center", "risk-center"],
   ["/compliance", "compliance"],
   ["/shadow-ai", "shadow-ai"],
+  ["/oversight/endpoints", "endpoints"],
   ["/oversight", "oversight"],
   ["/alerts", "alerts"],
   ["/executive", "executive"],

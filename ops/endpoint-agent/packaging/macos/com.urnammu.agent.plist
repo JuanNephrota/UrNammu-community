@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for the UrNammu endpoint agent.
+
+  A LaunchAgent, not a LaunchDaemon, and deliberately so: browser profiles live
+  in the user's home directory and Full Disk Access is granted per-user, so a
+  root daemon would either see nothing or need far broader privilege than this
+  agent should ever hold. Running in the user's own session means the agent can
+  read exactly what that user can read, and nothing else.
+
+  Install to /Library/LaunchAgents/com.urnammu.agent.plist so it loads for
+  every user at login.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.urnammu.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/urnammu-agent</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+      The agent runs its own interval loop on the cadence the console dictates,
+      so launchd only needs to keep it alive. KeepAlive with SuccessfulExit
+      false means: restart it if it crashes, but respect a clean exit — which
+      is how a revoked device stops itself without launchd fighting it.
+    -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Back off rather than hammering a console that is down. -->
+    <key>ThrottleInterval</key>
+    <integer>300</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!--
+      Lowest scheduling priority available. This is an inventory agent on
+      someone's work machine; it must never be something they can feel.
+    -->
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/urnammu-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/urnammu-agent.log</string>
+</dict>
+</plist>

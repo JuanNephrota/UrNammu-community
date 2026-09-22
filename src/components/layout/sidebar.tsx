@@ -28,6 +28,7 @@ import {
   ScanSearch,
   Plug,
   Users,
+  Laptop,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -57,6 +58,7 @@ const navItems = [
       { name: "Risk Center", href: "/risk-center", icon: ShieldAlert },
       { name: "AI Oversight", href: "/oversight", icon: Eye },
       { name: "Usage by Person", href: "/oversight/people", icon: Users },
+      { name: "Endpoints", href: "/oversight/endpoints", icon: Laptop },
       { name: "Investigations", href: "/oversight/investigations", icon: Bell },
       { name: "Vendor Governance", href: "/oversight/vendors", icon: Building2 },
       { name: "Claude Platform", href: "/oversight/claude-platform", icon: Cpu },

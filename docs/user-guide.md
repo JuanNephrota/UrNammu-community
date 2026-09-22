@@ -33,6 +33,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
     - [Proxy Health](#proxy-health)
     - [Provider Security & Privacy Scan](#provider-security--privacy-scan)
     - [Sensitive Scan](#10a-sensitive-scan)
+    - [Endpoint Agent](#endpoint-agent)
 11. [Reports](#11-reports)
 12. [Alerts](#12-alerts)
     - [Key Usage Rules](#key-usage-rules)
@@ -590,8 +591,9 @@ Incidents track notable events (misuse, data exposure, outage). Create from the 
 4. **CrowdStrike Falcon** — endpoint discovery for AI tools observed running on Falcon-protected hosts.
 5. **DNS / proxy logs** — CSV upload of native gateway exports (with vendor presets) or JSON API ingestion of network-observed AI domains.
 6. **Netskope** — real-time log-shipper ingestion of Netskope event JSON (no manual upload needed).
+7. **Endpoint agent** — a signed binary pushed by MDM to managed macOS and Windows machines ([Endpoints](#endpoint-agent)). It observes from *inside* the endpoint, so it is the only source that catches a laptop off the VPN, a personal-tier account, a desktop app with no SaaS audit trail, or a model being served locally.
 
-The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and can only be caught by device inventory or network logs — the sources are complementary, not redundant.
+The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and can only be caught by device inventory, network logs, or the endpoint agent — the sources are complementary, not redundant. Network-based sources in turn only see traffic that crosses your network, which is why the endpoint agent exists: a remote laptop and a locally-served model produce no network evidence at all.
 
 Discovered entries are deduplicated by `toolName + domain`. Each finding becomes a `DiscoveredAITool` record.
 
@@ -1170,6 +1172,87 @@ Treat a finding as a lead, not a verdict. A gateway may legitimately echo a syst
 
 ---
 
+### Endpoint Agent
+
+**Sidebar → Endpoints** lists the managed machines running the UrNammu endpoint agent and the
+AI tools each one actually runs and reaches.
+
+Every other source watches AI use from the *outside*, and they all go blind in the same four
+places: a laptop off the VPN talking straight to `chatgpt.com`; a personal-tier account that no
+enterprise admin API enumerates; a desktop app that leaves no SaaS-side audit trail; and **local
+inference** — Ollama, LM Studio, llama.cpp — which produces no network evidence whatsoever. The
+agent closes those gaps by observing from inside the machine.
+
+#### What it collects
+
+| Collector | macOS | Windows | Reports |
+|---|---|---|---|
+| Apps | Applications folders + running processes | Uninstall registry + running images | app name, bundle id / publisher, version, running flag |
+| Browser | Chrome, Edge, Brave, Arc, Vivaldi, Firefox, Safari | Chrome, Edge, Brave, Vivaldi, Opera, Firefox | hostname and visit count only |
+| Network | *not supported* | DNS resolver cache | hostname and hit count |
+| Local runtimes | loopback probe | loopback probe | runtime, port, local model names |
+
+macOS has no unprivileged way to read resolved hostnames, so the network collector reports
+`unsupported_platform` there rather than doing work that yields nothing. The browser collector
+carries AI web traffic on macOS; apps and runtimes carry everything local.
+
+#### What it never collects
+
+No prompts, no responses, no URL paths, no query strings, no page titles, no window titles, no
+file paths, no command lines. The most specific thing that can leave a machine is a bare hostname
+that already appears on the server-issued allowlist.
+
+Three mechanisms enforce that rather than merely asserting it:
+
+- **The allowlist is server-issued.** Each agent fetches a manifest compiled from the AI tools
+  registry and reports only what matches. A hostname that is not a known AI tool never leaves the
+  endpoint — it is an allowlist, not a history upload. Growing the registry improves every
+  deployed agent with no redeploy.
+- **The wire schema cannot carry content.** Its hostname type rejects anything containing a
+  slash, so a URL cannot be smuggled through a domain field even by a compromised agent.
+- **`--dry-run` prints the exact bytes.** Anyone can run it on their own machine and read
+  precisely what would be transmitted.
+
+It is not an EDR: no kernel extension, no Endpoint Security client, no ETW hooks. It runs
+unprivileged in the user's own session and reads only what that user can already read.
+
+#### Reading the page
+
+- **Enrolled devices / AI tools observed** — fleet coverage and breadth.
+- **Local model runtimes** — devices serving a model from loopback. Highlighted because traffic
+  to a local model reaches no proxy, no vendor admin API and no DNS log, so no other control in
+  the platform applies to it. These raise **HIGH** severity alerts; other endpoint discoveries
+  raise MEDIUM.
+- **Degraded collectors** — devices that are under-reporting. Most often Safari without Full
+  Disk Access, which shows as `Some profiles unreadable`. Worth watching: an agent that quietly
+  stops collecting makes the console read as "no AI activity" rather than "no data".
+
+Clicking a device shows its collector health and every detection, grouped by signal, with the
+evidence behind each one — the bundle id, the hostname, or the runtime and port plus the model
+names pulled locally. Detections the registry does not recognize stay on the device page marked
+**Unclassified** and are deliberately kept out of the Shadow AI queue: one laptop's unrecognized
+app name is not fleet-wide evidence.
+
+#### How it reaches Shadow AI
+
+Matched detections roll into `DiscoveredAITool` with source `endpoint_agent`, keyed on the
+registry's canonical domain. A tool seen as an app, in the browser and over the network produces
+one Shadow AI row, not three, and it merges with DNS or OAuth observations of the same tool.
+Triage is the normal workflow: Discovered → Under Review → Registered/Approved/Blocked.
+
+#### Managing devices
+
+Admins and compliance officers can **revoke** a device from its detail page. Revocation kills the
+device's token immediately and is not undone by reinstalling the agent — the server refuses to
+re-enroll a revoked machine, and a revoked agent exits cleanly instead of retrying.
+
+A device with no accepted report inside the staleness window (6 hours) is marked **Stale** by an
+hourly sweep. Stale is not revoked: the token still works, and the device flips back to Active on
+its next report.
+
+Setup and rollout live in **Settings → Endpoint Agent** and `ops/endpoint-agent/README.md`.
+
+---
 ## 11. Reports
 
 **Sidebar → Overview → Reports** is a self-service reporting suite for building, exporting, and scheduling governance reports. Creation requires `ADMIN` or `COMPLIANCE_OFFICER`.

@@ -424,6 +424,108 @@ model ScanHistory {
   createdAt     DateTime  @default(now())
 }
 
+// ─── Endpoint Agent ─────────────────────────────────────
+// A machine running the UrNammu endpoint agent. Observes AI activity from
+// inside the endpoint — installed/running AI apps, allowlisted AI hostnames
+// from browser history and the DNS cache, and local inference runtimes —
+// covering the machines every network- and SaaS-side source goes blind on
+// (off-VPN laptops, personal-tier accounts, desktop apps, local models).
+//
+// The agent never reports content: no prompts, no responses, no URL paths,
+// no window titles. Only which tool, how often, and when. See
+// docs/plans/endpoint-agent.md.
+model EndpointDevice {
+  id           String @id @default(cuid())
+  // Stable machine identifier chosen by the agent (macOS IOPlatformUUID /
+  // Windows MachineGuid). Unique so a re-install re-enrolls in place rather
+  // than forking a second device row.
+  machineId    String @unique
+  hostname     String
+  // "darwin" | "windows"
+  platform     String
+  osVersion    String?
+  arch         String?
+  agentVersion String?
+
+  // Console user at enrollment. Matched to DirectoryPerson/User by email
+  // where possible; kept as free text when the machine is shared or unjoined.
+  userEmail String?
+  userName  String?
+
+  // SHA-256 of the per-device bearer token. The plaintext is returned exactly
+  // once, at enrollment, and never stored — a leaked DB cannot forge reports.
+  tokenHash     String
+  // Bumped on re-enrollment, which invalidates the previous token.
+  tokenIssuedAt DateTime @default(now())
+
+  // ACTIVE — reporting normally.
+  // STALE   — no report within the staleness window (set by the cron sweep).
+  // REVOKED — token rejected; the agent stops reporting and will not
+  //           re-enroll on its own.
+  status       String    @default("ACTIVE")
+  statusReason String?   @db.Text
+
+  enrolledAt   DateTime  @default(now())
+  // Last authenticated request of any kind (report or manifest fetch).
+  lastSeenAt   DateTime?
+  // Last accepted report — the one that matters for "is this device covered".
+  lastReportAt DateTime?
+
+  // Per-collector health from the most recent report, so the UI can say
+  // "Safari skipped: no Full Disk Access" instead of silently under-reporting.
+  collectorStatus Json?
+
+  detections EndpointDetection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, lastReportAt])
+  @@index([userEmail])
+  @@index([platform])
+}
+
+// One (device, signal, tool, evidence) observation, merged on repeat: the
+// table grows with the fleet and its tool surface, not with time.
+model EndpointDetection {
+  id       String         @id @default(cuid())
+  device   EndpointDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId String
+
+  // Which collector saw it: "app" | "browser" | "network" | "runtime".
+  signal String
+  // Registry tool name when matched, else the raw observed name.
+  toolName String
+  vendor   String?
+  // AIToolCategory from the registry; null for unmatched observations.
+  category String?
+  // From resolveAIToolMatch: "high" | "medium" | "low".
+  matchConfidence String?
+
+  // What was actually seen, normalized per signal: bundle id or image name
+  // (app), hostname (browser/network), runtime id + port (runtime). Non-null
+  // and part of the merge key — Postgres treats NULLs as distinct, which
+  // would defeat the unique index.
+  evidence String @default("")
+  // Collector-specific extras (app version, publisher, browser, local model
+  // names). Never content.
+  detail   Json?
+
+  // Observation weight: launch count, visit count, DNS hit count. Summed
+  // across reports.
+  observations Int      @default(0)
+  firstSeenAt  DateTime
+  lastSeenAt   DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId, signal, toolName, evidence])
+  @@index([toolName, lastSeenAt])
+  @@index([signal, lastSeenAt])
+  @@index([lastSeenAt])
+}
+
 // ─── Provider Security & Privacy Posture Scan ───────────
 // Audits how each configured AI provider is wired for secure use and privacy:
 // local config hygiene (proxy secret, TLS endpoints, credentials), vendor

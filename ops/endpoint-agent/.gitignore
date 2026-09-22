@@ -1,0 +1,5 @@
+# Cross-compiled release binaries (make)
+/dist/
+# Local development build (make build)
+/urnammu-agent
+/urnammu-agent.exe

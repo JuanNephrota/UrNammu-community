@@ -10,6 +10,7 @@ import {
   Search,
   Shield,
   BarChart3,
+  Laptop,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +57,12 @@ const allItems: SettingsNavItem[] = [
     label: "Shadow AI",
     description: "Google Workspace discovery and shadow AI scan controls",
     icon: Search,
+  },
+  {
+    href: "/settings/endpoint-agent",
+    label: "Endpoint Agent",
+    description: "Enrollment, cadence, and which collectors run on managed machines",
+    icon: Laptop,
   },
   {
     href: "/settings/reporting",

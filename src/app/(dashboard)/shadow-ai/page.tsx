@@ -237,6 +237,7 @@ export default function ShadowAIPage() {
     if (source === "google_workspace") return "GOOGLE";
     if (source === "microsoft_365") return "MICROSOFT";
     if (source === "crowdstrike") return "CROWDSTRIKE";
+    if (source === "endpoint_agent") return "ENDPOINT";
     return source.replace(/_/g, " ").toUpperCase();
   }
 
@@ -816,7 +817,8 @@ export default function ShadowAIPage() {
                             <p className="font-medium">{tool.toolName}</p>
                             <CategoryBadge category={tool.category} />
                             {(tool.detectionSource === "google_workspace" ||
-                              tool.detectionSource === "microsoft_365") && (
+                              tool.detectionSource === "microsoft_365" ||
+                              tool.detectionSource === "endpoint_agent") && (
                               <Badge variant="info" className="text-[9px] px-1.5">
                                 {sourceBadgeLabel(tool.detectionSource)}
                               </Badge>
@@ -934,7 +936,8 @@ export default function ShadowAIPage() {
                             <span className="text-[10px] text-[var(--text-faint)]">Score: {tool.matchScore}</span>
                           )}
                           {(tool.detectionSource === "google_workspace" ||
-                            tool.detectionSource === "microsoft_365") && (
+                            tool.detectionSource === "microsoft_365" ||
+                            tool.detectionSource === "endpoint_agent") && (
                             <Badge variant="info" className="text-[9px] px-1.5">
                               {sourceBadgeLabel(tool.detectionSource)}
                             </Badge>
@@ -1015,7 +1018,8 @@ export default function ShadowAIPage() {
                         </div>
                         <CategoryBadge category={tool.category} />
                         {(tool.detectionSource === "google_workspace" ||
-                          tool.detectionSource === "microsoft_365") && (
+                          tool.detectionSource === "microsoft_365" ||
+                          tool.detectionSource === "endpoint_agent") && (
                           <Badge variant="info" className="text-[9px] px-1.5">
                             {sourceBadgeLabel(tool.detectionSource)}
                           </Badge>
