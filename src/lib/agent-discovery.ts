@@ -75,6 +75,13 @@ export type DiscoveredAgentInput = {
   firstSeenAt?: Date | null;
   lastSeenAt?: Date | null;
   metadata?: Record<string, unknown> | null;
+  /**
+   * Skip the first-creation alert. Inventory sources set this on their
+   * baseline run (e.g. the first ChatGPT GPT import) so an existing estate
+   * lands in the review queue without one alert per row. Optional and
+   * default false, so existing callers are unaffected.
+   */
+  suppressAlert?: boolean;
 };
 
 export type UpsertOutcome = { id: string; created: boolean };
@@ -276,7 +283,7 @@ export async function upsertDiscoveredAgent(input: DiscoveredAgentInput): Promis
     throw err;
   }
 
-  if (!row.linkedAgentId) {
+  if (!row.linkedAgentId && !input.suppressAlert) {
     try {
       await raiseDiscoveryAlert(row);
     } catch (err) {

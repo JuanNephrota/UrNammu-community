@@ -113,6 +113,7 @@ import {
   detectAdminRoleGrants,
   detectGptsWithActions,
   detectNewWorkspaceUsers,
+  gptToDiscoveredAgent,
   latestGptCreatedAt,
   normalizeWorkspaceUser,
   planLogFileBatch,
@@ -191,6 +192,7 @@ import {
   type SyncProvider,
   type SyncWindow,
 } from "./provider-sync-window";
+import { applyAgentImport } from "./agent-import";
 
 export { SYNC_PROVIDER_LABELS };
 export type { SyncProvider, SyncWindow };
@@ -3834,6 +3836,17 @@ export async function syncChatGPTEnterprise(triggeredByUserId: string, window: S
         });
         if (created) alertsCreated++;
       }
+      // Every GPT also lands in the agent review queue (Agents → Discovered).
+      // The baseline is the queue itself, not the GPTS watermark (which
+      // predates agent discovery on existing installs): the first import
+      // lands the existing estate silently instead of one alert per GPT.
+      const gptsBaseline =
+        (await prisma.discoveredAgent.count({ where: { source: "chatgpt_gpts" } })) === 0;
+      const discoveredAgents = await applyAgentImport(
+        gpts
+          .map((gpt) => gptToDiscoveredAgent(gpt, { suppressAlert: gptsBaseline }))
+          .filter((agent): agent is NonNullable<typeof agent> => !!agent),
+      );
       const latest = latestGptCreatedAt(gpts);
       const nextGptsWatermark: WatermarkState = latest
         ? {
@@ -3848,6 +3861,7 @@ export async function syncChatGPTEnterprise(triggeredByUserId: string, window: S
         newWithActions: newWithActions.length,
         truncated,
         baseline: !gptsWatermark,
+        discoveredAgents,
       };
       await storeSnapshot(syncRun.id, "chatgpt_enterprise", "gpts", gptsReport);
       rawSnapshotsStored++;

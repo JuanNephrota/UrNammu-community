@@ -17,6 +17,7 @@
     { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
     { "path": "/api/cron/discovery-scan/crowdstrike", "schedule": "45 * * * *" },
+    { "path": "/api/cron/discovery-scan/agent_platforms", "schedule": "42 * * * *" },
     { "path": "/api/cron/governance-automation", "schedule": "50 * * * *" },
     { "path": "/api/cron/agent-discovery", "schedule": "52 * * * *" },
     { "path": "/api/cron/key-usage-rules", "schedule": "55 * * * *" },

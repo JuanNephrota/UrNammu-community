@@ -262,6 +262,22 @@ All variables read from `.env` in local dev and from the platform environment (V
 
 > The feed **fails closed**. With no token configured the endpoint returns `503` rather than serving an unauthenticated list of the AI tools your organization blocks.
 
+### 3.10a Agent platform imports fallback
+
+These back the **Settings → Shadow AI → Agent Platforms** card (the `agent_platforms` discovery-scan source). Settings UI values win; secrets saved there are encrypted with `SETTINGS_ENCRYPTION_KEY`.
+
+| Variable | Purpose |
+|----------|---------|
+| `AGENT_PLATFORMS_SCAN_ENABLED` | `true` / `false` (default `false`). Scheduled import of Anthropic Managed Agents, Microsoft Copilot agents and Salesforce Agentforce agents. |
+| `AGENT_PLATFORMS_SCAN_INTERVAL_HOURS` | Default 24. |
+| `ANTHROPIC_MANAGED_AGENTS_API_KEY` | A regular API key (`sk-ant-api…`) from the Claude Platform workspace whose Managed Agents you want listed. Admin keys are rejected by `GET /v1/agents`. Prefer Settings UI. |
+| `MICROSOFT_COPILOT_AGENTS_ENABLED` | `true` to import Microsoft 365 Copilot / Copilot Studio agents with the Microsoft 365 app registration from §3.7. Needs `CopilotPackages.Read.All` (see §8.4a). |
+| `SALESFORCE_INSTANCE_URL` | The org's My Domain URL, e.g. `https://acme.my.salesforce.com`. Only `*.salesforce.com`, `*.force.com` and `*.salesforce.mil` hosts are accepted; `login.salesforce.com` / `test.salesforce.com` are rejected (client credentials needs My Domain). |
+| `SALESFORCE_CLIENT_ID` | Connected app consumer key. |
+| `SALESFORCE_CLIENT_SECRET` | Connected app consumer secret. Prefer Settings UI. |
+
+OpenAI Assistants and ChatGPT Enterprise custom GPTs need no extra variables: they are imported with the OpenAI and ChatGPT Enterprise provider syncs (§8.6, §8.6b).
+
 ### 3.11 AI gateway telemetry fallbacks
 
 Use these when traffic already flows through a gateway and you want its records without re-routing through the UrNammu proxy.
@@ -655,6 +671,35 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 6. **Test Connection** → **Run Scan Now**.
 7. Optional — **Settings → Users & Identity → Directory sync → Microsoft Entra ID directory**: enable auto-sync (default off, 24 h), choose whether to include guest accounts (`#EXT#` UPNs are skipped by default), and click **Sync now**. Disabled accounts (`accountEnabled: false`) are stored as deactivated, which suspends the matching UrNammu user and arms the `usage_after_deactivation` alert.
 
+### 8.4a Microsoft 365 Copilot / Copilot Studio agents (agent discovery)
+
+Imports the agents in the tenant's Microsoft 365 Copilot agent catalog — Copilot Studio agents, Agent Builder agents, and partner or shared agents — into **Agents → Discovered**. Reuses the §8.4 app registration.
+
+1. The tenant needs a **Microsoft Agent 365** license; the API returns `403` without one.
+2. App registration → **API permissions** → Microsoft Graph → **Application permissions** → add **`CopilotPackages.Read.All`**, then **Grant admin consent** (a Global Administrator or Privileged Role Administrator). The permission is read-only.
+3. **Settings → Shadow AI → Agent Platforms**: set **Import Copilot agents** to Enabled, **Save**, then **Test Permission**. A `403` there names the missing permission or license.
+4. Enable **Auto-import** on the same card (or use **Import Now**).
+
+Endpoint: `GET https://graph.microsoft.com/v1.0/copilot/admin/catalog/packages?$filter=supportedHosts/any(h:h eq 'Copilot')` ([Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/api/admin-settings/package/copilotpackages-list)). Microsoft-built packages (`type: microsoft`) are skipped. Only catalog metadata is read (name, description, publisher, type, platform, availability/deployment scope, blocked flag) — never agent instructions or knowledge.
+
+### 8.4b Anthropic Managed Agents (agent discovery)
+
+1. In the [Claude Console](https://platform.claude.com/), open the workspace that holds your Managed Agents → **API keys** → create a key. It must be a regular API key; the Admin API key from §8.5 is rejected by the Managed Agents endpoints.
+2. **Settings → Shadow AI → Agent Platforms**: paste it as **Workspace API Key**, **Save**, **Test Connection**.
+3. Enable **Auto-import** (or **Import Now**).
+
+Endpoint: `GET https://api.anthropic.com/v1/agents` with `anthropic-beta: managed-agents-2026-04-01`. One key sees one workspace; archived agents are skipped. UrNammu reads the agent's name, description, model, tool types, custom tool names and MCP server names/hosts — never its system prompt.
+
+### 8.4c Salesforce Agentforce (agent discovery)
+
+1. In Salesforce Setup, create a **connected app** (or external client app) with OAuth enabled and the `api` scope.
+2. Under OAuth settings, select **Enable Client Credentials Flow**, and in the app's policies set the **Run As** user — ideally an integration-only user with read access to Agentforce / Bot setup (`BotDefinition`, `BotVersion`).
+3. Copy the **consumer key** and **consumer secret**.
+4. **Settings → Shadow AI → Agent Platforms**: enter the org's **My Domain URL** (`https://<domain>.my.salesforce.com`; sandboxes `https://<domain>--<sbx>.sandbox.my.salesforce.com`), the consumer key and secret; **Save**; **Test Connection**.
+5. Enable **Auto-import** (or **Import Now**).
+
+Token: `POST https://<MyDomain>/services/oauth2/token` with `grant_type=client_credentials` ([Salesforce Help](https://help.salesforce.com/s/articleView?id=xcloud.remoteaccess_oauth_client_credentials_flow.htm&type=5)). Inventory: SOQL over REST (`/services/data/v62.0/query`) on `BotDefinition` — the object behind every Agentforce agent — plus `BotVersion` for active/inactive status.
+
 ### 8.5 Anthropic Admin API (telemetry)
 
 1. [Anthropic Console](https://console.anthropic.com/) → Organization → Admin Keys → create one.
@@ -666,6 +711,8 @@ This is a **separate Google Cloud project/app** from sign-in — do not reuse OA
 1. [OpenAI Platform](https://platform.openai.com/) → your org → Admin Keys → create one.
 2. **Settings → Provider Admin APIs → OpenAI**: paste the admin key; enable sync; set interval.
 3. **Test Connection**.
+
+After each successful scheduled OpenAI sync, UrNammu lists the key's Assistants into **Agents → Discovered** (source `openai_assistants`). Assistants that an older release had written straight into the Agent Registry are linked to their registry row, not duplicated. OpenAI shut the Assistants API down on 2026-08-26, so on current accounts this import normally finds nothing; OpenAI's newer saved agents (Agents API beta) have no list endpoint yet and are not imported.
 
 ### 8.6a Cursor Admin API (telemetry)
 
@@ -682,7 +729,7 @@ Requires a ChatGPT Enterprise or Edu workspace.
 3. **Integrations → ChatGPT Enterprise Compliance API**: paste the key and workspace id, **Save**, **Test**.
 4. Apply the migration `20260916170000_chatgpt_enterprise_compliance` (`ProviderSyncWatermark`, `ComplianceActivity`) before the first sync — see §10.1.
 
-The hourly `/api/cron/provider-sync/chatgpt_enterprise` job then pulls users, auth/audit events, per-user daily ChatGPT message counts, and Codex activity, and raises alerts for admin-role grants and new GPTs with custom actions. Streams the key is not scoped for are skipped and listed in the sync-run metadata. Reference: [OpenAI Admin API](https://chatgpt.com/public/admin/api-reference).
+The hourly `/api/cron/provider-sync/chatgpt_enterprise` job then pulls users, auth/audit events, per-user daily ChatGPT message counts, and Codex activity, and raises alerts for admin-role grants and new GPTs with custom actions. Every workspace GPT is also added to **Agents → Discovered** (source `chatgpt_gpts`, with its owner, tool types and custom-action domains); the first sync imports the existing GPTs without raising an alert per GPT. Streams the key is not scoped for are skipped and listed in the sync-run metadata. Reference: [OpenAI Admin API](https://chatgpt.com/public/admin/api-reference).
 
 ### 8.6c GitHub Copilot usage metrics (telemetry)
 
@@ -855,7 +902,7 @@ UrNammu schedules **one cron entry per background job**. Every route authenticat
 | Endpoint | Entries | Purpose |
 |----------|---------|---------|
 | `/api/cron/provider-sync/<provider>` | 13 (`anthropic`, `claude_code`, `cursor`, `github_copilot`, `gemini`, `openai`, `openrouter`, `helicone`, `portkey`, `litellm`, `chatgpt_enterprise`, `anthropic_compliance`, `claude_enterprise`) | Pulls that provider's admin telemetry when its own interval has elapsed since its last successful sync. |
-| `/api/cron/discovery-scan/<source>` | 4 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. |
+| `/api/cron/discovery-scan/<source>` | 5 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`, `agent_platforms`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. `agent_platforms` imports agents from Anthropic Managed Agents, Microsoft Copilot and Salesforce Agentforce (§8.4a–c) into **Agents → Discovered**. |
 | `/api/cron/governance-automation` | 1 | Review-renewal, exception-renewal, and ownership-escalation alerts. |
 | `/api/cron/key-usage-rules` | 1 | Key usage rule evaluation. |
 | `/api/cron/agent-discovery` | 1 | Proxy agent detection: queues agent-like callers without `x-agent-id` under Agents → Discovered. |
@@ -879,7 +926,7 @@ The prune jobs matter more than they look: the developer-AI telemetry tables and
 
 ### 9.3 Vercel Cron (recommended if deploying to Vercel)
 
-All of the above are already configured in `vercel.json` (26 entries, staggered so the hourly jobs do not all fire at minute zero):
+All of the above are already configured in `vercel.json` (30 entries, staggered so the hourly jobs do not all fire at minute zero):
 
 ```json
 {
@@ -901,9 +948,13 @@ All of the above are already configured in `vercel.json` (26 entries, staggered 
     { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
     { "path": "/api/cron/discovery-scan/crowdstrike", "schedule": "45 * * * *" },
+    { "path": "/api/cron/discovery-scan/agent_platforms", "schedule": "42 * * * *" },
     { "path": "/api/cron/governance-automation", "schedule": "50 * * * *" },
     { "path": "/api/cron/agent-discovery", "schedule": "52 * * * *" },
     { "path": "/api/cron/key-usage-rules", "schedule": "55 * * * *" },
+    { "path": "/api/cron/endpoint-agent-sweep", "schedule": "58 * * * *" },
+    { "path": "/api/cron/directory-sync/google_workspace", "schedule": "10 4 * * *" },
+    { "path": "/api/cron/directory-sync/microsoft_365", "schedule": "20 4 * * *" },
     { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
     { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
     { "path": "/api/cron/prune-collection", "schedule": "45 3 * * *" },
@@ -915,9 +966,9 @@ All of the above are already configured in `vercel.json` (26 entries, staggered 
 }
 ```
 
-Per-provider sync cadence is set in **Settings → Provider Admin APIs** (global default plus a per-provider override table); shadow-AI scan cadence in **Settings → Shadow AI**.
+Per-provider sync cadence is set in **Settings → Provider Admin APIs** (global default plus a per-provider override table); shadow-AI scan and agent platform import cadence in **Settings → Shadow AI**.
 
-> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency and the total number of crons (well below the 21 entries above). Either upgrade to Pro, or drive the endpoints from an external scheduler as below.
+> **Hobby-plan limit**: Vercel's Hobby tier caps cron frequency and the total number of crons (well below the 30 entries above). Either upgrade to Pro, or drive the endpoints from an external scheduler as below.
 
 ### 9.4 External cron (non-Vercel hosts)
 

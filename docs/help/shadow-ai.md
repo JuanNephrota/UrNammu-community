@@ -18,6 +18,8 @@ Plus two import paths that need no live connection:
 
 The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and must be caught by device inventory or network logs — which is why the sources are complementary rather than redundant.
 
+**Agent platforms** is a fifth scheduled source that finds agents rather than tools: it imports agents from Anthropic Managed Agents, Microsoft 365 Copilot / Copilot Studio and Salesforce Agentforce into the agent review queue (**Agents → Discovered**). It is configured on the **Agent Platforms** card at the bottom of **Settings → Shadow AI**, where **Import Now** runs it on demand, and it is not part of **Scan All Sources**.
+
 ## Observation details
 
 Each discovered tool records what the scans actually observed, shown under the tool name:
@@ -59,7 +61,7 @@ The page splits discoveries into three sections:
 ## Scan triggers
 
 - **Manual**: click **Scan All Sources**. Every configured source runs; unconfigured ones are skipped cleanly and reported as such, so it is always clear which sources actually ran.
-- **Automatic**: configured in **Settings → Shadow AI** (cron fires hourly; each source checks its own interval).
+- **Automatic**: configured in **Settings → Shadow AI** (cron fires hourly; each source checks its own interval). The agent platform import has its own **Auto-import** toggle and interval on the Agent Platforms card.
 
 ## What "Block" actually does
 

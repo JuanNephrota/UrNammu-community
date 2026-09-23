@@ -203,6 +203,16 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 
 A new entry raises one \`agent_discovery\` alert; later sightings update it silently.
 
+**Platform imports** also feed the queue:
+
+- **OpenAI Assistants** — after each OpenAI sync. Assistants an earlier release put straight into the registry are linked, not duplicated. OpenAI retired the Assistants API on 2026-08-26.
+- **ChatGPT Enterprise custom GPTs** — with the ChatGPT Enterprise compliance sync: owner, tool types and custom-action domains. The first sync imports without per-GPT alerts.
+- **Anthropic Managed Agents** — a workspace API key on the **Agent Platforms** card in **Settings → Shadow AI**.
+- **Microsoft 365 Copilot / Copilot Studio** — the Microsoft 365 app registration plus the \`CopilotPackages.Read.All\` application permission and an Agent 365 license. Microsoft-built agents are skipped.
+- **Salesforce Agentforce** — the org's My Domain URL and a connected app with the client credentials flow.
+
+Only metadata is imported — never system prompts, instructions, knowledge or conversations.
+
 ## AI-assisted risk review
 
 The **AI Agent Risk Review** card on the agent detail page shows two things side by side:
@@ -334,6 +344,8 @@ Plus two import paths that need no live connection:
 
 The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and must be caught by device inventory or network logs — which is why the sources are complementary rather than redundant.
 
+**Agent platforms** is a fifth scheduled source that finds agents rather than tools: it imports agents from Anthropic Managed Agents, Microsoft 365 Copilot / Copilot Studio and Salesforce Agentforce into the agent review queue (**Agents → Discovered**). It is configured on the **Agent Platforms** card at the bottom of **Settings → Shadow AI**, where **Import Now** runs it on demand, and it is not part of **Scan All Sources**.
+
 ## Observation details
 
 Each discovered tool records what the scans actually observed, shown under the tool name:
@@ -375,7 +387,7 @@ The page splits discoveries into three sections:
 ## Scan triggers
 
 - **Manual**: click **Scan All Sources**. Every configured source runs; unconfigured ones are skipped cleanly and reported as such, so it is always clear which sources actually ran.
-- **Automatic**: configured in **Settings → Shadow AI** (cron fires hourly; each source checks its own interval).
+- **Automatic**: configured in **Settings → Shadow AI** (cron fires hourly; each source checks its own interval). The agent platform import has its own **Auto-import** toggle and interval on the Agent Platforms card.
 
 ## What "Block" actually does
 
@@ -694,10 +706,11 @@ Each tile shows whether the service is connected, and each group header shows a 
 
 - **AI Models** — the internal AI provider used for in-app features (risk suggestion, compliance gap analysis, agent risk review, summarization).
 - **Provider Telemetry** — Anthropic Admin API (organization usage plus the Claude Code analytics feed), **Anthropic Compliance API** (activity feed and Claude app session metadata, with governance alerts; the tile also holds the organization timezone and first-pull lookback), **Claude Enterprise Analytics** (per-user activity per product, DAU/WAU/MAU, seats, per-user cost), OpenAI Admin API, **ChatGPT Enterprise Compliance API**, Google Cloud Billing (Gemini), and **GitHub Copilot** (usage metrics reports + seats; token plus organization or enterprise). These feed Oversight usage and cost. The Compliance tile reports "Feed via Admin key" when only the Admin API key is present: the Activity Feed works with either key type, but session metadata needs a Compliance Access Key with \`read:compliance_user_data\`. The **Cursor Admin API** is also a provider sync — it supplies Cursor tokens, requests, and per-user spend — and is configured under **Settings → Provider Admin APIs** rather than as a tile here.
-- **ChatGPT Enterprise Compliance API** — a workspace-scoped Admin key (created by a ChatGPT Enterprise / Edu workspace owner in the OpenAI Admin Console) plus the workspace id. The hourly \`chatgpt_enterprise\` sync pulls workspace users into \`ProviderActor\`, auth and admin-audit events into \`ComplianceActivity\`, per-user daily ChatGPT message counts and Codex activity into \`AssistantDailyStat\`, and raises alerts for admin-role grants and new GPTs with custom actions. Grant the key **Users**, **GPTs**, and **Compliance logging platform** read scopes; a stream the key cannot read is skipped and named in the sync-run metadata rather than failing the sync. Message content is never stored — only counts.
+- **ChatGPT Enterprise Compliance API** — a workspace-scoped Admin key (created by a ChatGPT Enterprise / Edu workspace owner in the OpenAI Admin Console) plus the workspace id. The hourly \`chatgpt_enterprise\` sync pulls workspace users into \`ProviderActor\`, auth and admin-audit events into \`ComplianceActivity\`, per-user daily ChatGPT message counts and Codex activity into \`AssistantDailyStat\`, and raises alerts for admin-role grants and new GPTs with custom actions. Every workspace GPT is also added to the agent review queue (**Agents → Discovered**). Grant the key **Users**, **GPTs**, and **Compliance logging platform** read scopes; a stream the key cannot read is skipped and named in the sync-run metadata rather than failing the sync. Message content is never stored — only counts.
 - **AI Gateways** — OpenRouter Activity, Helicone Requests, Portkey Analytics, and LiteLLM Proxy. Use these when traffic already flows through a gateway and you want its records without re-routing through the UrNammu proxy.
 - **Identity** — Google Sign-In and Microsoft 365 Sign-In, for authenticating users into UrNammu.
 - **Directory Discovery** — Google Workspace and Microsoft 365 Tenant Apps, for Shadow AI scanning of connected third-party apps.
+- **Agent platforms** — Anthropic Managed Agents, Microsoft 365 Copilot / Copilot Studio and Salesforce Agentforce agent imports have no tile yet; configure them on the **Agent Platforms** card in **Settings → Shadow AI**.
 - **Observability** — Azure Monitor (feeds the Proxy Health board) and Datadog.
 
 ## Integrations vs. Settings
@@ -842,7 +855,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 - **Provider Admin APIs** — admin keys for org telemetry: Anthropic (Admin API, Compliance API, Enterprise Analytics API), OpenAI, Cursor, GitHub Copilot (token + organization / enterprise; needs the GitHub **Copilot usage metrics** policy and \`read:org\` or \`manage_billing:copilot\` / \`read:enterprise\`), Google Gemini billing export, plus the AI gateways (the ChatGPT Enterprise Compliance API key lives on the **Integrations** page, and its \`chatgpt_enterprise\` sync appears in the per-provider table here). The **Background Provider Sync** card sets the global auto-sync default and interval, and a per-provider table lets each provider (including Claude Code analytics and each gateway) override both, with its last run, outcome, and next-due time. Unset overrides inherit the global value. **Sync History & Backfill** shows each provider's ingested date range (history from → watermark) and pulls older history on demand in 7-day chunks. Anomaly thresholds, governance-automation notice days, and **Usage Attribution** live here too: a default registered AI system per provider (Anthropic, OpenAI, LiteLLM, Cursor) and per-API-key overrides that map an individual provider key to a system. Mappings apply to both usage and cost rows on the next sync and drive the Cost by Governed System / Cost by API Key panels on Oversight.
 - **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent proxy, per-provider base URLs and SDK snippets for Claude, OpenAI (chat, Responses, embeddings and every other \`/v1\` path), Azure OpenAI, Gemini and Amazon Bedrock, plus the Azure OpenAI resource endpoint and deployment → model map (\`azure_openai_endpoint\`, \`azure_openai_deployments\`) used to price deployment-named traffic. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`, and provider credential headers (\`api-key\`, \`x-goog-api-key\`, \`x-aws-region\`). For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile. Bedrock is log-only: calls are forwarded with the client's own AWS credentials (Bedrock API key or SigV4).
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts. The **Directory sync** card (see below) pulls the people directory from Google Workspace and/or Microsoft Entra ID.
-- **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary.
+- **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary. The **Agent Platforms** card configures agent imports (see below).
 - **Reporting** — email delivery for scheduled reports, via Resend. Schedules save without it but never send.
 - **Organization timezone** (\`org_timezone\`, IANA name, default UTC) — set on the Anthropic Compliance API tile under Integrations. Drives the "API key created outside 07:00–19:00" governance alert.
 
@@ -865,6 +878,16 @@ What the directory feeds:
 - **Usage after deactivation** — the hourly governance-automation cron raises a \`HIGH\` alert (source \`usage_after_deactivation\`) when a deactivated person's email or alias still shows activity in the proxy buckets, coding-assistant daily stats, or the proxy request log dated after the deactivation. One alert per person per 7 days.
 
 Environment fallbacks: \`DIRECTORY_SYNC_GOOGLE_WORKSPACE_ENABLED\`, \`DIRECTORY_SYNC_GOOGLE_WORKSPACE_INTERVAL_HOURS\`, \`DIRECTORY_SYNC_MICROSOFT_365_ENABLED\`, \`DIRECTORY_SYNC_MICROSOFT_365_INTERVAL_HOURS\`, \`DIRECTORY_SYNC_INCLUDE_GUESTS\`. The daily crons run at 04:10 UTC (Google) and 04:20 UTC (Microsoft) and only do work when the source is enabled, configured, idle, and past its interval.
+
+## Agent platforms
+
+The **Agent Platforms** card in **Settings → Shadow AI** imports agents into **Agents → Discovered**. Each platform is skipped until configured, and each has a **Test** button:
+
+- **Anthropic Managed Agents** — a regular API key from the Claude Platform workspace that holds the agents. The Admin API key does not work for this endpoint.
+- **Microsoft 365 Copilot / Copilot Studio** — set **Import Copilot agents** to Enabled. Reuses the Microsoft 365 app registration, which needs the Graph application permission \`CopilotPackages.Read.All\` with admin consent; the tenant needs a Microsoft Agent 365 license.
+- **Salesforce Agentforce** — the org's My Domain URL (\`https://<domain>.my.salesforce.com\`), plus the consumer key and secret of a connected app with **Enable Client Credentials Flow** and a Run As user that can read Agentforce setup.
+
+**Auto-import** (default off, every 24 hours) schedules all three; **Import Now** runs them immediately. OpenAI Assistants and ChatGPT Enterprise GPTs need nothing here — they import with their provider syncs. Secrets are stored encrypted and shown only as "configured".
 
 ## Enforcement readiness
 

@@ -18,6 +18,8 @@
  *   GET /v1/compliance/workspaces/{ws}/max_event_time?event_type=
  */
 
+import type { DiscoveredAgentInput } from "./agent-discovery";
+
 // ─── Event types and cursor constants ─────────────────────────────────────
 
 export const CHATGPT_LOG_EVENT_TYPES = [
@@ -887,6 +889,71 @@ export function latestGptCreatedAt(gpts: readonly ChatGPTWorkspaceGpt[]): Date |
     if (d && (!latest || d > latest)) latest = d;
   }
   return latest;
+}
+
+/**
+ * A workspace GPT as a DiscoveredAgent (source `chatgpt_gpts`, externalId =
+ * GPT id). Carries the owner, the tool types of its latest configuration
+ * (`custom_action:<domain>` for each external action) and sharing metadata.
+ * Never instructions, conversation starters or knowledge files.
+ */
+export function gptToDiscoveredAgent(
+  gpt: ChatGPTWorkspaceGpt,
+  options: { suppressAlert?: boolean } = {},
+): DiscoveredAgentInput | null {
+  const id = asString(gpt.id);
+  if (!id) return null;
+  const configs = Array.isArray(gpt.latest_config?.data) ? gpt.latest_config!.data! : [];
+  let name: string | null = null;
+  let description: string | null = null;
+  const tools: string[] = [];
+  const actionDomains = new Set<string>();
+  const authTypes = new Set<string>();
+  const authors = new Set<string>();
+  for (const config of configs) {
+    name ??= asString(config.name);
+    description ??= asString(config.description);
+    const author = asString(config.version_author?.email)?.toLowerCase();
+    if (author) authors.add(author);
+    const configTools = Array.isArray(config.tools?.data) ? config.tools!.data! : [];
+    for (const tool of configTools) {
+      const type = asString(tool.type);
+      if (!type) continue;
+      if (type === "custom_action") {
+        const domain = asString(tool.action_domain)?.toLowerCase() ?? null;
+        if (domain) actionDomains.add(domain);
+        const auth = asString(tool.auth_type);
+        if (auth) authTypes.add(auth);
+        tools.push(domain ? `custom_action:${domain}` : "custom_action");
+      } else {
+        tools.push(type);
+      }
+    }
+  }
+  const ownerEmail = asString(gpt.owner_email)?.toLowerCase() ?? null;
+  return {
+    source: "chatgpt_gpts",
+    externalId: id,
+    name: name ?? asString(gpt.builder_name) ?? id,
+    description,
+    platform: "ChatGPT Enterprise",
+    framework: "custom-gpt",
+    confidence: "high",
+    tools,
+    ownerEmail,
+    userEmails: [...new Set([ownerEmail, ...authors].filter((e): e is string => !!e))],
+    firstSeenAt: unixSecondsToDate(gpt.created_at),
+    lastSeenAt: new Date(),
+    suppressAlert: options.suppressAlert,
+    metadata: {
+      gptId: id,
+      visibility: asString(gpt.sharing?.visibility),
+      builderName: asString(gpt.builder_name),
+      actionDomains: [...actionDomains].sort(),
+      authTypes: [...authTypes].sort(),
+      configUpdatedAt: gptEffectiveCreatedAt(gpt)?.toISOString() ?? null,
+    },
+  };
 }
 
 // ─── Users → ProviderActor values ─────────────────────────────────────────

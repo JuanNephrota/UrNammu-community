@@ -111,6 +111,14 @@ export async function getSetting(key: string): Promise<string | null> {
     microsoft_tenant_id: process.env.MICROSOFT_TENANT_ID,
     resend_api_key: process.env.RESEND_API_KEY,
     report_email_from: process.env.REPORT_EMAIL_FROM,
+    // Agent platform inventory imports (docs/plans/agent-discovery.md, Gap 2).
+    agent_platforms_scan_enabled: process.env.AGENT_PLATFORMS_SCAN_ENABLED,
+    agent_platforms_scan_interval_hours: process.env.AGENT_PLATFORMS_SCAN_INTERVAL_HOURS,
+    anthropic_managed_agents_api_key: process.env.ANTHROPIC_MANAGED_AGENTS_API_KEY,
+    microsoft_copilot_agents_enabled: process.env.MICROSOFT_COPILOT_AGENTS_ENABLED,
+    salesforce_instance_url: process.env.SALESFORCE_INSTANCE_URL,
+    salesforce_client_id: process.env.SALESFORCE_CLIENT_ID,
+    salesforce_client_secret: process.env.SALESFORCE_CLIENT_SECRET,
   };
   if (envMap[key] !== undefined) return envMap[key] ?? null;
 
@@ -204,6 +212,29 @@ export const CROWDSTRIKE_SETTINGS_KEYS = {
   BASE_URL: "crowdstrike_base_url",
   SCAN_ENABLED: "crowdstrike_scan_enabled",
   SCAN_INTERVAL_HOURS: "crowdstrike_scan_interval_hours",
+} as const;
+
+// Agent platform inventory imports (the `agent_platforms` discovery-scan
+// source, /api/cron/discovery-scan/agent_platforms). Each platform is a
+// no-op until configured:
+// - Anthropic Managed Agents: a workspace API key (sk-ant-api…). Listing
+//   agents (GET /v1/agents) rejects Admin keys, so this is separate from
+//   anthropic_admin_key. One key sees one workspace.
+// - Microsoft Copilot agents: reuses the Microsoft 365 Shadow AI app
+//   registration; ENABLED opts in once CopilotPackages.Read.All (application)
+//   has admin consent.
+// - Salesforce Agentforce: a connected / external client app with the
+//   client-credentials flow enabled, against the org's My Domain URL.
+// Keys ending in _key/_secret are encrypted at rest and masked by
+// GET /api/settings.
+export const AGENT_PLATFORM_SETTINGS_KEYS = {
+  SCAN_ENABLED: "agent_platforms_scan_enabled",
+  SCAN_INTERVAL_HOURS: "agent_platforms_scan_interval_hours",
+  ANTHROPIC_MANAGED_AGENTS_API_KEY: "anthropic_managed_agents_api_key",
+  MICROSOFT_COPILOT_ENABLED: "microsoft_copilot_agents_enabled",
+  SALESFORCE_INSTANCE_URL: "salesforce_instance_url",
+  SALESFORCE_CLIENT_ID: "salesforce_client_id",
+  SALESFORCE_CLIENT_SECRET: "salesforce_client_secret",
 } as const;
 
 // GitHub Copilot usage metrics sync (src/lib/github-copilot-admin.ts). The

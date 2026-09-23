@@ -359,6 +359,20 @@ The first time an entry appears, an alert with source `agent_discovery` is raise
 
 **Getting a detected agent attributed.** After registering, have the agent send `x-agent-id: <agent id>` on its proxy calls. From then on its traffic is governed by the agent's MCP allowlists, and detection ignores it.
 
+#### Platform imports
+
+Platform imports fill the queue from the places people build agents:
+
+| Platform | Source | What is imported | Setup |
+|---|---|---|---|
+| OpenAI Assistants | `openai_assistants` | Name, description, model, tool types (function names) | Automatic after each OpenAI sync (Settings → Provider Admin APIs). Assistants an earlier release wrote straight into the registry are linked to that agent, not duplicated. OpenAI retired the Assistants API on 2026-08-26, so this is normally empty now. |
+| ChatGPT Enterprise custom GPTs | `chatgpt_gpts` | Name, owner, editors, tool types, custom-action domains, sharing | Automatic with the ChatGPT Enterprise compliance sync. The first sync imports existing GPTs without an alert per GPT. |
+| Anthropic Managed Agents | `anthropic_managed_agents` | Name, description, model, tool types, custom tool names, MCP servers | Settings → Shadow AI → Agent Platforms → workspace API key |
+| Microsoft 365 Copilot / Copilot Studio | `microsoft_copilot` | Name, description, publisher, package type, platform, availability and deployment scope, blocked flag | Settings → Shadow AI → Agent Platforms → enable; needs `CopilotPackages.Read.All` on the Microsoft 365 app and an Agent 365 license |
+| Salesforce Agentforce | `salesforce_agentforce` | Name, description, agent type, active version | Settings → Shadow AI → Agent Platforms → My Domain URL + connected app client credentials |
+
+The last three run together as the **Agent platforms** discovery source: enable **Auto-import** on the card (default every 24 hours) or click **Import Now**. Each platform is skipped until configured, and one platform failing does not stop the others — the card shows the last run's counts and any per-platform error. No system prompts, instructions, knowledge files or conversation content are ever imported.
+
 ### AI-Assisted Agent Risk Review
 
 On the agent detail page, **Run Risk Review** calls `/api/ai/assess-agent-risk` with the agent configuration. The response populates:
@@ -617,7 +631,8 @@ Incidents track notable events (misuse, data exposure, outage). Create from the 
 4. **CrowdStrike Falcon** — endpoint discovery for AI tools observed running on Falcon-protected hosts.
 5. **DNS / proxy logs** — CSV upload of native gateway exports (with vendor presets) or JSON API ingestion of network-observed AI domains.
 6. **Netskope** — real-time log-shipper ingestion of Netskope event JSON (no manual upload needed).
-7. **Endpoint agent** — a signed binary pushed by MDM to managed macOS and Windows machines ([Endpoints](#endpoint-agent)). It observes from *inside* the endpoint, so it is the only source that catches a laptop off the VPN, a personal-tier account, a desktop app with no SaaS audit trail, or a model being served locally.
+7. **Agent platforms** — not a tool scan: imports the agents built on Anthropic Managed Agents, Microsoft 365 Copilot / Copilot Studio and Salesforce Agentforce into the agent review queue ([Discovered Agents](#discovered-agents-platform-imports)). Configured on the **Agent Platforms** card in Settings → Shadow AI.
+8. **Endpoint agent** — a signed binary pushed by MDM to managed macOS and Windows machines ([Endpoints](#endpoint-agent)). It observes from *inside* the endpoint, so it is the only source that catches a laptop off the VPN, a personal-tier account, a desktop app with no SaaS audit trail, or a model being served locally.
 
 The identity-based sources (Google, Microsoft) only see apps federated to your IdP. A tool someone signed into with a personal account is invisible to them and can only be caught by device inventory, network logs, or the endpoint agent — the sources are complementary, not redundant. Network-based sources in turn only see traffic that crosses your network, which is why the endpoint agent exists: a remote laptop and a locally-served model produce no network evidence at all.
 

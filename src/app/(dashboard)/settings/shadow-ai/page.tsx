@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleWorkspaceSettings } from "../google-workspace-settings";
 import { HexnodeSettings } from "../hexnode-settings";
 import { CrowdStrikeSettings } from "../crowdstrike-settings";
+import { AgentPlatformSettings } from "../agent-platform-settings";
+import { AGENT_PLATFORMS_SCAN_TYPE } from "@/lib/agent-platform-imports";
 import { NetskopeSettings } from "../netskope-settings";
 import { BlocklistFeedSettings } from "../blocklist-feed-settings";
 import { EnforcementReadiness } from "../enforcement-readiness";
@@ -15,15 +17,25 @@ import { getSettingsPageData } from "../data";
 export default async function ShadowAISettingsPage() {
   await requireRole(["ADMIN"]);
 
-  const [{ settingsMap, proxySecret, platformUrl }, lastSuccessfulScan, blockedCount] =
+  const [{ settingsMap, proxySecret, platformUrl }, lastSuccessfulScan, blockedCount, lastAgentPlatformScan] =
     await Promise.all([
       getSettingsPageData(),
+      // Shadow-AI tool scans only; agent platform imports count agents and
+      // are shown on their own card below.
       prisma.scanHistory.findFirst({
-        where: { status: "completed", completedAt: { not: null } },
+        where: {
+          status: "completed",
+          completedAt: { not: null },
+          scanType: { not: AGENT_PLATFORMS_SCAN_TYPE },
+        },
         orderBy: { completedAt: "desc" },
       }),
       prisma.discoveredAITool.count({
         where: { status: "BLOCKED", detectedDomain: { not: null } },
+      }),
+      prisma.scanHistory.findFirst({
+        where: { scanType: AGENT_PLATFORMS_SCAN_TYPE },
+        orderBy: { startedAt: "desc" },
       }),
     ]);
   const [lastGoogleScan, lastMicrosoftScan, lastHexnodeScan, lastCrowdStrikeScan] =
@@ -75,7 +87,8 @@ export default async function ShadowAISettingsPage() {
           <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
             Manage Google Workspace, Microsoft 365, Hexnode UEM, and CrowdStrike Falcon discovery settings
             for shadow AI detection, including admin credentials, tenant apps, device and endpoint inventory,
-            and automated scan cadence.
+            and automated scan cadence. Agent platform imports (Anthropic Managed Agents, Microsoft Copilot
+            agents, Salesforce Agentforce) are configured at the bottom of this page.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Button variant="outline" asChild>
@@ -264,6 +277,38 @@ export default async function ShadowAISettingsPage() {
         baseUrl={settingsMap.crowdstrike_base_url ?? ""}
         scanEnabled={settingsMap.crowdstrike_scan_enabled === "true"}
         scanIntervalHours={parseInt(settingsMap.crowdstrike_scan_interval_hours ?? "24", 10)}
+      />
+
+      <AgentPlatformSettings
+        scanEnabled={settingsMap.agent_platforms_scan_enabled === "true"}
+        scanIntervalHours={parseInt(settingsMap.agent_platforms_scan_interval_hours ?? "24", 10)}
+        hasAnthropicKey={!!settingsMap.anthropic_managed_agents_api_key}
+        microsoftCopilotEnabled={settingsMap.microsoft_copilot_agents_enabled === "true"}
+        microsoftConfigured={
+          !!settingsMap.microsoft_shadow_ai_tenant_id &&
+          !!settingsMap.microsoft_shadow_ai_client_id &&
+          !!settingsMap.microsoft_shadow_ai_client_secret
+        }
+        salesforceInstanceUrl={settingsMap.salesforce_instance_url ?? ""}
+        salesforceClientId={settingsMap.salesforce_client_id ?? ""}
+        hasSalesforceClientSecret={!!settingsMap.salesforce_client_secret}
+        hasOpenAIAdminKey={!!settingsMap.openai_admin_key}
+        hasChatGPTEnterpriseConfig={
+          !!settingsMap.chatgpt_enterprise_admin_key && !!settingsMap.chatgpt_workspace_id
+        }
+        lastScan={
+          lastAgentPlatformScan
+            ? {
+                status: lastAgentPlatformScan.status,
+                startedAt: lastAgentPlatformScan.startedAt.toISOString(),
+                completedAt: lastAgentPlatformScan.completedAt?.toISOString() ?? null,
+                found: lastAgentPlatformScan.toolsFound,
+                created: lastAgentPlatformScan.newToolsAdded,
+                updated: lastAgentPlatformScan.updatedTools,
+                errorMessage: lastAgentPlatformScan.errorMessage,
+              }
+            : null
+        }
       />
     </div>
   );

@@ -47,6 +47,10 @@ export const DISCOVERY_SCAN_SOURCES = [
   "microsoft_365",
   "hexnode",
   "crowdstrike",
+  // Agent platform inventory imports (Anthropic Managed Agents, Microsoft
+  // Copilot agents, Salesforce Agentforce) → DiscoveredAgent, not
+  // DiscoveredAITool. See src/lib/agent-platform-imports.ts.
+  "agent_platforms",
 ] as const;
 
 export type DiscoveryScanSource = (typeof DISCOVERY_SCAN_SOURCES)[number];
@@ -56,6 +60,7 @@ export const DISCOVERY_SCAN_LABELS: Record<DiscoveryScanSource, string> = {
   microsoft_365: "Microsoft 365",
   hexnode: "Hexnode",
   crowdstrike: "CrowdStrike",
+  agent_platforms: "Agent platforms",
 };
 
 export function isDiscoveryScanSource(value: string): value is DiscoveryScanSource {

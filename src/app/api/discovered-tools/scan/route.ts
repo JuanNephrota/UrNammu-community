@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { AGENT_PLATFORMS_SCAN_TYPE } from "@/lib/agent-platform-imports";
 import { withAuth, withRole } from "@/lib/auth-guard";
 import { isGoogleWorkspaceConfigured } from "@/lib/google-workspace";
 import { isMicrosoft365Configured } from "@/lib/microsoft-365-shadow-ai";
@@ -28,6 +29,7 @@ export async function GET() {
       crowdstrikeConfigured,
     ] = await Promise.all([
       prisma.scanHistory.findFirst({
+        where: { scanType: { not: AGENT_PLATFORMS_SCAN_TYPE } },
         orderBy: { createdAt: "desc" },
       }),
       prisma.scanHistory.findFirst({
@@ -145,13 +147,14 @@ export async function POST(req: Request) {
     // Expire any scans stuck in "running" for more than 10 minutes
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
     await prisma.scanHistory.updateMany({
-      where: { status: "running", startedAt: { lt: tenMinutesAgo } },
+      where: { status: "running", startedAt: { lt: tenMinutesAgo }, scanType: { not: AGENT_PLATFORMS_SCAN_TYPE } },
       data: { status: "failed", errorMessage: "Scan timed out", completedAt: new Date() },
     });
 
     // Check if a scan is already running
+    // Agent-platform imports share ScanHistory but not this lock.
     const runningScan = await prisma.scanHistory.findFirst({
-      where: { status: "running" },
+      where: { status: "running", scanType: { not: AGENT_PLATFORMS_SCAN_TYPE } },
     });
     if (runningScan) {
       return NextResponse.json(

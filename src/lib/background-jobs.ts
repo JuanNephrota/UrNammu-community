@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
-import { fetchOpenAIOrgData, isOpenAIAdminConfigured, listAssistants } from "./openai-admin";
+import { isOpenAIAdminConfigured } from "./openai-admin";
+import { importOpenAIAssistants } from "./openai-assistant-discovery";
 import { isAnthropicAdminConfigured } from "./anthropic-admin";
 import { isClaudeCodeAnalyticsAvailable } from "./claude-code-analytics";
 import { isCursorAdminConfigured } from "./cursor-admin";
@@ -40,6 +41,7 @@ import {
   HEXNODE_SETTINGS_KEYS,
   CROWDSTRIKE_SETTINGS_KEYS,
   MICROSOFT_SHADOW_AI_SETTINGS_KEYS,
+  AGENT_PLATFORM_SETTINGS_KEYS,
   PROVIDER_SYNC_SETTINGS_KEYS,
   providerSyncSettingKeys,
   directorySyncSettingKeys,
@@ -48,6 +50,11 @@ import { isGoogleWorkspaceConfigured } from "./google-workspace";
 import { isMicrosoft365Configured } from "./microsoft-365-shadow-ai";
 import { isHexnodeConfigured } from "./hexnode";
 import { isCrowdStrikeConfigured } from "./crowdstrike";
+import {
+  executeAgentPlatformScan,
+  isAgentPlatformImportConfigured,
+  type AgentPlatformScanResult,
+} from "./agent-platform-imports";
 import { evaluateGovernanceAutomation } from "./governance-automation";
 import {
   runKeyUsageRuleEvaluation,
@@ -146,6 +153,11 @@ const DISCOVERY_SCAN_SETTINGS: Record<
     enabled: CROWDSTRIKE_SETTINGS_KEYS.SCAN_ENABLED,
     intervalHours: CROWDSTRIKE_SETTINGS_KEYS.SCAN_INTERVAL_HOURS,
     configured: isCrowdStrikeConfigured,
+  },
+  agent_platforms: {
+    enabled: AGENT_PLATFORM_SETTINGS_KEYS.SCAN_ENABLED,
+    intervalHours: AGENT_PLATFORM_SETTINGS_KEYS.SCAN_INTERVAL_HOURS,
+    configured: isAgentPlatformImportConfigured,
   },
 };
 
@@ -277,7 +289,7 @@ export type ScheduledDiscoveryScanResult = {
   skippedReason?: string;
   nextDueAt: Date | null;
   staleScansFailed: number;
-  result?: Awaited<ReturnType<typeof executeScan>>;
+  result?: Awaited<ReturnType<typeof executeScan>> | AgentPlatformScanResult;
 };
 
 export type GovernanceAutomationJobResult = {
@@ -408,65 +420,13 @@ async function syncGovernanceAutomationAlerts(input: {
 }
 
 /**
- * Discover OpenAI Assistants as AI agents. Runs after a successful OpenAI
+ * Discover OpenAI Assistants as agents. Runs after a successful OpenAI
  * telemetry sync so the inventory and the usage data come from the same key.
+ * Writes DiscoveredAgent rows (source `openai_assistants`) and links, rather
+ * than duplicates, the AIAgent rows the pre-discovery importer created.
  */
-async function discoverOpenAIAssistants(
-  triggeredByUserId: BackgroundActor
-): Promise<NonNullable<ProviderSyncOutcome["assistants"]>> {
-  const summary: NonNullable<ProviderSyncOutcome["assistants"]> = { found: 0, created: 0, updated: 0 };
-  try {
-    const assistantsResponse = await listAssistants({ limit: 100, order: "desc" }).catch(async () => {
-      const fullData = await fetchOpenAIOrgData();
-      return fullData.assistants ?? null;
-    });
-    const assistants = ((assistantsResponse as Record<string, unknown> | null)?.data ?? []) as Record<string, unknown>[];
-    summary.found = assistants.length;
-
-    for (const assistant of assistants) {
-      const name = (assistant.name as string) ?? "Unnamed Assistant";
-      const description =
-        (assistant.instructions as string)?.slice(0, 500) ??
-        (assistant.description as string) ??
-        null;
-      const tools = ((assistant.tools ?? []) as Record<string, unknown>[]).map((t) => t.type as string);
-
-      const existing = await prisma.aIAgent.findFirst({
-        where: { name, department: "OpenAI" },
-      });
-
-      if (existing) {
-        await prisma.aIAgent.update({
-          where: { id: existing.id },
-          data: {
-            description: description ?? existing.description,
-            capabilities: tools.length > 0 ? tools : (existing.capabilities as string[]) ?? [],
-          },
-        });
-        summary.updated++;
-      } else {
-        await prisma.aIAgent.create({
-          data: {
-            name,
-            description,
-            ownerId: triggeredByUserId === "system" ? (await getFallbackOwnerId()) : triggeredByUserId,
-            capabilities: tools,
-            accessLevel: "api",
-            autonomyLevel: "SUPERVISED",
-            connectedSystems: ["OpenAI Platform"],
-            humanReviewRequired: false,
-            riskLevel: "MEDIUM",
-            status: "DEPLOYED",
-            department: "OpenAI",
-          },
-        });
-        summary.created++;
-      }
-    }
-  } catch (err) {
-    summary.error = err instanceof Error ? err.message : "Failed";
-  }
-  return summary;
+async function discoverOpenAIAssistants(): Promise<NonNullable<ProviderSyncOutcome["assistants"]>> {
+  return importOpenAIAssistants();
 }
 
 function parseOverlapDays(value: string | null) {
@@ -571,7 +531,7 @@ export async function runProviderSync(
   // Assistant inventory rides along with a regular OpenAI sync; a backfill
   // chunk is about history, so it skips the inventory pass.
   if (provider === "openai" && raw.success && !options.window) {
-    outcome.assistants = await discoverOpenAIAssistants(triggeredByUserId);
+    outcome.assistants = await discoverOpenAIAssistants();
   }
 
   logger.info("provider_sync.completed", {
@@ -669,20 +629,6 @@ export function aggregateProviderSyncOutcomes(outcomes: ProviderSyncOutcome[]): 
     windows,
     truncated,
   };
-}
-
-async function getFallbackOwnerId() {
-  const adminUser = await prisma.user.findFirst({
-    where: { role: "ADMIN" },
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
-  });
-
-  if (!adminUser) {
-    throw new Error("No admin user is available to own scheduled agent discoveries.");
-  }
-
-  return adminUser.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -910,7 +856,10 @@ export async function runScheduledDiscoveryScan(
   };
 
   if (schedule.due) {
-    result.result = await executeScan("system", source);
+    result.result =
+      source === "agent_platforms"
+        ? await executeAgentPlatformScan("system")
+        : await executeScan("system", source);
   }
 
   return result;

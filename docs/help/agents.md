@@ -40,6 +40,16 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 
 A new entry raises one `agent_discovery` alert; later sightings update it silently.
 
+**Platform imports** also feed the queue:
+
+- **OpenAI Assistants** — after each OpenAI sync. Assistants an earlier release put straight into the registry are linked, not duplicated. OpenAI retired the Assistants API on 2026-08-26.
+- **ChatGPT Enterprise custom GPTs** — with the ChatGPT Enterprise compliance sync: owner, tool types and custom-action domains. The first sync imports without per-GPT alerts.
+- **Anthropic Managed Agents** — a workspace API key on the **Agent Platforms** card in **Settings → Shadow AI**.
+- **Microsoft 365 Copilot / Copilot Studio** — the Microsoft 365 app registration plus the `CopilotPackages.Read.All` application permission and an Agent 365 license. Microsoft-built agents are skipped.
+- **Salesforce Agentforce** — the org's My Domain URL and a connected app with the client credentials flow.
+
+Only metadata is imported — never system prompts, instructions, knowledge or conversations.
+
 ## AI-assisted risk review
 
 The **AI Agent Risk Review** card on the agent detail page shows two things side by side:
