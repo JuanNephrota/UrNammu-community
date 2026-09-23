@@ -46,6 +46,12 @@ const COLLECTORS: Array<{ id: string; label: string; description: string }> = [
     description:
       "Model servers listening on loopback (Ollama, LM Studio, vLLM). The signal no other source can produce.",
   },
+  {
+    id: "agents",
+    label: "MCP servers & agent frameworks",
+    description:
+      "MCP servers configured in Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed, Continue, Gemini CLI and Codex, plus agent SDKs installed in well-known locations. Server name, transport, remote hostname and package id only — never commands, arguments, env, headers or URLs. Feeds Agents → Discovered.",
+  },
 ];
 
 function CopyBlock({ code }: { code: string }) {

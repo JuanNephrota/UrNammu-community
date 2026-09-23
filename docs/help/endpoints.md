@@ -10,10 +10,13 @@ Every other discovery source watches AI use from the outside — vendor admin AP
 - **Browser** — AI hostnames from browser history, with a visit count. Hostname only.
 - **Network** — AI hostnames from the DNS resolver cache. Windows only; macOS has no unprivileged DNS cache to read, so it reports as not supported rather than doing work that yields nothing.
 - **Local runtimes** — model servers answering on loopback, with the models pulled locally.
+- **MCP & agent frameworks** — MCP servers configured in Claude Desktop, Claude Code, Cursor, Windsurf, VS Code, Cline, Roo Code, Zed, Continue, Gemini CLI and Codex, and agent SDKs installed in well-known package folders. Per server: client, name, transport, and the bare remote hostname or the launcher and package id. Never the command, arguments, environment, headers or URL.
 
 ## What it never collects
 
 No prompts, no responses, no URL paths, no query strings, no page titles, no window titles, no file paths, no command lines. The most specific thing that can leave a machine is a bare hostname already on the server-issued allowlist.
+
+MCP client configs are where API keys and database passwords live, so the agent keeps only a server's name, transport, remote hostname and package id and discards the rest on the machine; a name that could hold a path, URL or token is replaced with `redacted-<hash>`. The server rejects anything else a compromised agent might try to send.
 
 The allowlist is compiled from the AI tools registry and delivered to each agent, so a hostname that is not a known AI tool never leaves the endpoint — it is an allowlist, not a history upload. The wire schema has no field that can carry content, and its hostname type rejects anything containing a slash. Running the agent with `--dry-run` prints the exact bytes a machine would transmit.
 
@@ -26,6 +29,17 @@ It is not an EDR: no kernel extension, no Endpoint Security client, no ETW hooks
 - **Degraded collectors** counts devices that are under-reporting, most often Safari without Full Disk Access. Worth watching: an agent that quietly stops collecting makes the console read as "no AI activity" rather than "no data".
 
 Open a device for its collector health and every detection, grouped by signal, with the evidence behind each — the bundle id, the hostname, or the runtime, port and local model names. Detections the registry does not recognize stay on the device page marked **Unclassified** and are kept out of the Shadow AI queue: one laptop's unrecognized app name is not fleet-wide evidence.
+
+## MCP servers and agent frameworks
+
+Each MCP server shows on the device page with its client and transport, and either the recognized server or a warning — **Unrecognized remote host**, **Unrecognized package**, or **Bridge to unseen remote**. They feed **Agents → Discovered**, not Shadow AI:
+
+- One row per machine and MCP client, listing its servers. Registering it creates one agent with those servers as its MCP allowlist, in monitor mode.
+- Recognized, non-sensitive servers score low and do not alert. Unrecognized hosts or packages, bridges, and file system, shell, database, browser, payments or cloud access raise the score; 50 or more raises a MEDIUM alert when first seen.
+- A newly added unrecognized server on a config already in the queue raises a **New unrecognized MCP server** alert.
+- Installed agent frameworks become one low-confidence row per machine, with no alert.
+
+Frameworks installed only inside a project's own virtualenv or node_modules are not seen — finding them would mean searching the disk, which the agent does not do.
 
 ## Shadow AI and device management
 

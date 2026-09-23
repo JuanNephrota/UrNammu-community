@@ -155,18 +155,87 @@ test routes `/api/settings/test-anthropic-managed-agents`,
 
 ## Gap 3 — endpoint MCP and agent framework scanning (PR C, stacked on A)
 
-A new endpoint-agent collector, `agents`, reads known MCP client config files
-(Claude Desktop, Claude Code, Cursor, Windsurf, VS Code, Cline, Zed, …) and
-detects agent frameworks installed in well-known locations. Holding the
-endpoint agent's rule — *identifiers and counts only* — it sends per server
-the **name, transport, and bare remote host** — never the command, args, env,
-headers, or file paths, which routinely hold secrets. Each (device, client,
-server) rolls into a `DiscoveredAgent` with `source = endpoint_agent`.
+**Built** (branch `feat/agent-discovery-endpoint`). A new endpoint-agent
+collector, `agents`, reads known MCP client config files at fixed paths —
+Claude Desktop, Claude Code (user, per-project and managed scopes), Cursor,
+Windsurf/Devin, VS Code (+ Insiders, VSCodium), Cline and Roo Code (in each
+host editor's globalStorage), Zed, Continue (YAML, JSON and block dir),
+Gemini CLI and Codex (TOML) — and lists a bounded set of well-known package
+folders (user/system site-packages, pipx and uv tool venvs, conda base,
+global npm/nvm/bun/pnpm) for agent SDKs. The full path table and field-by-field
+redaction rules are in `docs/plans/endpoint-agent.md` → *MCP configs*.
+
+**What leaves the device**, per MCP server: `client` (enum), `name` (plain
+identifier, else `redacted-<hash>`), `transport` (`stdio|http|sse|ws`), and
+either the bare remote `host` (or `loopback: true`) or the stdio `launcher`
+category plus, for npx/uvx/docker-style launchers, the `package` id with its
+version stripped. Per framework: id, ecosystem, location kind, environment
+count. Never the command, other args, env, headers, cwd, URLs or file paths.
+The server's Zod schema enforces the same shapes independently.
+
+**Row granularity: one `DiscoveredAgent` per (device, MCP client).** The
+thing a reviewer registers or blocks is "Claude Desktop on alice-mbp with
+these servers": registering it creates one `AIAgent` whose MCP allowlist is
+seeded with those servers in monitor mode, which is the registry's shape. A
+row per server would put ~10 rows (and alerts) per developer per client into
+the queue, none of which is an agent on its own. Individual servers remain in
+`mcpServers`, in `metadata.servers` (current config, with each server's
+`known` match and `risk`), and as `mcp` detections on the device page.
+`externalId = sha256("endpoint_agent|<machineId>|mcp_client|<client>")` —
+machineId rather than the device row so it survives re-enrollment — and the
+server list is sorted, so the row is deterministic.
+
+**Frameworks: one low-confidence row per device**, never alerting. An installed
+SDK says someone builds agents on that machine, not that an agent is running,
+and it is not attached to any MCP client, so it does not belong on a client row.
+
+**Scoring.** `src/lib/mcp-server-registry.ts` is a small table of recognized
+servers (reference servers, GitHub, Playwright, Notion, Atlassian, Linear,
+Sentry, Stripe, Supabase, Cloudflare, AWS Labs, …) with capability tags.
+Signals: MCP configured 30, unrecognized remote host 30, unrecognized
+package 20, bridge to an unseen remote (`mcp-remote` & co.) 15, sensitive
+capability (filesystem/shell/database/browser/payments/cloud) 15, local
+script or binary 10, ≥10 servers 5. So a config of recognized SaaS servers
+scores 30 (low), and an unknown remote MCP host alone reaches 60 (medium).
+
+**Alerting.** Endpoint rows pass `suppressAlert` (the same optional flag the
+platform imports use) unless the score is ≥ 50 or the config holds any risky
+server (unrecognized remote host or package, or a bridge), so rolling the
+collector out does not raise one alert per laptop. Because a quiet row can
+later gain a risky server, ingest raises a **New unrecognized MCP server**
+alert for risky servers not in the stored `metadata.servers` *and* not in
+`metadata.alertedServerKeys` — a cumulative, never-cleared set — so a server
+toggled off and on, or cleared and re-added, alerts once. This applies to
+rows already approved. The alert is written before the upsert, so a failed
+write re-alerts next report rather than being lost.
+
+**Version skew.** `mcpServers[]` / `agentFrameworks[]` items are validated one
+by one: an unknown client, transport or launcher from a newer agent drops that
+item (never stored) instead of failing the report, and the drop marks the
+`agents` collector partial so nothing is cleared.
+
+**Idempotency and ordering.** Upserts are keyed and merged, so an identical
+spooled replay changes nothing. A report older than the stored
+`metadata.observedAt` is skipped so a late replay cannot roll the config
+back. After a complete scan (collector `ok` with no `reason`), rows for the
+device that were not reported have their current server list emptied and
+their score reset; a partial scan leaves them alone. Revoked devices never
+reach ingest.
+
+**Verified locally** against a throwaway database: enroll → report with two
+clients and two frameworks (3 rows, one alert for the high-scoring config),
+identical replay (no new rows or alerts), newer report adding an unknown
+package and dropping a client (drift alert, dropped client emptied), older
+replay (skipped), partial scan (no change), legacy report without the new
+fields (validates, no-op), revoke (token rejected, re-enroll refused), and
+registering a client row (draft agent with the MCP allowlist seeded). A real
+payload collected from a developer Mac by the Go collector validated and
+ingested unchanged.
 
 ## Rollout
 
 Each PR carries its own migration where needed (PR B has none); after merge the user runs
 `prisma migrate deploy` on prod, and PR A additionally needs the Azure proxy
 redeployed (`func azure functionapp publish nammu-ai-proxy --build remote`).
-PR C needs a new signed endpoint-agent release before the collector reaches
-devices.
+PR C needs no migration, but needs a new signed endpoint-agent release
+(0.2.0) before the collector reaches devices, and the server deployed first.

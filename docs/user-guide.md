@@ -1232,6 +1232,7 @@ agent closes those gaps by observing from inside the machine.
 | Browser | Chrome, Edge, Brave, Arc, Vivaldi, Firefox, Safari | Chrome, Edge, Brave, Vivaldi, Opera, Firefox | hostname and visit count only |
 | Network | *not supported* | DNS resolver cache | hostname and hit count |
 | Local runtimes | loopback probe | loopback probe | runtime, port, local model names |
+| MCP & agent frameworks | MCP client config files + well-known package folders | same | per MCP server: client, name, transport, remote hostname or launcher + package id; per framework: id, ecosystem, location kind, count |
 
 macOS has no unprivileged way to read resolved hostnames, so the network collector reports
 `unsupported_platform` there rather than doing work that yields nothing. The browser collector
@@ -1241,7 +1242,11 @@ carries AI web traffic on macOS; apps and runtimes carry everything local.
 
 No prompts, no responses, no URL paths, no query strings, no page titles, no window titles, no
 file paths, no command lines. The most specific thing that can leave a machine is a bare hostname
-that already appears on the server-issued allowlist.
+that already appears on the server-issued allowlist — or, for the MCP collector, a server's name,
+its bare remote hostname, or the package it launches (for example
+`@modelcontextprotocol/server-github`, version stripped). An MCP config's arguments, environment
+variables, headers and URLs — where API keys and database passwords live — are read in memory and
+discarded on the machine, and the server rejects them again if a compromised agent sent them.
 
 Three mechanisms enforce that rather than merely asserting it:
 
@@ -1273,6 +1278,39 @@ evidence behind each one — the bundle id, the hostname, or the runtime and por
 names pulled locally. Detections the registry does not recognize stay on the device page marked
 **Unclassified** and are deliberately kept out of the Shadow AI queue: one laptop's unrecognized
 app name is not fleet-wide evidence.
+
+#### MCP servers and agent frameworks
+
+The **MCP & agent frameworks** collector reads the MCP server configuration of Claude Desktop,
+Claude Code, Cursor, Windsurf, VS Code, Cline, Roo Code, Zed, Continue, Gemini CLI and Codex from
+their fixed config locations — it never searches the disk — and lists a handful of well-known
+package folders for agent SDKs (LangChain, LangGraph, CrewAI, AutoGen, LlamaIndex, Pydantic AI,
+OpenAI Agents SDK, Claude Agent SDK, Mastra and others). A framework installed only inside a
+project's own virtualenv or `node_modules` is not seen.
+
+Each server appears on the device page under **MCP server**, with its client, transport, and
+either the recognized server (GitHub, Playwright, Notion…) or a warning: **Unrecognized remote
+host**, **Unrecognized package**, or **Bridge to unseen remote** (a local `mcp-remote`-style
+bridge whose remote URL the agent deliberately does not read). A server name that is not a plain
+identifier is shown as `redacted-<hash>` — the agent hashes names that could hold a path, a URL or
+a token.
+
+These findings go to **Agents → Discovered**, not to Shadow AI:
+
+- **One row per machine and MCP client** — "Cursor MCP config on alice-mbp" — listing every
+  server configured there. Registering it creates one agent whose MCP allowlist is seeded with
+  those servers in monitor mode.
+- Recognized, non-sensitive servers score **low** and raise no alert. An unrecognized remote host
+  or package, a remote bridge, or access to the file system, a shell, a database, a browser,
+  payments or a cloud control plane raises the score; a row scoring 50 or more raises a MEDIUM
+  alert when first seen.
+- Adding a new unrecognized server to a config that is already in the queue — or already
+  approved — raises a separate **New unrecognized MCP server** alert.
+- Installed agent frameworks become one low-confidence row per machine ("Agent frameworks on
+  alice-mbp") with no alert: an installed SDK means someone builds agents there, not that one is
+  running.
+
+Turn the collector off in **Settings → Endpoint Agent** to stop it fleet-wide.
 
 #### How it reaches Shadow AI
 

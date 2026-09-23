@@ -862,6 +862,8 @@ A signed binary pushed by MDM to macOS and Windows that reports which AI tools a
 
 Cadence and which collectors run are console-side settings delivered in the manifest, so changing them applies fleet-wide with no redeploy.
 
+The **MCP servers & agent frameworks** collector (`agents`) needs agent **0.2.0 or later** and no extra permission: MCP client configs and package folders are in the user's own home directory. It is **off by default** (opt-in, because MCP configs are where credentials live): tick it in Settings → Endpoint Agent to turn it on fleet-wide. Deploy the server change before the new agent. Agents older than 0.2.0 never send the new fields, and a newer agent's unrecognized values drop only the affected item, never the report.
+
 Verify a machine before the fleet rollout — this prints the exact bytes that would be transmitted, without sending them:
 
 ```bash

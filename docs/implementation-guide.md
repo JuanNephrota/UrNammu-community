@@ -207,7 +207,7 @@ Agents are found separately from AI tools because they carry tools, MCP servers,
 | Source | Module | Runs from | Upstream |
 | --- | --- | --- | --- |
 | `openai_assistants` | `openai-assistant-discovery.ts` | after each successful scheduled OpenAI sync (`runProviderSync`) | `GET /v1/assistants` with the OpenAI admin key. Legacy `AIAgent` rows (name + `department: "OpenAI"`) are passed as `linkedAgentId`. 404/410 (API retired 2026-08-26) = empty import. |
-| `chatgpt_gpts` | `gptToDiscoveredAgent` in `chatgpt-enterprise-compliance.ts` | inside `syncChatGPTEnterprise`, after the GPTS stream | Compliance API `/workspaces/{ws}/gpts`. The baseline run (no `chatgpt_enterprise:GPTS` watermark) sets `suppressAlert`. Counts land in the run metadata under `gpts.discoveredAgents`. |
+| `chatgpt_gpts` | `gptToDiscoveredAgent` in `chatgpt-enterprise-compliance.ts` | inside `syncChatGPTEnterprise`, after the GPTS stream | Compliance API `/workspaces/{ws}/gpts`. The baseline run (no `chatgpt_gpts` rows in `DiscoveredAgent` yet) sets `suppressAlert`. Counts land in the run metadata under `gpts.discoveredAgents`. |
 | `anthropic_managed_agents` | `anthropic-managed-agents.ts` | `agent_platforms` discovery scan | `GET /v1/agents` (`anthropic-beta: managed-agents-2026-04-01`) with `anthropic_managed_agents_api_key`. Archived agents skipped; system prompts never read. |
 | `microsoft_copilot` | `microsoft-copilot-agents.ts` | `agent_platforms` discovery scan, opt-in `microsoft_copilot_agents_enabled` | Graph `GET /v1.0/copilot/admin/catalog/packages?$filter=supportedHosts/any(h:h eq 'Copilot')` with the Microsoft 365 Shadow AI app token; needs `CopilotPackages.Read.All` (application) + Agent 365 license. `type: microsoft` skipped. |
 | `salesforce_agentforce` | `salesforce-agentforce.ts` | `agent_platforms` discovery scan | Client-credentials token at `<MyDomain>/services/oauth2/token`, then SOQL on `BotDefinition` (retries without `AgentType` on `INVALID_FIELD`) and `BotVersion`. `normalizeSalesforceInstanceUrl` only allows Salesforce hosts. |
@@ -215,6 +215,26 @@ Agents are found separately from AI tools because they carry tools, MCP servers,
 `agent_platforms` is a regular `DiscoveryScanSource`: `runScheduledDiscoveryScan` dispatches it to `executeAgentPlatformScan()` (`src/lib/agent-platform-imports.ts`) instead of `executeScan`, which runs the three importers in parallel (each a no-op when unconfigured, never throwing) and writes one `ScanHistory` row (`scanType: "agent_platforms"`; `toolsFound` / `newToolsAdded` / `updatedTools` count agents). It is `failed` only when every configured importer failed. Manual runs: `POST /api/discovered-agents/import` (ADMIN). Connection tests: `/api/settings/test-anthropic-managed-agents`, `/api/settings/test-microsoft-copilot-agents`, `/api/settings/test-salesforce`.
 
 `openai_agents` is reserved but has no importer: OpenAI's saved agents (`POST /v1/agents`, Agents API beta) have no documented list endpoint.
+
+## Endpoint Agent → Agent Discovery
+
+The endpoint agent (`ops/endpoint-agent`, see `docs/plans/endpoint-agent.md`) reports to `POST /api/endpoint-agent/report`; `ingestEndpointReport()` in `src/lib/endpoint-agent.ts` merges observations into `EndpointDetection` and rolls matched app/browser/network/runtime hits into `DiscoveredAITool`. Its `agents` collector adds two report arrays, validated in `src/lib/validations/endpoint-agent.ts`:
+
+- `mcpServers[]` — `{ client, name, transport, host?, loopback, launcher?, package? }`. `client`, `transport` and `launcher` are enums; `name` is a plain identifier (no `/ \ : = @`, no credential shapes; the agent sends `redacted-<8 hex>` otherwise); `host` is the shared bare-hostname type; `package` is lowercase with at most one slash, allowed only as an npm scope for npm launchers or a docker namespace for `docker`, and never for any other launcher. Remote servers carry no launcher/package and stdio servers no host (`superRefine`).
+- `agentFrameworks[]` — `{ framework, ecosystem, source, count }`; `framework` is an open `[a-z0-9_]` id so a newer agent cannot fail a whole report, `source` is a location kind enum.
+
+Both default to `[]`, so reports from older agents still validate.
+
+Ingest (`syncAgentDiscoveries` in `endpoint-agent.ts`, pure builders in `src/lib/endpoint-agent-discovery.ts`):
+
+- Each server is also an `EndpointDetection` (`signal = "mcp"`, `evidence = <client>:<host|package|launcher>`), and each framework one with `signal = "framework"`. Neither rolls up into Shadow AI.
+- One `DiscoveredAgent` per **(device, MCP client)**, `source = endpoint_agent`, `externalId = sha256("endpoint_agent|<machineId>|mcp_client|<client>")`, `platform` = client label, `mcpServers` = server names, `metadata = { kind: "mcp_client", deviceId, hostname, client, clientLabel, serverCount, observedAt, servers: [{ name, transport, host, loopback, launcher, package, known, risk }] }`. `metadata.servers` is the current config (replaced each report); the `mcpServers` column keeps history, as it does for every source.
+- One `DiscoveredAgent` per device for frameworks (`externalId = sha256("endpoint_agent|<machineId>|frameworks")`, `framework` = highest-priority id, `metadata.kind = "agent_frameworks"`), always `low`, never alerts.
+- Scoring uses `src/lib/mcp-server-registry.ts` (packages, package prefixes, remote hosts matched by suffix, capability tags): base 30, unrecognized remote host +30, unrecognized package +20, bridge (`mcp-remote`, `supergateway`, …) +15, sensitive capability (filesystem, shell, database, browser, payments, cloud) +15, local script/binary +10, ≥10 servers +5; confidence from `confidenceForScore`. Endpoint rows pass `suppressAlert` unless the score is ≥ 50 or a server is risky, so a fleet rollout does not raise one alert per laptop; drift alerts are deduped by the cumulative `metadata.alertedServerKeys`.
+- Drift: before the upsert the stored `metadata.servers` is read, and newly listed risky servers raise a separate `agent_discovery` alert. A report whose `collectedAt` is older than the stored `metadata.observedAt` (a late spool replay) is skipped. After a complete (`ok`, no `reason`) `agents` scan, rows for this device that were not reported have their current server/framework list emptied and score reset — the row itself is kept for the reviewer.
+- Revoked devices never reach ingest (`authenticateDevice` rejects them), and replaying an identical report changes nothing but `EndpointDetection.observations`.
+
+Extending: add a client by adding its id to `MCP_CLIENTS` (schema) and `MCP_CLIENT_LABELS`, and its path to `ops/endpoint-agent/internal/collect/agents_paths.go` (or the per-OS file) — **ship the server change first**: items are validated individually, so an unknown client id drops that client's servers (and marks the scan partial) until the console knows it. Add well-known servers to `KNOWN_MCP_SERVERS`; no agent release is needed.
 
 ## Shadow AI Enforcement Architecture
 

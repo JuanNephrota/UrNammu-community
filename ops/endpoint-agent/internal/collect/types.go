@@ -70,6 +70,30 @@ type Runtime struct {
 	LastSeen  time.Time `json:"lastSeen"`
 }
 
+// MCPServer is one MCP server configured in an MCP client on this machine.
+//
+// Identifiers only — see agents.go for exactly how each field is derived and
+// what is discarded. Host is set for remote servers, Launcher and Package for
+// stdio ones; Loopback marks a remote server on localhost.
+type MCPServer struct {
+	Client    string `json:"client"`
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
+	Host      string `json:"host,omitempty"`
+	Loopback  bool   `json:"loopback,omitempty"`
+	Launcher  string `json:"launcher,omitempty"`
+	Package   string `json:"package,omitempty"`
+}
+
+// AgentFramework is an agent SDK installed in a well-known package location.
+// Count is the number of environments of that kind that have it.
+type AgentFramework struct {
+	Framework string `json:"framework"`
+	Ecosystem string `json:"ecosystem"`
+	Source    string `json:"source"`
+	Count     int    `json:"count"`
+}
+
 // Status is one collector's outcome, so the console can tell "found nothing"
 // from "could not look" — the Safari/Full Disk Access case, mostly.
 type Status struct {
@@ -101,6 +125,8 @@ type Report struct {
 	Browser      []BrowserVisit    `json:"browser"`
 	Network      []NetworkHit      `json:"network"`
 	Runtimes     []Runtime         `json:"runtimes"`
+	MCPServers   []MCPServer       `json:"mcpServers"`
+	Frameworks   []AgentFramework  `json:"agentFrameworks"`
 	Collectors   map[string]Status `json:"collectors"`
 }
 

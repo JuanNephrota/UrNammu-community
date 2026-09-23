@@ -198,6 +198,7 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 **Agents → Discovered** lists AI agents UrNammu has seen that nobody registered, with the signals that flagged each one and the tools, MCP servers, models and users observed.
 
 - **Proxy traffic** — hourly, callers of the proxy that send no \`x-agent-id\` are scored on agent signals: an agent framework in the \`User-Agent\` (Claude Agent SDK, OpenAI Agents SDK, LangGraph, CrewAI and others), tool calls, MCP tool use, volume and round-the-clock activity. Callers scoring 40+ are queued. Interactive coding assistants such as Claude Code and Cursor are skipped. **Run proxy detection** runs it now.
+- **Endpoints** — the endpoint agent contributes one row per machine and MCP client (for example "Cursor MCP config on alice-mbp") listing the MCP servers configured there, scored higher when a server is an unrecognized remote host or package, a bridge to an unseen remote, or reaches the file system, a shell, a database, a browser, payments or a cloud control plane. Registering a row creates a draft agent whose MCP allowlist is seeded with those servers in monitor mode. Installed agent frameworks appear as a low-confidence row per machine — a lead that someone builds agents there.
 - **Register agent** creates a draft agent from the entry, with observed MCP servers seeded into its allowlist in Monitor mode. Then have the agent send \`x-agent-id\` so its traffic is governed and attributed.
 - **Start review**, **Approve without registering**, **Mark blocked** and **Reopen** change the review status only. Marking blocked does not stop traffic.
 
@@ -819,10 +820,13 @@ Every other discovery source watches AI use from the outside — vendor admin AP
 - **Browser** — AI hostnames from browser history, with a visit count. Hostname only.
 - **Network** — AI hostnames from the DNS resolver cache. Windows only; macOS has no unprivileged DNS cache to read, so it reports as not supported rather than doing work that yields nothing.
 - **Local runtimes** — model servers answering on loopback, with the models pulled locally.
+- **MCP & agent frameworks** — MCP servers configured in Claude Desktop, Claude Code, Cursor, Windsurf, VS Code, Cline, Roo Code, Zed, Continue, Gemini CLI and Codex, and agent SDKs installed in well-known package folders. Per server: client, name, transport, and the bare remote hostname or the launcher and package id. Never the command, arguments, environment, headers or URL.
 
 ## What it never collects
 
 No prompts, no responses, no URL paths, no query strings, no page titles, no window titles, no file paths, no command lines. The most specific thing that can leave a machine is a bare hostname already on the server-issued allowlist.
+
+MCP client configs are where API keys and database passwords live, so the agent keeps only a server's name, transport, remote hostname and package id and discards the rest on the machine; a name that could hold a path, URL or token is replaced with \`redacted-<hash>\`. The server rejects anything else a compromised agent might try to send.
 
 The allowlist is compiled from the AI tools registry and delivered to each agent, so a hostname that is not a known AI tool never leaves the endpoint — it is an allowlist, not a history upload. The wire schema has no field that can carry content, and its hostname type rejects anything containing a slash. Running the agent with \`--dry-run\` prints the exact bytes a machine would transmit.
 
@@ -835,6 +839,17 @@ It is not an EDR: no kernel extension, no Endpoint Security client, no ETW hooks
 - **Degraded collectors** counts devices that are under-reporting, most often Safari without Full Disk Access. Worth watching: an agent that quietly stops collecting makes the console read as "no AI activity" rather than "no data".
 
 Open a device for its collector health and every detection, grouped by signal, with the evidence behind each — the bundle id, the hostname, or the runtime, port and local model names. Detections the registry does not recognize stay on the device page marked **Unclassified** and are kept out of the Shadow AI queue: one laptop's unrecognized app name is not fleet-wide evidence.
+
+## MCP servers and agent frameworks
+
+Each MCP server shows on the device page with its client and transport, and either the recognized server or a warning — **Unrecognized remote host**, **Unrecognized package**, or **Bridge to unseen remote**. They feed **Agents → Discovered**, not Shadow AI:
+
+- One row per machine and MCP client, listing its servers. Registering it creates one agent with those servers as its MCP allowlist, in monitor mode.
+- Recognized, non-sensitive servers score low and do not alert. Unrecognized hosts or packages, bridges, and file system, shell, database, browser, payments or cloud access raise the score; 50 or more raises a MEDIUM alert when first seen.
+- A newly added unrecognized server on a config already in the queue raises a **New unrecognized MCP server** alert.
+- Installed agent frameworks become one low-confidence row per machine, with no alert.
+
+Frameworks installed only inside a project's own virtualenv or node_modules are not seen — finding them would mean searching the disk, which the agent does not do.
 
 ## Shadow AI and device management
 
@@ -856,6 +871,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 - **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent proxy, per-provider base URLs and SDK snippets for Claude, OpenAI (chat, Responses, embeddings and every other \`/v1\` path), Azure OpenAI, Gemini and Amazon Bedrock, plus the Azure OpenAI resource endpoint and deployment → model map (\`azure_openai_endpoint\`, \`azure_openai_deployments\`) used to price deployment-named traffic. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`, and provider credential headers (\`api-key\`, \`x-goog-api-key\`, \`x-aws-region\`). For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile. Bedrock is log-only: calls are forwarded with the client's own AWS credentials (Bedrock API key or SigV4).
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts. The **Directory sync** card (see below) pulls the people directory from Google Workspace and/or Microsoft Entra ID.
 - **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary. The **Agent Platforms** card configures agent imports (see below).
+- **Endpoint Agent** — enrollment secret, report cadence and which collectors run fleet-wide (apps, browser, network, local runtimes, and **MCP servers & agent frameworks**). The MCP collector is off until you tick it, because MCP configs are where credentials live. Changes reach agents on their next manifest fetch.
 - **Reporting** — email delivery for scheduled reports, via Resend. Schedules save without it but never send.
 - **Organization timezone** (\`org_timezone\`, IANA name, default UTC) — set on the Anthropic Compliance API tile under Integrations. Drives the "API key created outside 07:00–19:00" governance alert.
 

@@ -295,6 +295,13 @@ func (a *Agent) collect(ctx context.Context) (*collect.Report, error) {
 		statuses["runtimes"] = status
 	}
 
+	if manifest.Collectors["agents"] {
+		servers, frameworks, status := collect.CollectAgents()
+		report.MCPServers = servers
+		report.Frameworks = frameworks
+		statuses["agents"] = status
+	}
+
 	report.Collectors = statuses
 
 	// Go marshals a nil slice as `null`, and the server's schema defaults only
@@ -312,6 +319,12 @@ func (a *Agent) collect(ctx context.Context) (*collect.Report, error) {
 	}
 	if report.Runtimes == nil {
 		report.Runtimes = []collect.Runtime{}
+	}
+	if report.MCPServers == nil {
+		report.MCPServers = []collect.MCPServer{}
+	}
+	if report.Frameworks == nil {
+		report.Frameworks = []collect.AgentFramework{}
 	}
 
 	if err := a.store.Save(a.state); err != nil {

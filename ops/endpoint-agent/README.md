@@ -17,11 +17,40 @@ inference, which is invisible by construction.
 | `browser` | Chrome, Edge, Brave, Arc, Vivaldi, Firefox, Safari | Chrome, Edge, Brave, Vivaldi, Opera, Firefox | **hostname + visit count only** |
 | `network` | *unsupported — see below* | `Get-DnsClientCache` | hostname + hit count |
 | `runtimes` | loopback probe | loopback probe | runtime id, port, local model names |
+| `agents` | MCP client configs at fixed paths, well-known package folders | same | per MCP server: client, name, transport, bare remote host or launcher + package id; per agent framework: id, ecosystem, location kind, count |
 
 **It never collects content.** Not prompts, not responses, not URL paths, not
 query strings, not page titles, not window titles, not file paths, not command
 lines, not keystrokes. The most specific thing that can leave a machine is a
-bare hostname that already appears on the server-issued allowlist.
+bare hostname that already appears on the server-issued allowlist — or, from
+the `agents` collector, an MCP server's name and the package it launches.
+
+### MCP configs
+
+MCP client config files hold API keys (`env`), database passwords (`args`),
+bearer tokens (`headers`) and tokens in URLs. `internal/collect/agents.go`
+parses them in memory and keeps only:
+
+- `client` — which client's file (Claude Desktop, Claude Code, Cursor,
+  Windsurf, VS Code, Cline, Roo Code, Zed, Continue, Gemini CLI, Codex);
+- `name` — the config key if it is a plain identifier, otherwise
+  `redacted-<8 hex of its sha256>`;
+- `transport` — `stdio`, `http`, `sse` or `ws`;
+- `host` — remote servers only, the bare hostname (`loopback: true` for
+  localhost);
+- `launcher` — stdio only, a closed category (`npx`, `uvx`, `docker`, `node`,
+  `python`, …, or `binary` for anything else);
+- `package` — for npx/uvx/docker-style launchers only, the package or image id
+  with version, tag, digest and registry host stripped.
+
+Every other argument, `env`, `headers`, `cwd`, the command path and the
+per-project paths in `~/.claude.json` are discarded. Only fixed config paths
+are read — no disk crawling — so project-level `.mcp.json` files elsewhere are
+not seen. Frameworks (LangChain, LangGraph, CrewAI, AutoGen, LlamaIndex,
+Pydantic AI, OpenAI Agents SDK, Claude Agent SDK, Mastra, …) are found by
+listing site-packages / global node_modules folders in well-known locations;
+project virtualenvs are out of scope for the same reason. The full path table
+is in `docs/plans/endpoint-agent.md`.
 
 Three things enforce that rather than merely promising it:
 

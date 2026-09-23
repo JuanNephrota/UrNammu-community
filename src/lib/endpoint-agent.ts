@@ -18,10 +18,30 @@ import {
   mergeDiscoveryObservation,
 } from "./discovery-merge";
 import { logger } from "./observability";
+import {
+  AGENT_DISCOVERY_ALERT_SOURCE,
+  upsertDiscoveredAgent,
+} from "./agent-discovery";
+import {
+  alertedServerKeys,
+  buildFrameworkDiscovery,
+  buildMcpClientDiscovery,
+  frameworkLabel,
+  frameworksExternalId,
+  mcpClientExternalId,
+  groupMcpServersByClient,
+  isNewerObservation,
+  mcpClientLabel,
+  mcpServerIdentity,
+  newRiskyServers,
+  summarizeMcpServer,
+  type EndpointDiscoveryDevice,
+} from "./endpoint-agent-discovery";
 import { getSetting } from "./settings";
-import type {
-  EndpointEnrollPayload,
-  EndpointReportPayload,
+import {
+  MCP_CLIENTS,
+  type EndpointEnrollPayload,
+  type EndpointReportPayload,
 } from "./validations/endpoint-agent";
 
 /**
@@ -56,11 +76,11 @@ export const ENDPOINT_STALE_AFTER_MS = 6 * 60 * 60 * 1000;
 export const ENDPOINT_MAX_OBSERVATIONS = 5000;
 
 /** Collector ids the agent understands. */
-export const ENDPOINT_COLLECTORS = ["apps", "browser", "network", "runtimes"] as const;
+export const ENDPOINT_COLLECTORS = ["apps", "browser", "network", "runtimes", "agents"] as const;
 export type EndpointCollector = (typeof ENDPOINT_COLLECTORS)[number];
 
 /** Signals recorded on `EndpointDetection.signal`, one per collector. */
-export const ENDPOINT_SIGNALS = ["app", "browser", "network", "runtime"] as const;
+export const ENDPOINT_SIGNALS = ["app", "browser", "network", "runtime", "mcp", "framework"] as const;
 export type EndpointSignal = (typeof ENDPOINT_SIGNALS)[number];
 
 export const ENDPOINT_SIGNAL_LABELS: Record<EndpointSignal, string> = {
@@ -68,6 +88,8 @@ export const ENDPOINT_SIGNAL_LABELS: Record<EndpointSignal, string> = {
   browser: "Browser",
   network: "Network",
   runtime: "Local runtime",
+  mcp: "MCP server",
+  framework: "Agent framework",
 };
 
 // ─── Local inference runtimes ────────────────────────────
@@ -235,17 +257,24 @@ async function getReportIntervalSeconds(): Promise<number> {
 }
 
 /**
+ * Collectors that stay off until an admin ticks them. `agents` reads MCP
+ * client configs, the files on a laptop most likely to hold credentials, so
+ * it is never switched on implicitly — even though it redacts on the device.
+ */
+export const OPT_IN_COLLECTORS: readonly EndpointCollector[] = ["agents"];
+
+/**
  * Which collectors are switched on, from a comma-separated setting. Absent
- * means all on; an unrecognized id is ignored rather than failing the fetch,
- * so a typo in Settings cannot take the whole fleet offline.
+ * means every collector except the opt-in ones; an unrecognized id is ignored
+ * rather than failing the fetch, so a typo in Settings cannot take the whole
+ * fleet offline.
  */
 export async function getEnabledCollectors(): Promise<Record<EndpointCollector, boolean>> {
   const raw = (await getSetting(ENDPOINT_COLLECTORS_KEY))?.trim();
   if (!raw) {
-    return Object.fromEntries(ENDPOINT_COLLECTORS.map((c) => [c, true])) as Record<
-      EndpointCollector,
-      boolean
-    >;
+    return Object.fromEntries(
+      ENDPOINT_COLLECTORS.map((c) => [c, !OPT_IN_COLLECTORS.includes(c)]),
+    ) as Record<EndpointCollector, boolean>;
   }
   const enabled = new Set(
     raw
@@ -412,6 +441,9 @@ export interface EndpointIngestResult {
   detectionsUpdated: number;
   discoveriesCreated: number;
   discoveriesUpdated: number;
+  /** DiscoveredAgent rows (MCP client configs, agent frameworks). */
+  agentsCreated: number;
+  agentsUpdated: number;
 }
 
 /**
@@ -586,6 +618,62 @@ function normalizeReport(
     });
   }
 
+  // MCP servers — one detection per configured server, so the device page
+  // lists them. They never roll up into Shadow AI (rollupDomain null): an MCP
+  // server is an agent capability, not a SaaS tool, and it is governed through
+  // Agent discovery instead (syncAgentDiscoveries below).
+  const collectedAt = clampTimestamp(report.collectedAt, now);
+  for (const server of report.mcpServers) {
+    const summary = summarizeMcpServer(server);
+    out.push({
+      signal: "mcp",
+      toolName: server.name,
+      vendor: summary.vendor,
+      category: null,
+      matchConfidence: summary.known ? "high" : null,
+      evidence: `${server.client}:${mcpServerIdentity(server)}`,
+      detail: {
+        client: server.client,
+        clientLabel: mcpClientLabel(server.client),
+        transport: server.transport,
+        host: summary.host,
+        loopback: summary.loopback,
+        launcher: summary.launcher,
+        package: summary.package,
+        known: summary.knownLabel,
+        risk: summary.risk,
+      },
+      observations: 1,
+      firstSeenAt: collectedAt,
+      lastSeenAt: collectedAt,
+      rollupDomain: null,
+      matched: Boolean(summary.known),
+    });
+  }
+
+  // Agent frameworks — one detection per (framework, ecosystem, location kind).
+  for (const framework of report.agentFrameworks) {
+    out.push({
+      signal: "framework",
+      toolName: frameworkLabel(framework.framework),
+      vendor: null,
+      category: null,
+      matchConfidence: "high",
+      evidence: `${framework.ecosystem}:${framework.source}`,
+      detail: {
+        framework: framework.framework,
+        ecosystem: framework.ecosystem,
+        source: framework.source,
+        environments: framework.count,
+      },
+      observations: 1,
+      firstSeenAt: collectedAt,
+      lastSeenAt: collectedAt,
+      rollupDomain: null,
+      matched: true,
+    });
+  }
+
   return out;
 }
 
@@ -662,6 +750,7 @@ export async function ingestEndpointReport(
   }
 
   const rollup = await rollUpToDiscoveredTools(device, observations, now);
+  const agents = await syncAgentDiscoveries(device, report, now);
 
   await prisma.endpointDevice.update({
     where: { id: device.id },
@@ -688,6 +777,7 @@ export async function ingestEndpointReport(
     detectionsCreated,
     detectionsUpdated,
     ...rollup,
+    ...agents,
   });
 
   return {
@@ -697,7 +787,164 @@ export async function ingestEndpointReport(
     detectionsCreated,
     detectionsUpdated,
     ...rollup,
+    ...agents,
   };
+}
+
+/**
+ * Fold the `agents` collector into Agent discovery: one DiscoveredAgent per
+ * (device, MCP client) configuration and one per device for installed agent
+ * frameworks. See endpoint-agent-discovery.ts for the scoring and for why the
+ * rows are shaped this way.
+ *
+ * Idempotency: rows are keyed on a hash of machineId + client, merged by
+ * `upsertDiscoveredAgent()`, and alert once on creation (and only above the
+ * score threshold). A spooled report replayed after a newer one is skipped
+ * rather than allowed to roll `metadata.servers` back, and a newly added
+ * unrecognized server on an existing row raises its own drift alert once.
+ */
+async function syncAgentDiscoveries(
+  device: EndpointDevice,
+  report: EndpointReportPayload,
+  now: Date,
+): Promise<{ agentsCreated: number; agentsUpdated: number }> {
+  const status = report.collectors.agents;
+  const ran = status?.ok === true;
+  let agentsCreated = 0;
+  let agentsUpdated = 0;
+  if (!ran && report.mcpServers.length === 0 && report.agentFrameworks.length === 0) {
+    return { agentsCreated, agentsUpdated };
+  }
+
+  const observedAt = clampTimestamp(report.collectedAt, now);
+  const who: EndpointDiscoveryDevice = {
+    id: device.id,
+    machineId: device.machineId,
+    hostname: report.hostname ?? device.hostname,
+    userEmail: report.userEmail?.toLowerCase() ?? device.userEmail,
+  };
+  const current = new Set<string>();
+
+  for (const group of groupMcpServersByClient(report.mcpServers)) {
+    const discovery = buildMcpClientDiscovery({
+      device: who,
+      client: group.client,
+      servers: group.servers,
+      observedAt,
+    });
+    const { input } = discovery;
+    current.add(input.externalId);
+
+    const existing = await prisma.discoveredAgent.findUnique({
+      where: { source_externalId: { source: input.source, externalId: input.externalId } },
+      select: { id: true, metadata: true },
+    });
+    if (existing && !isNewerObservation(existing.metadata, observedAt)) continue;
+    const drift = existing ? newRiskyServers(existing.metadata, discovery.summaries) : [];
+    if (existing) {
+      input.metadata = {
+        ...input.metadata,
+        alertedServerKeys: alertedServerKeys(existing.metadata, discovery.summaries),
+      };
+    }
+
+    // Alert before the upsert: if the upsert then fails, the next report
+    // re-alerts; the other order would lose the alert for good.
+    if (drift.length > 0) {
+      const described = drift
+        .slice(0, 5)
+        .map((s) => `${s.name} (${s.host ?? s.package ?? s.launcher ?? s.transport})`)
+        .join(", ");
+      await prisma.alert.create({
+        data: {
+          title: `New unrecognized MCP server: ${input.name}`,
+          description: `The endpoint agent found ${drift.length} newly configured, unrecognized MCP server(s) in ${input.platform} on ${who.hostname}${who.userEmail ? ` (${who.userEmail})` : ""}: ${described}. Review it under Agents → Discovered.`,
+          severity: "MEDIUM",
+          source: AGENT_DISCOVERY_ALERT_SOURCE,
+        },
+      });
+    }
+
+    const outcome = await upsertDiscoveredAgent(input);
+    if (outcome.created) agentsCreated++;
+    else agentsUpdated++;
+  }
+
+  const frameworks = buildFrameworkDiscovery({
+    device: who,
+    frameworks: report.agentFrameworks,
+    observedAt,
+  });
+  if (frameworks) {
+    current.add(frameworks.externalId);
+    const existing = await prisma.discoveredAgent.findUnique({
+      where: {
+        source_externalId: { source: frameworks.source, externalId: frameworks.externalId },
+      },
+      select: { metadata: true },
+    });
+    if (!existing || isNewerObservation(existing.metadata, observedAt)) {
+      const outcome = await upsertDiscoveredAgent(frameworks);
+      if (outcome.created) agentsCreated++;
+      else agentsUpdated++;
+    }
+  }
+
+  // A client whose servers were all removed (or an SDK uninstalled) stops
+  // appearing in reports. Only a complete, successful scan can prove that, so
+  // a partial one leaves the stored state alone. The row is kept — it is the
+  // reviewer's history — but its current server list is emptied.
+  if (ran && !status?.reason) {
+    // The externalIds are deterministic per machine, so this is an index
+    // lookup on (source, externalId), not a JSON scan of the whole fleet.
+    const deviceExternalIds = [
+      ...MCP_CLIENTS.map((client) => mcpClientExternalId(device.machineId, client)),
+      frameworksExternalId(device.machineId),
+    ];
+    const rows = await prisma.discoveredAgent.findMany({
+      where: { source: "endpoint_agent", externalId: { in: deviceExternalIds } },
+      select: { externalId: true, name: true, metadata: true, lastSeenAt: true },
+    });
+    for (const row of rows) {
+      if (current.has(row.externalId)) continue;
+      const meta = (row.metadata ?? {}) as Record<string, unknown>;
+      const empty =
+        meta.kind === "mcp_client"
+          ? Array.isArray(meta.servers) && meta.servers.length === 0
+          : meta.kind === "agent_frameworks"
+            ? Array.isArray(meta.frameworks) && meta.frameworks.length === 0
+            : true;
+      if (empty || !isNewerObservation(meta, observedAt)) continue;
+      // Score and signals describe the current config, so they are reset
+      // too; mcpServers keeps its history, as the column always does.
+      await upsertDiscoveredAgent({
+        source: "endpoint_agent",
+        externalId: row.externalId,
+        name: row.name,
+        lastSeenAt: row.lastSeenAt,
+        suppressAlert: true,
+        score: 0,
+        confidence: "low",
+        signals: [
+          {
+            key: meta.kind === "mcp_client" ? "no_servers" : "no_frameworks",
+            label:
+              meta.kind === "mcp_client"
+                ? "No MCP servers configured any more"
+                : "No agent frameworks installed any more",
+            weight: 0,
+          },
+        ],
+        metadata:
+          meta.kind === "mcp_client"
+            ? { servers: [], serverCount: 0, observedAt: observedAt.toISOString() }
+            : { frameworks: [], observedAt: observedAt.toISOString() },
+      });
+      agentsUpdated++;
+    }
+  }
+
+  return { agentsCreated, agentsUpdated };
 }
 
 /**

@@ -94,6 +94,7 @@ export const COLLECTOR_REASON_LABELS: Record<string, string> = {
   dns_cache_unavailable: "DNS cache unavailable",
   dns_cache_unparseable: "DNS cache unreadable",
   unsupported_platform: "Not supported on this OS",
+  partial_unparseable: "Some MCP configs unreadable",
   unknown: "Unknown",
 };
 
@@ -111,6 +112,7 @@ export function collectorLabel(collector: string): string {
     browser: "Browser",
     network: "Network",
     runtimes: "Local runtimes",
+    agents: "MCP & agent frameworks",
   };
   return labels[collector as EndpointCollector] ?? collector;
 }

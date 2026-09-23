@@ -202,6 +202,32 @@ export default async function EndpointDevicePage({
                               {detail.browser}
                             </div>
                           )}
+                          {detection.signal === "mcp" && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1 font-sans text-[var(--text-muted)]">
+                              {typeof detail.clientLabel === "string" && (
+                                <span>{detail.clientLabel}</span>
+                              )}
+                              {typeof detail.transport === "string" && (
+                                <Badge variant="outline">{detail.transport}</Badge>
+                              )}
+                              {typeof detail.known === "string" ? (
+                                <Badge variant="info">{detail.known}</Badge>
+                              ) : detail.risk === "unknown_remote" ? (
+                                <Badge variant="warning">Unrecognized remote host</Badge>
+                              ) : detail.risk === "unknown_package" ? (
+                                <Badge variant="warning">Unrecognized package</Badge>
+                              ) : detail.risk === "bridge" ? (
+                                <Badge variant="warning">Bridge to unseen remote</Badge>
+                              ) : null}
+                            </div>
+                          )}
+                          {detection.signal === "framework" &&
+                            typeof detail.environments === "number" && (
+                              <div className="mt-1 font-sans text-[var(--text-muted)]">
+                                {detail.environments} environment
+                                {detail.environments === 1 ? "" : "s"}
+                              </div>
+                            )}
                         </td>
                         <td className="px-4 py-2 text-[var(--text-secondary)]">
                           {detection.observations.toLocaleString()}

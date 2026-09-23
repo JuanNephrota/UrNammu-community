@@ -24,7 +24,11 @@ tools a machine actually runs and reaches.
 
 - **No content.** Not prompts, not responses, not file contents, not URLs
   beyond the hostname, not window titles, not keystrokes. The agent reports
-  *which tool*, *how often*, *when* — nothing about what was said to it. This
+  *which tool*, *how often*, *when* — nothing about what was said to it. The
+  MCP collector adds the one exception to "hostname is the most specific
+  thing": a configured MCP server's *name* and, for package-runner launchers,
+  its *package id* — both identifiers, both shape-restricted on the device and
+  again by the server (see *MCP configs* below). This
   is the same line the OTel pipeline already holds (`ClaudeCodeEvent` stores a
   risk verdict, never the prompt) and it is what makes the agent deployable
   without a works-council fight.
@@ -79,6 +83,7 @@ caches. Consequences:
 | `browser` | Chrome, Edge, Brave, Arc, Firefox, Safari history DBs | Chrome, Edge, Brave, Firefox history DBs | **hostname + visit count only**, allowlisted against the manifest |
 | `runtimes` | probe `127.0.0.1` on known local-inference ports | same | runtime name, port, model list where the runtime exposes one |
 | `network` | DNS cache sample (best effort) | `Get-DnsClientCache` | hostname + hit count, allowlisted |
+| `agents` | MCP client config files at fixed paths; well-known site-packages / global node_modules | same | per MCP server: client, name, transport, bare remote host *or* launcher category + package id; per agent framework: id, ecosystem, location kind, count |
 
 Notes on the two awkward ones:
 
@@ -95,6 +100,74 @@ Notes on the two awkward ones:
   shipping because it catches non-browser, non-app traffic (a script hitting
   `api.openai.com`), but it is not the primary signal and the UI should not
   imply it is.
+
+### MCP configs — what is kept and what is thrown away
+
+MCP client config files are the most secret-dense files on a developer
+laptop: `env` blocks hold API keys, `args` hold database URLs with passwords
+and the directories a filesystem server may touch, `headers` hold bearer
+tokens, and remote URLs carry tokens in query strings. The `agents` collector
+therefore parses each file in memory and keeps exactly this, per server:
+
+| Field | Derived from | Never includes |
+|---|---|---|
+| `client` | which file it came from (closed enum) | the file path |
+| `name` | the config key, if it matches `^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,63}$` and is not credential-shaped; otherwise `redacted-<first 8 hex of sha256>` | slashes, colons, `=`, `@`, URLs, tokens |
+| `transport` | `type` / presence of `url` / `command` → `stdio` \| `http` \| `sse` \| `ws` | — |
+| `host` | remote servers: `url.Hostname()`, lowercased, validated as a DNS name; reduced to its last two labels when any label is credential-shaped or a long hex/base62 run, and to the bare service for tunnels (`jdoe.ngrok.io` → `ngrok.io`); loopback (including `127.1`-style shorthand) → `loopback: true`, IPv6, other numeric or templated URLs → nothing | scheme, port, path, query, fragment, userinfo, secret-bearing labels |
+| `launcher` | stdio servers: command basename mapped to a closed category (`npx`, `uvx`, `docker`, `node`, `python`, …); any other executable is `binary` | the command path or basename |
+| `package` | only for `npx`/`bunx`/`pnpm dlx`/`yarn dlx`/`uvx`/`uv tool run`/`pipx run`/`docker run`: the first package/image argument, version/tag/digest/registry host stripped, validated against a lowercase package-id regex and the credential check. The parse stops (no package) at any flag it does not know, so `--token <value>` can never be read as the package; docker references that look like paths are refused | every other argument, `env`, `headers`, `cwd`, paths, git/file/URL specs |
+
+The credential check flags a known token prefix at the start of a value or
+after any separator (`Bearer sk-…`), any 20+ character alphanumeric run with a
+digit, any 32+ character pure-hex run, and long mixed-case strings; the server
+schema applies the same rules independently. The `redacted-<8 hex>` placeholder
+is an unsalted 32-bit hash for de-duplication, not secrecy: a guessable
+original (a common path shape) can be recovered, which is why only names that
+fail the plain-identifier rule are hashed and the rest are dropped entirely.
+
+Disabled servers and Claude Code in-process (`sdk`) servers are dropped.
+The per-project keys of `~/.claude.json` are absolute paths; they are used
+only to iterate and are never retained. Files are read only if they are
+regular files under a size cap (4 MiB; 32 MiB for `~/.claude.json`), at most
+64 distinct servers per file and 256 per report — de-duplicated before the
+caps, and a scan any cap or the 10-second time budget cuts short reports
+`truncated`, so ingest never clears rows on it. No home directory reports
+`no_home` for the same reason. JSONC, the Continue YAML subset and
+the Codex TOML subset are parsed by small hand readers, so the binary keeps
+SQLite as its only dependency.
+
+The server re-validates every field (`endpointMcpServerSchema`): `name` has
+the same regex and credential check, `host` is the bare-hostname type,
+`package` must fit its launcher (npm scope only for npm launchers, one
+namespace slash only for docker, no slash for PyPI), and a remote server may
+not carry a launcher or package. A report that violates any of it is
+rejected whole — the same "a compromised agent cannot widen the channel"
+property the `hostname` type gives the browser collector.
+
+Agent frameworks are detected by listing a bounded set of package
+directories — never by walking the home directory — so project virtualenvs
+are out of scope by design. Only framework id, ecosystem, location kind
+(`user_site`, `system_site`, `pipx`, `uv_tool`, `conda`, `npm_global`) and an
+environment count leave the machine.
+
+Client config paths (checked against each client's documentation, 2026-09):
+
+| Client | macOS | Windows |
+|---|---|---|
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\…`, plus the MSIX `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\…` |
+| Claude Code | `~/.claude.json` (user + per-project), `~/.claude/settings.json`, `~/.mcp.json`, `/Library/Application Support/ClaudeCode/managed-mcp.json` | same dotfiles under `%USERPROFILE%`, `%ProgramFiles%\ClaudeCode\managed-mcp.json` |
+| Cursor | `~/.cursor/mcp.json` | same |
+| Windsurf / Devin | `~/.codeium/windsurf/mcp_config.json`, `~/.config/devin/mcp_config.json` | `%USERPROFILE%\.codeium\…`, `%APPDATA%\devin\mcp_config.json` |
+| VS Code (+ Insiders, VSCodium) | `<config>/Code/User/mcp.json` (`servers`), `settings.json` (`mcp.servers`) | same under `%APPDATA%` |
+| Cline / Roo Code | `<config>/{Code,Cursor,Windsurf,…}/User/globalStorage/{saoudrizwan.claude-dev/settings/cline_mcp_settings.json, rooveterinaryinc.roo-cline/settings/mcp_settings.json}` | same under `%APPDATA%` |
+| Zed | `~/.config/zed/settings.json` (`context_servers`) | `%APPDATA%\Zed\settings.json` |
+| Continue | `~/.continue/config.yaml`, `config.json`, `mcpServers/*.{yaml,yml,json}` | same |
+| Gemini CLI | `~/.gemini/settings.json` (`url` = SSE, `httpUrl` = HTTP) | same |
+| Codex | `~/.codex/config.toml` (`[mcp_servers.<name>]`) | same |
+
+Project-level config files (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`
+in a repo) are not searched for: finding them would mean crawling the disk.
 
 ## Data model
 
@@ -142,6 +215,7 @@ Re-sending a spooled batch after a timeout is a no-op, matching the
 | 6 | `ops/endpoint-agent/` — Go agent, packaging, Hexnode scripts | — | yes |
 | 7 | Docs: install guide, user guide, in-app help | — | yes |
 | 8 | `/api/cron/endpoint-agent-sweep` staleness sweep | — | yes |
+| 9 | `agents` collector: MCP client configs + agent frameworks → `DiscoveredAgent` (see `docs/plans/agent-discovery.md`, Gap 3) | — | yes |
 
 ## What testing on a real machine changed
 
@@ -163,6 +237,12 @@ looked fine in review:
   touches. It now keys on the registry's canonical domain — which is what the
   DNS importer already did — so endpoint and DNS observations of the same tool
   share one row.
+
+## Needs from the user after merge (agents collector)
+
+- Deploy the server first, then release a signed agent **0.2.0** (`make VERSION=0.2.0`, notarize, Authenticode) and push it through Hexnode. Older agents keep working and simply never send MCP data.
+- The collector is **opt-in**: tick **MCP servers & agent frameworks** in Settings → Endpoint Agent to enable it fleet-wide. It is off by default, including for tenants that never saved a collector selection, because MCP configs are where credentials live.
+- No migration: `DiscoveredAgent` and `EndpointDetection` already exist.
 
 ## Needs from the user after merge
 
