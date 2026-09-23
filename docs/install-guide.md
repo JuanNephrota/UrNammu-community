@@ -793,11 +793,23 @@ A signed binary pushed by MDM to macOS and Windows that reports which AI tools a
    ```
    Windows needs an Authenticode signature from your own code-signing certificate.
 3. **Host the binaries** somewhere the fleet can reach over HTTPS.
-4. **Push the deploy script** as a Hexnode custom script per platform, with `CONSOLE_URL`, `ENROLLMENT_SECRET` and `BINARY_URL` set:
-   - macOS — `ops/endpoint-agent/mdm/hexnode-deploy-endpoint-agent.sh` (installs a **LaunchAgent** in the console user's session)
-   - Windows — `ops/endpoint-agent/mdm/hexnode-deploy-endpoint-agent.ps1` (registers an at-logon **Scheduled Task** in the user's context)
+4. **Push the deploy script** for your MDM, with `CONSOLE_URL`, `ENROLLMENT_SECRET` and `BINARY_URL` set. Scripts for three live in `ops/endpoint-agent/mdm/`:
 
-   Both run as the *user*, not root/SYSTEM, because browser profiles live in the user's home and Full Disk Access is per-user. A privileged daemon would need far broader access to see less.
+   | MDM | macOS | Windows |
+   |-----|-------|---------|
+   | Iru (formerly Kandji) | `iru-audit-endpoint-agent.sh` + `iru-remediate-endpoint-agent.sh` | `iru-audit-endpoint-agent.ps1` + `iru-remediate-endpoint-agent.ps1` |
+   | Jamf Pro | `jamf-deploy-endpoint-agent.sh` | — (Jamf is Apple-only) |
+   | Hexnode | `hexnode-deploy-endpoint-agent.sh` | `hexnode-deploy-endpoint-agent.ps1` |
+
+   All install a **LaunchAgent** in the console user's session on macOS, or an at-logon **Scheduled Task** in the user's context on Windows, and all refuse an unsigned binary.
+
+   **Iru** uses an audit-and-remediation pair, which is the cheapest option at scale: the audit runs a few local checks, so a 15-minute check-in stays quiet until something is actually wrong rather than re-downloading the binary fleet-wide. Set `CONSOLE_URL` identically in both halves. Bumping `EXPECTED_VERSION` in the audit is how an upgrade rolls out.
+
+   **Jamf Pro** takes its values from policy parameters 4-7 (Jamf reserves `$1`-`$3`): console URL, enrollment secret, binary URL, and an optional expected version. Set parameter 7 — without it an Ongoing policy re-downloads the agent on every check-in.
+
+   The scripts contain no MDM-specific API calls, so adapting one to Intune, Workspace ONE or Mosyle is mostly a matter of how that console passes parameters. Details for all three are in `ops/endpoint-agent/README.md`.
+
+   Every script installs the agent into the *user's* session, not root/SYSTEM, because browser profiles live in the user's home and Full Disk Access is per-user. A privileged daemon would need far broader access to see less.
 5. **Grant Full Disk Access on macOS** via a PPPC profile for `/usr/local/bin/urnammu-agent` (`SystemPolicyAllFiles`), or Safari history is skipped and the device reports the browser collector as `partial_no_access`.
 6. **Schedule `/api/cron/endpoint-agent-sweep`** (§9.1) so agents that stop reporting are marked stale rather than silently reading as "no AI activity".
 

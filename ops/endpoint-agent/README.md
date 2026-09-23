@@ -100,27 +100,94 @@ make notarize-darwin DEVELOPER_ID="Developer ID Application: … (TEAMID)" \
 
 ## Deploy
 
-Host the built binary somewhere the fleet can reach, then push the matching
-script as a Hexnode custom script with `CONSOLE_URL`, `ENROLLMENT_SECRET` and
-`BINARY_URL` set:
+Host the built binary somewhere the fleet can reach over HTTPS, then use the
+scripts in [`mdm/`](mdm/) for your MDM. All of them install the same thing —
+they differ only in how the MDM passes parameters and decides when to re-run.
 
-- macOS — [`mdm/hexnode-deploy-endpoint-agent.sh`](mdm/hexnode-deploy-endpoint-agent.sh)
-  installs to `/usr/local/bin`, writes `/Library/Application Support/UrNammu/agent.json`,
-  and loads a **LaunchAgent** in the console user's GUI session.
-- Windows — [`mdm/hexnode-deploy-endpoint-agent.ps1`](mdm/hexnode-deploy-endpoint-agent.ps1)
-  installs under `%ProgramData%\UrNammu` and registers an at-logon **Scheduled
-  Task** in the user's context.
+| MDM | macOS | Windows | Model |
+|---|---|---|---|
+| **Iru** (formerly Kandji) | [audit](mdm/iru-audit-endpoint-agent.sh) + [remediate](mdm/iru-remediate-endpoint-agent.sh) | [audit](mdm/iru-audit-endpoint-agent.ps1) + [remediate](mdm/iru-remediate-endpoint-agent.ps1) | Custom Script library item |
+| **Jamf Pro** | [policy script](mdm/jamf-deploy-endpoint-agent.sh) | — *(Jamf is Apple-only)* | Policy with script parameters |
+| **Hexnode** | [script](mdm/hexnode-deploy-endpoint-agent.sh) | [script](mdm/hexnode-deploy-endpoint-agent.ps1) | Custom script |
 
-Both run in the *user's* session, not as root/SYSTEM, because browser profiles
-live in the user's home and Full Disk Access is granted per-user. A privileged
-daemon would need far broader access to see less.
+Every script installs to `/usr/local/bin` + a **LaunchAgent** on macOS, or
+`%ProgramData%\UrNammu` + an at-logon **Scheduled Task** on Windows. All run in
+the *user's* session, not as root or SYSTEM, because browser profiles live in
+the user's home and Full Disk Access is granted per-user — a privileged daemon
+would need far broader access to see less.
+
+Every script also refuses to install an unsigned binary. That is not belt and
+braces on macOS: a PPPC profile grants Full Disk Access by *code requirement*,
+so an unsigned binary cannot be granted it at all.
+
+### Iru (formerly Kandji)
+
+Iru uses an audit-and-remediation pair, and it is the best fit of the three:
+the audit is a handful of cheap local checks, so a 15-minute check-in stays
+quiet until something is actually wrong, instead of re-downloading the binary
+to every machine forever.
+
+1. **Library → Add Library Item → Custom Script** (or **Windows Custom Script**).
+2. Paste `iru-audit-*` as the **Audit Script** and `iru-remediate-*` as the
+   **Remediation Script**. Run Windows scripts in **64-bit** PowerShell.
+3. Set `CONSOLE_URL` / `$ConsoleUrl` identically in **both** halves, plus
+   `ENROLLMENT_SECRET` and `BINARY_URL` in the remediation half.
+4. Execution Frequency: **every 15 minutes** (check-in) or **daily**.
+
+Two levers drive the fleet from the audit script, because a failing audit is
+what makes Iru remediate:
+
+- **Upgrade** — bump `EXPECTED_VERSION` / `$ExpectedVersion`. Audit starts
+  failing, remediation installs the new build.
+- **Move consoles** — change `CONSOLE_URL` / `$ConsoleUrl`. Audit sees the
+  stale config, remediation rewrites it.
+
+Keep those values in sync between the two halves. If the audit demands
+something the remediation does not install, the item reinstalls on every
+check-in forever.
+
+### Jamf Pro
+
+Jamf is Apple-only, so pair it with Iru or Hexnode for Windows.
+
+1. **Settings → Computer Management → Scripts → New**, paste
+   `jamf-deploy-endpoint-agent.sh`.
+2. On **Options**, label the parameters — Jamf reserves `$1`–`$3`, so custom
+   ones start at `$4`:
+
+   | Parameter | Value |
+   |---|---|
+   | 4 | Console URL |
+   | 5 | Enrollment secret |
+   | 6 | Binary URL |
+   | 7 | Expected version *(optional)* |
+
+3. **Policies → New**, add the script, scope it, trigger **Recurring
+   Check-in**, frequency **Ongoing**.
+
+Set parameter 7. With it, the script skips the download when the installed
+binary already reports that version, which is the difference between an
+Ongoing policy that no-ops and one that re-downloads the agent to the whole
+fleet every check-in. Bump it to roll out an upgrade.
+
+### Another MDM
+
+The scripts are ordinary bash and PowerShell with no MDM-specific API calls —
+they read a few values from the top of the file (or, for Jamf, from `$4`–`$7`)
+and do the install. Adapting one to Intune, Workspace ONE or Mosyle is mostly a
+matter of how that console hands you the parameters.
 
 ### Safari needs Full Disk Access
 
-Safari's `History.db` is TCC-protected. Push a PPPC profile granting
-`SystemPolicyAllFiles` to `/usr/local/bin/urnammu-agent`, or Safari is skipped
-and the console reports the browser collector as `partial_no_access` — visible,
-not silent.
+Safari's `History.db` is TCC-protected. Deploy a PPPC configuration profile
+granting `SystemPolicyAllFiles` to `/usr/local/bin/urnammu-agent`, identified by
+its code requirement, or Safari is skipped and the console reports the browser
+collector as `partial_no_access` — visible, not silent. Get the requirement
+string from a signed build with:
+
+```bash
+codesign -dr - /usr/local/bin/urnammu-agent
+```
 
 ## Configuration
 
