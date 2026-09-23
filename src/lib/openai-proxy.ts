@@ -271,7 +271,7 @@ export async function handleOpenAIProxy(
   }
   const targetUrl = `${targetBase}${path}${search}`;
 
-  const { department, userEmail, aiSystemId, agent } = await resolveProxyAttribution(req);
+  const { department, userEmail, aiSystemId, agent, client } = await resolveProxyAttribution(req);
 
   // ── Body ──
   let bodyText: string | null = null;
@@ -306,6 +306,7 @@ export async function handleOpenAIProxy(
     azureEndpoint: azureEndpoint ?? undefined,
     aiSystemId,
     agentId: agent?.id ?? null,
+    client,
   };
 
   // ── Pass-through: nothing to read usage from ──

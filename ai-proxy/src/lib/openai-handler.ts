@@ -195,7 +195,7 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
 
     const { attribution, response: attributionError } = await resolveAttribution(req);
     if (attributionError) return attributionError;
-    const { department, userEmail, aiSystemId, agent } = attribution;
+    const { department, userEmail, aiSystemId, agent, client } = attribution;
 
     let { bodyText, bodyJson } = await readJsonBody(req);
     const model =
@@ -216,6 +216,7 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
       azureEndpoint: azureEndpoint ?? undefined,
       aiSystemId,
       agentId: agent?.id ?? null,
+      client,
     };
     const startTime = Date.now();
 

@@ -334,9 +334,66 @@ model AIAgent {
   riskReviews  AgentRiskReview[]
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
+  discoveries  DiscoveredAgent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Agent Discovery ────────────────────────────────────
+// An AI agent observed somewhere (proxy traffic, an agent platform's API, an
+// endpoint's MCP config) that may not be in the registry yet. Separate from
+// DiscoveredAITool because an agent carries tools, MCP servers, models and a
+// promotion target. Every source writes through upsertDiscoveredAgent() in
+// src/lib/agent-discovery.ts. See docs/plans/agent-discovery.md.
+model DiscoveredAgent {
+  id          String  @id @default(cuid())
+  /// "proxy_traffic" | "anthropic_managed_agents" | "microsoft_copilot" |
+  /// "salesforce_agentforce" | "openai_assistants" | "openai_agents" |
+  /// "chatgpt_gpts" | "endpoint_agent"
+  source      String
+  /// Stable identity within the source: platform id, caller fingerprint, or
+  /// device + client + server hash.
+  externalId  String
+  name        String
+  description String? @db.Text
+  /// Human label for where the agent runs, e.g. "Copilot Studio".
+  platform    String?
+  /// Agent framework / SDK detected from the client, e.g. "langgraph".
+  framework   String?
+
+  status     DiscoveryStatus @default(DISCOVERED)
+  /// "high" | "medium" | "low"
+  confidence String?
+  score      Int?
+  /// [{ key, label, weight }] — why this was flagged as an agent.
+  signals    Json            @default("[]")
+
+  tools      String[] @default([])
+  mcpServers String[] @default([])
+  models     String[] @default([])
+  userEmails String[] @default([])
+  ownerEmail String?
+  department String?
+
+  aiSystemId    String?
+  linkedAgent   AIAgent? @relation(fields: [linkedAgentId], references: [id], onDelete: SetNull)
+  linkedAgentId String?
+
+  requestCount Int       @default(0)
+  firstSeenAt  DateTime?
+  lastSeenAt   DateTime?
+  /// Source-specific detail (platform ids, environment, device ids). Never
+  /// content, secrets, commands or file paths.
+  metadata     Json?
+  notes        String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([source, externalId])
+  @@index([status, lastSeenAt])
+  @@index([linkedAgentId])
 }
 
 // ─── Shadow AI Discovery ────────────────────────────────

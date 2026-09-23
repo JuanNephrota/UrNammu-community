@@ -104,7 +104,7 @@ export async function handleBedrockProxy(req: NextRequest, subpath: string): Pro
   const targetUrl = `https://${host}${parsed.path}${req.nextUrl.search}`;
   const rawModelId = parsed.modelId;
   const model = rawModelId ? normalizeModelId(rawModelId) : "unknown";
-  const { department, userEmail, aiSystemId, agent } = await resolveProxyAttribution(req);
+  const { department, userEmail, aiSystemId, agent, client } = await resolveProxyAttribution(req);
 
   // The body must reach Bedrock byte-for-byte (SigV4 covers its hash), so it
   // is never re-serialised; governance reads a parsed copy.
@@ -132,6 +132,7 @@ export async function handleBedrockProxy(req: NextRequest, subpath: string): Pro
     authMode: sigv4 ? "sigv4" : "bearer",
     aiSystemId,
     agentId: agent?.id ?? null,
+    client,
   };
 
   const canonical = { ...canonicalizeRequest("anthropic", bodyJson), model };

@@ -13,7 +13,8 @@ import { secretsMatch } from "./secret-compare";
 import { writeProxyUsageBucket } from "./proxy-bucket-writer";
 import { bucketProviderFor } from "./proxy-providers";
 import { loadAgentGovernance, type AgentGovernance } from "./mcp-tool-activity";
-import type { analyzePromptRisk } from "./prompt-risk";
+import { loadPromptHashSalt, type analyzePromptRisk } from "./prompt-risk";
+import { fingerprintCaller, type ClientFingerprint } from "./caller-fingerprint";
 
 export type ProxyFlagCategory =
   | "upstream_error"
@@ -51,6 +52,12 @@ export type ProxyAttribution = {
   aiSystemId: string | null;
   /** Agent named by `x-agent-id`, with its MCP allowlists. */
   agent: AgentGovernance | null;
+  /**
+   * Client framework / SDK and salted credential hash, logged as
+   * `metadata.client` so agent detection can find callers that never sent
+   * `x-agent-id` (see caller-fingerprint.ts).
+   */
+  client: ClientFingerprint;
 };
 
 /**
@@ -69,12 +76,16 @@ export async function resolveProxyAttribution(req: NextRequest): Promise<ProxyAt
         select: { id: true },
       })
     : null;
-  const agent = await loadAgentGovernance(req.headers.get("x-agent-id"));
+  const [agent, salt] = await Promise.all([
+    loadAgentGovernance(req.headers.get("x-agent-id")),
+    loadPromptHashSalt().catch(() => null),
+  ]);
   return {
     department,
     userEmail,
     aiSystemId: linkedSystem?.id ?? agent?.aiSystemId ?? null,
     agent,
+    client: fingerprintCaller({ headers: req.headers, url: req.url, salt }),
   };
 }
 

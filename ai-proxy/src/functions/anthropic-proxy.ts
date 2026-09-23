@@ -52,7 +52,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   // cannot be loaded). Shared with the other provider functions.
   const { attribution, response: attributionError } = await resolveAttribution(req);
   if (attributionError) return attributionError;
-  const { department, userEmail, aiSystemId, agent } = attribution;
+  const { department, userEmail, aiSystemId, agent, client } = attribution;
 
   // Build target URL from route params
   const url = new URL(req.url);
@@ -210,6 +210,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       agent,
       declaredServers,
       promptHash,
+      baseMeta: { client },
       mcp: mcpResult.detected
         ? { servers: mcpResult.mcpServerCount, forwardedHeaders: mcpResult.forwarded }
         : null,
@@ -298,6 +299,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     metadata: {
       aiSystemId,
       agentId: agent?.id ?? null,
+      client,
       latencyMs,
       status: anthropicRes.status,
       promptHash,

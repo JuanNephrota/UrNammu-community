@@ -34,6 +34,7 @@ import {
   type ObservedToolUse,
 } from "./mcp-tool-governance";
 import { recordToolActivity, type AgentGovernance } from "./mcp-tool-activity";
+import type { ClientFingerprint } from "./caller-fingerprint";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 const MESSAGES_ENDPOINT = "/v1/messages";
@@ -86,7 +87,7 @@ export async function handleAnthropicProxy(
   // Tracking metadata. x-agent-id attributes the call to a registered agent
   // (and, through it, to its parent system when x-ai-system-id is absent);
   // the agent's MCP allowlists govern which servers/tools the call may use.
-  const { department, userEmail, aiSystemId: attributedSystemId, agent } =
+  const { department, userEmail, aiSystemId: attributedSystemId, agent, client } =
     await resolveProxyAttribution(req);
 
   // Build the target URL
@@ -253,6 +254,7 @@ export async function handleAnthropicProxy(
         promptRisk,
         mcp: mcpResult,
         agent,
+        client,
         declaredServers,
         requestId: anthropicResponse.headers.get("request-id"),
       }).catch((err) => {
@@ -342,6 +344,7 @@ export async function handleAnthropicProxy(
       path: subpath,
       aiSystemId: attributedSystemId,
       agentId: agent?.id ?? null,
+      client,
       ...usageMetadata(tokenUsage, pricing),
       mcp:
         mcpResult.detected || declaredServers.length > 0 || toolUses.length > 0
@@ -410,6 +413,7 @@ async function extractStreamUsage(
     promptRisk: Awaited<ReturnType<typeof analyzePromptRisk>>;
     mcp: import("./mcp-passthrough").McpPassthroughResult;
     agent: AgentGovernance | null;
+    client: ClientFingerprint;
     declaredServers: DeclaredMcpServer[];
     requestId: string | null;
   }
@@ -510,6 +514,7 @@ async function extractStreamUsage(
           path: ctx.subpath,
           aiSystemId: ctx.aiSystemId,
           agentId: ctx.agent?.id ?? null,
+          client: ctx.client,
           ...usageMetadata(usage, pricing),
           mcp:
             ctx.mcp.detected || ctx.declaredServers.length > 0 || toolUses.length > 0

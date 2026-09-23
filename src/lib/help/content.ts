@@ -193,6 +193,16 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 
 **Approve** on an unapproved row adds it to the allowlist. **Oversight → MCP Activity** shows the same data across all agents.
 
+## Discovered agents
+
+**Agents → Discovered** lists AI agents UrNammu has seen that nobody registered, with the signals that flagged each one and the tools, MCP servers, models and users observed.
+
+- **Proxy traffic** — hourly, callers of the proxy that send no \`x-agent-id\` are scored on agent signals: an agent framework in the \`User-Agent\` (Claude Agent SDK, OpenAI Agents SDK, LangGraph, CrewAI and others), tool calls, MCP tool use, volume and round-the-clock activity. Callers scoring 40+ are queued. Interactive coding assistants such as Claude Code and Cursor are skipped. **Run proxy detection** runs it now.
+- **Register agent** creates a draft agent from the entry, with observed MCP servers seeded into its allowlist in Monitor mode. Then have the agent send \`x-agent-id\` so its traffic is governed and attributed.
+- **Start review**, **Approve without registering**, **Mark blocked** and **Reopen** change the review status only. Marking blocked does not stop traffic.
+
+A new entry raises one \`agent_discovery\` alert; later sightings update it silently.
+
 ## AI-assisted risk review
 
 The **AI Agent Risk Review** card on the agent detail page shows two things side by side:

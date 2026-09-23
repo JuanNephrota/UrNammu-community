@@ -68,13 +68,13 @@ async function geminiProxy(req: HttpRequest): Promise<HttpResponseInit> {
 
   const { attribution, response: attributionError } = await resolveAttribution(req);
   if (attributionError) return attributionError;
-  const { department, userEmail, aiSystemId, agent } = attribution;
+  const { department, userEmail, aiSystemId, agent, client } = attribution;
 
   const { bodyText, bodyJson } = await readJsonBody(req);
   const isGeneration =
     (parsed.method === "generateContent" || parsed.method === "streamGenerateContent") && !!bodyJson;
   const isStreaming = parsed.method === "streamGenerateContent";
-  const baseMeta = { path: parsed.path, endpoint: parsed.method, aiSystemId, agentId: agent?.id ?? null };
+  const baseMeta = { path: parsed.path, endpoint: parsed.method, aiSystemId, agentId: agent?.id ?? null, client };
 
   const canonical = { ...canonicalizeRequest("gemini", bodyJson), model };
   const policyBody = isGeneration ? policyViewOf(canonical) : bodyJson;

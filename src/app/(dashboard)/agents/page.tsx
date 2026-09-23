@@ -6,18 +6,34 @@ import { Button } from "@/components/ui/button";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
+import { getSession } from "@/lib/auth-guard";
+import { formatDateTime } from "@/lib/utils";
+import { AGENT_DISCOVERY_SOURCE_LABELS, isAgentDiscoverySource, type AgentSignal } from "@/lib/agent-discovery";
+import { CLIENT_LABELS } from "@/lib/caller-fingerprint";
+import { DiscoveredAgentsTable, type DiscoveredAgentRow } from "@/components/agents/discovered-agents-table";
 
-export default async function AgentsPage() {
-  const agents = await prisma.aIAgent.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      owner: { select: { name: true } },
-      aiSystem: { select: { id: true, name: true } },
-    },
-  });
+export default async function AgentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const { view } = await searchParams;
+  const showDiscovered = view === "discovered";
+  const [session, openDiscoveries] = await Promise.all([
+    getSession(),
+    prisma.discoveredAgent.count({ where: { status: { in: ["DISCOVERED", "UNDER_REVIEW"] } } }),
+  ]);
+  const canEdit = session?.user.role === "ADMIN" || session?.user.role === "COMPLIANCE_OFFICER";
 
-  return (
-    <div className="space-y-6">
+  const tabClass = (active: boolean) =>
+    `rounded-md px-3 py-1.5 text-sm transition-colors ${
+      active
+        ? "bg-[var(--accent-dim)] text-[var(--accent)]"
+        : "text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+    }`;
+
+  const header = (
+    <>
       <PageHeader
         title="AI Agent Registry"
         description="Track autonomous agents, capabilities, and human oversight requirements"
@@ -28,6 +44,68 @@ export default async function AgentsPage() {
           </Button>
         </Link>
       </PageHeader>
+      <nav className="flex gap-1" aria-label="Agent views">
+        <Link href="/agents" className={tabClass(!showDiscovered)}>
+          Registry
+        </Link>
+        <Link href="/agents?view=discovered" className={tabClass(showDiscovered)}>
+          Discovered
+          {openDiscoveries > 0 && (
+            <span className="ml-1.5 rounded bg-[var(--warning-dim)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning-strong)]">
+              {openDiscoveries}
+            </span>
+          )}
+        </Link>
+      </nav>
+    </>
+  );
+
+  if (showDiscovered) {
+    const discovered = await prisma.discoveredAgent.findMany({
+      orderBy: [{ lastSeenAt: "desc" }, { createdAt: "desc" }],
+      take: 500,
+      include: { linkedAgent: { select: { id: true, name: true } } },
+    });
+    const rows: DiscoveredAgentRow[] = discovered.map((d) => ({
+      id: d.id,
+      source: d.source,
+      sourceLabel: isAgentDiscoverySource(d.source) ? AGENT_DISCOVERY_SOURCE_LABELS[d.source] : d.source,
+      name: d.name,
+      description: d.description,
+      platform: d.platform,
+      framework: d.framework ? CLIENT_LABELS[d.framework] ?? d.framework : null,
+      status: d.status,
+      confidence: d.confidence,
+      score: d.score,
+      signals: Array.isArray(d.signals) ? (d.signals as unknown as AgentSignal[]) : [],
+      tools: d.tools,
+      mcpServers: d.mcpServers,
+      models: d.models,
+      userEmails: d.userEmails,
+      requestCount: d.requestCount,
+      // Formatted on the server so the client render matches (no hydration drift).
+      lastSeenAt: d.lastSeenAt ? formatDateTime(d.lastSeenAt) : null,
+      linkedAgent: d.linkedAgent,
+    }));
+    return (
+      <div className="space-y-6">
+        {header}
+        <DiscoveredAgentsTable rows={rows} canEdit={canEdit} />
+      </div>
+    );
+  }
+
+  const agents = await prisma.aIAgent.findMany({
+    orderBy: { createdAt: "desc" },
+    include: {
+      owner: { select: { name: true } },
+      aiSystem: { select: { id: true, name: true } },
+    },
+  });
+
+  return (
+    <div className="space-y-6">
+      {header}
 
       {agents.length === 0 ? (
         <Card>

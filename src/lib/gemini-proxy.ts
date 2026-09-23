@@ -77,7 +77,7 @@ export async function handleGeminiProxy(req: NextRequest, subpath: string): Prom
   const parsed = parseGeminiPath(subpath);
   const targetUrl = `${GEMINI_BASE}${parsed.path}${search}`;
   const model = parsed.model ?? "unknown";
-  const { department, userEmail, aiSystemId, agent } = await resolveProxyAttribution(req);
+  const { department, userEmail, aiSystemId, agent, client } = await resolveProxyAttribution(req);
 
   let bodyText: string | null = null;
   let bodyJson: Record<string, unknown> | null = null;
@@ -95,7 +95,7 @@ export async function handleGeminiProxy(req: NextRequest, subpath: string): Prom
     }
   }
 
-  const baseMeta = { path: parsed.path, endpoint: parsed.method, aiSystemId, agentId: agent?.id ?? null };
+  const baseMeta = { path: parsed.path, endpoint: parsed.method, aiSystemId, agentId: agent?.id ?? null, client };
   const isGeneration =
     (parsed.method === "generateContent" || parsed.method === "streamGenerateContent") && !!bodyJson;
 

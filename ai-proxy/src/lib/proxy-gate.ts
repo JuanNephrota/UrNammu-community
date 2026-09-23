@@ -8,6 +8,8 @@
 import { HttpRequest, HttpResponseInit } from "@azure/functions";
 import { secretsMatch } from "./secret-compare";
 import { loadAgent, type LoadedAgent } from "./agent-loader";
+import { loadPromptHashSalt } from "./prompt-hash-salt";
+import { fingerprintCaller, type ClientFingerprint } from "./caller-fingerprint";
 import {
   loadEnforcementMode,
   loadPoliciesForSystem,
@@ -40,6 +42,8 @@ export type Attribution = {
   userEmail: string | null;
   aiSystemId: string | null;
   agent: LoadedAgent | null;
+  /** Client framework / SDK + salted credential hash, logged as `metadata.client`. */
+  client: ClientFingerprint;
 };
 
 /**
@@ -52,6 +56,8 @@ export async function resolveAttribution(
 ): Promise<{ attribution: Attribution; response: HttpResponseInit | null }> {
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
+  const salt = await loadPromptHashSalt().catch(() => null);
+  const client = fingerprintCaller({ headers: req.headers, url: req.url, salt });
   const requestedAgentId = req.headers.get("x-agent-id") ?? null;
   let agent: LoadedAgent | null = null;
   if (requestedAgentId) {
@@ -60,7 +66,7 @@ export async function resolveAttribution(
     } catch (err) {
       console.error("Agent governance unavailable — failing closed:", err);
       return {
-        attribution: { department, userEmail, aiSystemId: null, agent: null },
+        attribution: { department, userEmail, aiSystemId: null, agent: null, client },
         response: {
           status: 503,
           jsonBody: {
@@ -74,7 +80,7 @@ export async function resolveAttribution(
     }
   }
   const aiSystemId = req.headers.get("x-ai-system-id") ?? agent?.aiSystemId ?? null;
-  return { attribution: { department, userEmail, aiSystemId, agent }, response: null };
+  return { attribution: { department, userEmail, aiSystemId, agent, client }, response: null };
 }
 
 /** The proxy route parameter (`{*path}`) as a leading-slash path. */

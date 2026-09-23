@@ -18,6 +18,11 @@ const MIRRORS = [
   { app: "src/lib/proxy-providers.ts", proxy: "ai-proxy/src/lib/proxy-providers.ts" },
   { app: "src/lib/prompt-hash.ts", proxy: "ai-proxy/src/lib/prompt-hash.ts" },
   {
+    app: "src/lib/caller-fingerprint.ts",
+    proxy: "ai-proxy/src/lib/caller-fingerprint.ts",
+    proxyHeaderLines: 2,
+  },
+  {
     app: "src/lib/mcp-tool-governance.ts",
     proxy: "ai-proxy/src/lib/mcp-tool-governance.ts",
     // The proxy copy opens with a two-line "MIRROR of ..." banner.

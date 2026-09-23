@@ -333,6 +333,32 @@ An empty list means "not configured" and allows everything for that dimension wh
 
 **Where to look.** The agent detail page carries a **MCP Tool Governance** card with a blast-radius strip (access level, parent system, connected systems, capabilities, servers and tools seen), the allowlists, and every observed server and tool with an **Approve** button for unapproved rows. **Oversight → MCP Activity** shows the same across all agents plus the last hundred tool calls. Session traces annotate proxy spans with the number of tool calls observed.
 
+### Discovered Agents
+
+**Agents → Discovered** is the review queue for AI agents UrNammu has seen but nobody registered. Each entry records where it was found, why it looks like an agent (scored signals), and the tools, MCP servers, models and users observed. The tab badge counts entries that still need review.
+
+Sources:
+
+- **Proxy traffic.** Every proxied request now records a *client fingerprint* in its usage metadata: the agent framework or SDK named by its `User-Agent` / `x-stainless-*` headers, and a salted hash of the credential it used (the key itself is never stored). Hourly, `/api/cron/agent-discovery` groups the last 7 days of traffic that carried **no** `x-agent-id` by caller (provider, credential hash, user, system) and scores each caller:
+
+  | Signal | Points |
+  |---|---|
+  | Agent framework in the `User-Agent` (Claude Agent SDK, OpenAI Agents SDK, LangGraph, CrewAI, AutoGen, Pydantic AI, Semantic Kernel, Mastra, Strands, Google ADK, smolagents) | 40 |
+  | LLM orchestration library (LangChain, LlamaIndex, Vercel AI SDK, LiteLLM) | 20 |
+  | The model returned tool calls | 30 |
+  | MCP tools were invoked | 15 |
+  | 20+ tool calls in the window | 10 |
+  | Active in 12+ distinct hours | 10 |
+  | No user identity (service credential) | 5 |
+
+  Callers scoring 40 or more are queued; confidence is high at 70+, medium at 50+, low otherwise. Callers with fewer than 5 requests, with no identity at all, or whose traffic is mostly an interactive coding assistant (Claude Code, Cursor, Copilot, Codex CLI, Cline, Continue, Windsurf, Aider, Zed) are skipped, since those are governed as tools. **Run proxy detection** on the tab runs the job immediately. Framework detection depends on what each client puts in its `User-Agent`, so a framework that sends only the vendor SDK's default is found by its tool-use signals instead.
+
+**Reviewing.** **Register agent** creates a `DRAFT` agent from the entry (description, observed tools as capabilities, observed MCP servers seeded into the MCP server allowlist in Monitor mode) and marks the entry `REGISTERED`. **Start review**, **Approve without registering**, **Mark blocked** and **Reopen** change only the review status. Marking an agent blocked records the decision; it does not stop its traffic. Every change is audit-logged.
+
+The first time an entry appears, an alert with source `agent_discovery` is raised. Later sightings update the entry (last seen, request count, tools) without new alerts, whatever its status.
+
+**Getting a detected agent attributed.** After registering, have the agent send `x-agent-id: <agent id>` on its proxy calls. From then on its traffic is governed by the agent's MCP allowlists, and detection ignores it.
+
 ### AI-Assisted Agent Risk Review
 
 On the agent detail page, **Run Risk Review** calls `/api/ai/assess-agent-risk` with the agent configuration. The response populates:
@@ -1563,6 +1589,7 @@ Every background job has its own cron endpoint, guarded by `CRON_SECRET` and wir
 | `/api/cron/discovery-scan/<source>` | One entry each for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`. Fails scans of that source stuck in `running` for 10+ minutes, then scans when due. |
 | `/api/cron/governance-automation` | Governance automation (below). |
 | `/api/cron/key-usage-rules` | Key usage rule evaluation (see [Key Usage Rules](#key-usage-rules)); a failed evaluation is reported in the response rather than failing the cron. |
+| `/api/cron/agent-discovery` | Scores the last 7 days of unattributed proxy traffic per caller and queues agent-like callers under **Agents → Discovered** (see [Discovered Agents](#discovered-agents)). |
 
 Each route checks its own enable flag and interval in `AppSetting` and reports `due`, `skippedReason`, and `nextDueAt` in its response, so a manual `curl` shows exactly why a job did or did not run.
 
@@ -1732,6 +1759,7 @@ Runs on every maintenance call. Produces alerts for:
 | **Governance Incident** | A notable event (misuse, breach, outage) linked to a system. |
 | **Shadow AI** | Unregistered / ungoverned AI tool detected in the organization. |
 | **DiscoveredAITool** | A shadow-AI finding from Google Workspace, Microsoft 365, or DNS import. |
+| **DiscoveredAgent** | An AI agent seen in proxy traffic, an agent platform, or an endpoint's MCP configuration that is awaiting review; registering one creates an `AIAgent`. |
 | **Oversight** | Provider-level usage, cost, anomaly, and vendor telemetry. |
 | **Posture Score** | Composite 0–100 governance health metric from five weighted dimensions (compliance, risk, coverage, shadow AI, incidents). |
 | **Provider Posture** | Side-by-side provider comparison across cost, incidents, exceptions, and risk tier. |

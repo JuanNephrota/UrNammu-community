@@ -83,7 +83,7 @@ async function bedrockProxy(req: HttpRequest): Promise<HttpResponseInit> {
 
   const { attribution, response: attributionError } = await resolveAttribution(req);
   if (attributionError) return attributionError;
-  const { department, userEmail, aiSystemId, agent } = attribution;
+  const { department, userEmail, aiSystemId, agent, client } = attribution;
 
   // The body must reach Bedrock byte-for-byte (SigV4 covers its hash).
   const rawBody = req.method === "GET" || req.method === "HEAD" ? null : Buffer.from(await req.arrayBuffer());
@@ -110,6 +110,7 @@ async function bedrockProxy(req: HttpRequest): Promise<HttpResponseInit> {
     authMode: sigv4 ? "sigv4" : "bearer",
     aiSystemId,
     agentId: agent?.id ?? null,
+    client,
   };
 
   const canonical = { ...canonicalizeRequest("anthropic", bodyJson), model };

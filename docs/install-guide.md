@@ -182,7 +182,7 @@ All variables read from `.env` in local dev and from the platform environment (V
 |----------|---------|---------|
 | `CRON_SECRET` | Bearer token for the maintenance endpoint and every `/api/cron/*` job. | — |
 | `PROXY_SECRET` | Shared secret for the AI proxy (`ai-proxy/`). | — |
-| `PROMPT_HASH_SALT` | HMAC salt for the dangerous-prompt correlation hash (also settable as the `prompt_hash_salt` setting). Falls back to `NEXTAUTH_SECRET`. Set the same value on the Azure proxy so hashes match across surfaces. Only the hash is stored, never the prompt or the salt. | `NEXTAUTH_SECRET` |
+| `PROMPT_HASH_SALT` | HMAC salt for the dangerous-prompt correlation hash (also settable as the `prompt_hash_salt` setting). Falls back to `NEXTAUTH_SECRET`. Set the same value on the Azure proxy so hashes match across surfaces. Only the hash is stored, never the prompt or the salt. Also keys the caller-credential hash that agent discovery groups proxy traffic by, so changing it (or letting the two proxies disagree) makes every proxy caller look new and re-queues them under Agents → Discovered. | `NEXTAUTH_SECRET` |
 
 ### 3.3 Auth providers (optional — can also live in Settings UI)
 
@@ -858,6 +858,7 @@ UrNammu schedules **one cron entry per background job**. Every route authenticat
 | `/api/cron/discovery-scan/<source>` | 4 (`google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`) | Runs that shadow-AI scan on its configured interval; fails stuck scans of the same source first. |
 | `/api/cron/governance-automation` | 1 | Review-renewal, exception-renewal, and ownership-escalation alerts. |
 | `/api/cron/key-usage-rules` | 1 | Key usage rule evaluation. |
+| `/api/cron/agent-discovery` | 1 | Proxy agent detection: queues agent-like callers without `x-agent-id` under Agents → Discovered. |
 | `/api/cron/endpoint-agent-sweep` | 1 | Marks endpoint agents that have stopped reporting as `STALE`, so a fleet of dead agents reads as "no data" rather than "no AI activity". |
 
 Running each provider and each scan source in its own function means a slow or failing one cannot delay the others, and each provider's schedule is tracked from its own last success.
@@ -901,6 +902,7 @@ All of the above are already configured in `vercel.json` (26 entries, staggered 
     { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
     { "path": "/api/cron/discovery-scan/crowdstrike", "schedule": "45 * * * *" },
     { "path": "/api/cron/governance-automation", "schedule": "50 * * * *" },
+    { "path": "/api/cron/agent-discovery", "schedule": "52 * * * *" },
     { "path": "/api/cron/key-usage-rules", "schedule": "55 * * * *" },
     { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
     { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
@@ -926,7 +928,7 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
   https://<your-domain>/api/cron/provider-sync/anthropic
 ```
 
-Hit every provider you have configured, each discovery source you have enabled, plus `governance-automation` and `key-usage-rules` hourly, then add whichever dedicated crons you need from §9.2. Skipping the prune jobs is the one omission that degrades over time rather than immediately.
+Hit every provider you have configured, each discovery source you have enabled, plus `governance-automation`, `agent-discovery` and `key-usage-rules` hourly, then add whichever dedicated crons you need from §9.2. Skipping the prune jobs is the one omission that degrades over time rather than immediately.
 
 > **Migrating from the old endpoint**: `GET /api/scheduler/maintenance` still works for one release as a deprecated shim (it runs every job inside a single 60-second function and returns a `Deprecation: true` header). Move your scheduler to the per-job routes above before the next release.
 
