@@ -20,7 +20,9 @@ The app is organized around a few core governance surfaces:
 - `Agents`
   Tracks AI agents, autonomy, human review requirements, connected systems, AI-assisted agent risk review, and MCP tool governance (server/tool allowlists, observed tool activity from the proxy).
 - `Shadow AI`
-  Ingests and normalizes discoveries from Google Workspace, Microsoft 365, Hexnode UEM, CrowdStrike Falcon, and DNS/proxy/Netskope imports. Also owns the two enforcement layers for blocked tools.
+  Ingests and normalizes discoveries from Google Workspace, Microsoft 365, Hexnode UEM, CrowdStrike Falcon, DNS/proxy/Netskope imports, and the endpoint agent. Also owns the two enforcement layers for blocked tools.
+- `Endpoints`
+  Fleet view of machines running the endpoint agent (`ops/endpoint-agent`) and the AI tools each one runs and reaches — the only source that observes from *inside* a device, covering off-VPN laptops, personal-tier accounts, desktop apps with no SaaS audit trail, and local inference.
 - `Risk Center`
   Handles system risk assessments, dynamic review questions, use-case templates, agent-aware overlays, and reassessment triggers.
 - `Compliance`
@@ -54,6 +56,8 @@ The app is organized around a few core governance surfaces:
   Core data model.
 - `prisma/migrations`
   Database migrations.
+- `ops/endpoint-agent`
+  Standalone Go project for the endpoint agent — collectors, packaging, and MDM deploy scripts. Built and released separately from the Next.js app; excluded from its TypeScript build by virtue of not being TypeScript.
 
 ## Key Domain Models
 
@@ -97,6 +101,8 @@ The most important Prisma models are:
   Report configuration, run history with stored artifacts, and recurring delivery.
 - `ClaudeCodeEvent` / `ClaudeCodeMetric`, `CursorMetric` / `CursorSpan`
   Per-surface developer-AI telemetry from the OpenTelemetry pipeline. Metadata only — no prompt or code content.
+- `EndpointDevice` and `EndpointDetection`
+  The endpoint agent's fleet and its observations. `EndpointDevice` is one enrolled machine keyed by a stable hardware id (`machineId`), holding the SHA-256 of its per-device bearer token — the plaintext is returned once at enrollment and never stored — plus `status` (`ACTIVE` | `STALE` | `REVOKED`) and the last cycle's per-collector health. `EndpointDetection` is one `(device, signal, toolName, evidence)` row, merged on repeat so the table grows with the fleet's tool surface, not with time; `evidence` is non-null and part of the unique key because Postgres treats NULLs as distinct, which would defeat the index. Never store content here: the schema deliberately has no field wide enough for a prompt, and `evidence` holds a bundle id, a bare hostname, or `runtime:port`.
 - `ProxyHealthSnapshot`
   Periodic Azure Monitor captures backing the Proxy Health board.
 - `PromptRiskRule` and `PromptRiskException`
@@ -154,6 +160,7 @@ Important files:
 - `src/lib/microsoft-365-shadow-ai.ts`
 - `src/lib/hexnode.ts`
 - `src/lib/crowdstrike.ts`
+- `src/lib/endpoint-agent.ts` (manifest, enrollment, report ingest) and `src/lib/endpoint-fleet.ts` (console read models)
 - `src/lib/discovered-tools-ingest.ts` and `src/lib/third-party-proxy-ingest.ts` (DNS / proxy / Netskope imports)
 - `src/lib/ai-tools-registry.ts`
 - `src/lib/discovery-merge.ts` (pure merge rules for user count, emails, scopes, first/last seen)
@@ -199,6 +206,33 @@ Blocking a discovery records a decision; it does not by itself stop anything, be
 - `src/lib/identity-enforcement.ts` — disables the app at the identity provider (Google Workspace or Microsoft Entra) so sign-ins stop. Requires the IdP app handle captured at scan time; without one the result is `skipped`, and a missing Graph permission surfaces as `failed` rather than silent success.
 
 The two are complementary, not redundant: identity enforcement only governs apps federated to the IdP, so a tool someone used with a personal account is only catchable by the network feed. When adding enforcement behavior, keep the "record the decision" path separate from the "make it stick" path — that separation is why a block is still auditable when no enforcement layer is configured.
+
+## Endpoint Agent Architecture
+
+The endpoint agent (`ops/endpoint-agent`, Go) is the only source that observes AI use from *inside* a machine. Everything else watches from the outside and shares one blind spot: an off-VPN laptop, a personal-tier account, a desktop app with no SaaS audit trail, and local inference, which produces no network evidence at all.
+
+Server side lives in `src/lib/endpoint-agent.ts` (manifest, enrollment, ingest), `src/lib/validations/endpoint-agent.ts` (the wire contract), `src/lib/endpoint-fleet.ts` (console read models), and `src/app/api/endpoint-agent/*`.
+
+**Detection knowledge stays on the server.** The agent carries no tool list. `buildDetectionManifest()` compiles `ai-tools-registry.ts` into a manifest — allowlisted hostnames, app-name substrings, local-runtime ports — that the agent fetches (ETag-conditional) and filters against locally. Three consequences worth preserving:
+
+- Growing the registry improves every deployed agent with no agent release.
+- A hostname that matches nothing known **never leaves the endpoint**. This is what makes the browser collector defensible: it is an allowlist, not a history upload.
+- Final classification still runs server-side through `resolveAIToolMatch` / `matchDomain`, so endpoint discoveries are scored exactly like OAuth-scan and DNS ones.
+
+`appPatterns` merges `clientNamePatterns` and `appIdPatterns` into one flat substring list and deliberately **excludes** `publisherPatterns` — those are single vendor words ("google", "microsoft") that would make the agent report most of the software on a corporate laptop. Patterns shorter than 3 characters are dropped for the same reason. The agent's test is meant to be crude; precision is the server's job.
+
+**The wire contract is the privacy boundary.** `validations/endpoint-agent.ts` has no free-text field wide enough to carry a prompt, and its `hostname` type rejects anything containing a slash — so a full URL cannot be smuggled through a domain field even by a compromised agent. When extending the schema, keep that property: add identifiers and counts, never content.
+
+**Per-device tokens.** The org-wide enrollment secret is readable on every managed laptop, so it is treated as low-value — it can enroll a device and nothing else. `enrollDevice()` issues a 256-bit token stored only as a SHA-256 hash. Revocation is terminal by design: a `REVOKED` device is refused re-enrollment, so reinstalling the agent cannot resurrect it, and `PATCH /api/endpoint-agent/devices/[id]` also rotates `tokenHash` to an unmatchable value so the credential is dead even if the status is later flipped back.
+
+**Ingest.** `ingestEndpointReport()` normalizes all four collectors into one shape, upserts `EndpointDetection` on `(device, signal, toolName, evidence)`, then rolls matched observations into `DiscoveredAITool` through the same `discovery-merge.ts` helpers every other source uses. Two rules that are easy to get wrong:
+
+- The rollup keys on the registry's **canonical** domain (`tool.domains[0]`), not the observed hostname — the same thing `discovered-tools-ingest.ts` does. Browser history yields every host a tool touches, so keying on the observed host turned one person using ChatGPT into six `DiscoveredAITool` rows and six identical alerts.
+- **Unmatched** observations are deliberately excluded from the rollup. They stay visible on the device page as "Unclassified". One laptop's unrecognized app name is not fleet-wide shadow-AI evidence, and promoting it would bury reviewers.
+
+Client timestamps are clamped (`clampTimestamp`) into a believable window before storage, because endpoint clocks drift and an unclamped value would corrupt `firstSeenAt` ordering permanently — the merge takes the minimum and never walks it back.
+
+**Platform honesty.** The macOS network collector is intentionally unimplemented and reports `unsupported_platform`: there is no unprivileged, stable way to enumerate resolved hostnames on a modern Mac, and reverse-resolving connections yields CDN PTRs that match nothing. Reporting a collector as unsupported is better than shipping one that silently returns zero — the console surfaces per-collector health precisely so under-reporting is visible rather than read as "no AI activity".
 
 ## Telemetry Architecture
 
@@ -247,6 +281,7 @@ Every scheduled job is its own route under `src/app/api/cron/`, wired as its own
 - `/api/cron/discovery-scan/[source]` — `runScheduledDiscoveryScan()` for `google_workspace`, `microsoft_365`, `hexnode`, `crowdstrike`, `maxDuration = 300`. Each source first fails its own scans stuck in `running` for 10+ minutes, then scans if enabled, configured, idle, and past its interval.
 - `/api/cron/governance-automation` — `runGovernanceAutomationJob()`: review renewals, exception renewals, ownership escalations, and the **usage-after-deactivation** check (`evaluateUsageAfterDeactivation()` in `governance-automation.ts`, pure): deactivated `DirectoryPerson` rows from the last 180 days are matched — by primary email or alias — against the latest `UsageBucket`, `AssistantDailyStat`, and `APIUsageLog` activity, and a `HIGH` alert with source `usage_after_deactivation` is raised when activity postdates `deactivatedAt`, deduped per person per 7 days. A telemetry read failure in this check is logged and reported as 0 rather than failing the other alert families.
 - `/api/cron/key-usage-rules` — `runKeyUsageRulesJob()`: never throws; a failed evaluation returns `ok: false` with a 207 so one bad rule shows up in the cron log without a 500.
+- `/api/cron/endpoint-agent-sweep` — `markStaleDevices()` in `src/lib/endpoint-agent.ts`: flips `ACTIVE` devices with no accepted report inside `ENDPOINT_STALE_AFTER_MS` (6 h) to `STALE`. This exists because the failure it catches is the dangerous one — a fleet of dead agents makes the console read as "no AI activity" rather than "no data". Stale is not revoked: the token still works and the device flips back on its next report.
 
 Splitting the work this way is what makes the acceptance criteria hold: a provider that hangs burns only its own budget, and a healthy provider's success no longer resets the clock for a stalled one. `runProviderSyncJob()` (the manual **Sync now** button) still fans out to every provider at once via the same `runProviderSync()` unit.
 

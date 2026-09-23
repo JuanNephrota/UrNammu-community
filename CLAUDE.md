@@ -46,7 +46,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │   │   ├── agents/     AI Agent Registry (CRUD + detail + edit + MCP tool governance card)
 │   │   │   ├── risk-center/ Risk scoring + heat map + assessments
 │   │   │   ├── compliance/ Policy management + framework control catalog/coverage + audit trail
-│   │   │   ├── oversight/  API usage monitoring + cost tracking + Usage by Person (people/)
+│   │   │   ├── oversight/  API usage monitoring + cost tracking + Usage by Person (people/) + Endpoints (endpoints/)
 │   │   │   ├── shadow-ai/  Shadow AI discovery + Google Workspace scan + DNS import
 │   │   │   ├── alerts/     Alert management
 │   │   │   └── settings/   General + Provider Admin APIs + Proxy + Users & Identity + Shadow AI
@@ -65,6 +65,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │       │   ├── route   CRUD
 │   │       │   ├── scan/   Google Workspace OAuth scan
 │   │       │   └── ingest/ DNS/proxy log ingestion
+│       ├── endpoint-agent/ Endpoint agent enroll + manifest + report + device admin
 │   │       └── proxy/      Claude + OpenAI transparent proxy (Vercel fallback)
 │   ├── components/
 │   │   ├── ui/             Primitives: button, badge, card, input, select, dialog, tabs, data-table
@@ -92,6 +93,10 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   ├── src/lib/            pricing.ts, db.ts, stream-parser.ts
 │   ├── prisma/             Minimal schema (APIUsageLog + User only)
 │   └── host.json           10-min timeout config
+├── ops/
+│   ├── endpoint-agent/     Go endpoint agent (collectors, packaging, Hexnode MDM scripts)
+│   ├── otel-collector/     Claude Code + Cursor OTel gateway (Azure Container Apps)
+│   └── cursor-hook/        Cursor OTel hook client setup
 ├── public/                 UrNammu logos (dark + light + wordmarks)
 └── vercel.json             Cron config (daily shadow AI scan at 2 AM)
 ```
@@ -122,7 +127,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 - Links to User, AISystem, AIAgent for traceability
 
 ### Shadow AI Discovery
-- Three detection methods: Google Workspace OAuth scan, DNS/proxy log import, manual reporting
+- Four detection methods: Google Workspace OAuth scan, DNS/proxy log import, the endpoint agent, manual reporting
 - Google Workspace discovery settings live in `Settings > Shadow AI`
 - Google Sign-In settings live in `Settings > Users & Identity`
 - DNS import accepts CSV/TXT files or JSON API calls
@@ -163,6 +168,10 @@ PROXY_SECRET=<shared secret for API proxy auth>
 # Salt for the dangerous-prompt correlation hash (also `prompt_hash_salt` setting).
 # Falls back to NEXTAUTH_SECRET. Set identically on the Azure Function App.
 PROMPT_HASH_SALT=<random>
+
+# Endpoint agent enrollment (can also be set in Settings > Endpoint Agent).
+# Low-value by design: it can enroll a device and nothing else.
+ENDPOINT_AGENT_ENROLLMENT_SECRET=<random>
 
 # Shadow AI blocklist feed (can also be set in Settings > Shadow AI)
 # Bearer token for GET /api/discovered-tools/blocklist — the denylist of BLOCKED

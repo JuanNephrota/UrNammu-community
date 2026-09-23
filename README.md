@@ -3,7 +3,8 @@
 UrNammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
 - AI system and agent inventory, with per-agent MCP server/tool allowlists enforced at the proxy
-- Shadow AI discovery from Google Workspace, Microsoft 365, Hexnode UEM devices, and DNS/proxy/Netskope log imports
+- Shadow AI discovery from Google Workspace, Microsoft 365, Hexnode UEM devices, DNS/proxy/Netskope log imports, and the endpoint agent
+- An installable endpoint agent for managed macOS and Windows machines, reporting installed AI apps, AI hostnames from browser history, and local model runtimes — identifiers and counts only, never prompts, responses or URLs
 - Risk assessments with templates, branching questions, issue tracking, and agent-aware overlays
 - Governance workflows with staged approvals, exceptions, evidence, incidents, renewal automation, and escalations
 - Policy-as-code: machine-readable policy rules enforced at the proxy (off / dry-run / enforce) with a Policy Denials log
@@ -26,7 +27,8 @@ For a codebase walkthrough and extension guide, see [docs/implementation-guide.m
 
 - `Registry`: central inventory of AI systems
 - `Agents`: tracked AI agents and assistants, including MCP tool governance (allowlists, observed tool activity, enforce mode)
-- `Shadow AI`: discovery and triage of unregistered tools (Google Workspace, Microsoft 365, Hexnode, DNS/Netskope)
+- `Shadow AI`: discovery and triage of unregistered tools (Google Workspace, Microsoft 365, Hexnode, DNS/Netskope, endpoint agent)
+- `Endpoints`: machines running the endpoint agent, the AI tools each one runs and reaches, and per-collector health
 - `Risk Center`: system and agent-aware risk assessments
 - `Compliance`: policy assignment, audit evidence, runtime policy enforcement, a Policy Denials log, and the framework control catalog with coverage and crosswalk
 - `Oversight`: provider usage, costs, anomalies, investigations, vendor governance, and per-surface dashboards (Claude Platform, Claude Code, Cowork, Cursor)
@@ -97,6 +99,9 @@ GEMINI_BILLING_LOCATION=US
 
 # Required if you want background maintenance via cron
 CRON_SECRET=replace-with-a-long-random-secret
+
+# Optional endpoint agent enrollment (Settings > Endpoint Agent wins; see ops/endpoint-agent)
+ENDPOINT_AGENT_ENROLLMENT_SECRET=
 
 # Optional Claude Code / Cursor OpenTelemetry ingestion (per-surface oversight dashboards)
 CLAUDE_CODE_TELEMETRY_SECRET=
