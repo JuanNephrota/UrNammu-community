@@ -144,7 +144,7 @@ If you add new approval gates or recommendation logic, update these shared libs 
 Vendor governance has four layers:
 
 - profile data in `VendorProfile`, plus `VendorAssessment` rows for the vendor risk questionnaire
-- composite scoring in `src/lib/vendor-risk.ts` (a completed HIGH or CRITICAL questionnaire is one of its inputs)
+- composite scoring in `src/lib/vendor-risk.ts` (the latest completed questionnaire is one of its inputs: MEDIUM adds 6 points, HIGH 15, CRITICAL 25)
 - lifecycle and renewal state in `src/lib/vendor-lifecycle.ts`
 - the questionnaire bank and scoring in `src/lib/vendor-questionnaire.ts`, and the onboarding checklist in `src/lib/vendor-onboarding.ts`
 
