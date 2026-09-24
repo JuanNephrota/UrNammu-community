@@ -2,9 +2,13 @@
 
 This page is the governance hub for a single AI system. Each tab represents a different dimension of governance, and the tab labels carry live counts so you can see where the work is without opening them.
 
+## Governance checklist
+
+The Overview tab opens with a checklist of everything the system needs before it is fully governed: a description and use case, vendor/model/data details, a cleared vendor (for external vendors), a risk assessment, an EU AI Act classification, policies, evidence, the required reviews, and the approval decision. Each open item links to where you complete it, and **Continue** jumps to the next one.
+
 ## Tabs
 
-- **Overview** — registered metadata and use case, the EU AI Act classification, the approval decision and staged review history, governance exceptions, evidence artifacts, incidents, telemetry attribution, and automated recommendations.
+- **Overview** — the governance checklist, registered metadata and use case, the EU AI Act classification, the approval decision and staged review history, governance exceptions, evidence artifacts, incidents, telemetry attribution, and automated recommendations.
 - **Agents (n)** — agents pointing to this system, with autonomy badges.
 - **Risk (n)** — the risk profile, a dimension radar, a score-history trend chart, and open risk issues. **New assessment** opens a guided assessment for this system.
 - **Compliance (n)** — assigned policies, compliance status, evidence text, and compliance issues, plus the **Framework Controls** card for control-by-control assessment against NIST AI RMF, ISO 42001, the EU AI Act and SOC 2. The **AI Assess** button runs automated gap analysis.

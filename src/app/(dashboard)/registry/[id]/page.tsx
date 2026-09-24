@@ -45,16 +45,20 @@ import { buildEuAiActGovernanceInput } from "@/lib/eu-ai-act-data";
 import { TIER_LABELS, tierBadgeVariant } from "@/lib/eu-ai-act";
 import { loadSystemCoverage, pickDefaultFramework } from "@/lib/framework-controls-data";
 import type { GovernanceReviewStage } from "@prisma/client";
+import { ChecklistCard } from "@/components/workflow/checklist-card";
+import { getSession } from "@/lib/auth-guard";
+import { canRunWorkflows } from "@/lib/workflow";
+import { getSystemChecklist, isExternalVendor } from "@/lib/system-onboarding";
 
 export default async function SystemDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; framework?: string }>;
+  searchParams: Promise<{ tab?: string; framework?: string; assessed?: string }>;
 }) {
   const { id } = await params;
-  const { tab, framework: requestedFramework } = await searchParams;
+  const { tab, framework: requestedFramework, assessed } = await searchParams;
 
   const system = await prisma.aISystem.findUnique({
     where: { id },
@@ -127,13 +131,20 @@ export default async function SystemDetailPage({
 
   if (!system) notFound();
 
-  const [linkedDiscoveries, frameworkCoverage] = await Promise.all([
+  const [linkedDiscoveries, frameworkCoverage, session, vendorProfile] = await Promise.all([
     prisma.discoveredAITool.findMany({
       where: { linkedSystemId: system.id },
       orderBy: { detectedAt: "desc" },
       take: 5,
     }),
     loadSystemCoverage(system.id),
+    getSession(),
+    isExternalVendor(system.vendor)
+      ? prisma.vendorProfile.findFirst({
+          where: { vendor: { equals: system.vendor ?? "", mode: "insensitive" } },
+          select: { id: true, securityReviewStatus: true },
+        })
+      : null,
   ]);
   const selectedFramework = pickDefaultFramework(frameworkCoverage, requestedFramework);
   const euAiAct = buildEuAiActGovernanceInput(
@@ -306,6 +317,28 @@ export default async function SystemDetailPage({
       euAiAct,
     });
   })();
+  const latestStageDecisions = new Map<string, boolean>();
+  for (const review of system.governanceReviews) {
+    if (!latestStageDecisions.has(review.stage)) latestStageDecisions.set(review.stage, review.approved);
+  }
+  const onboardingChecklist = getSystemChecklist({
+    id: system.id,
+    description: system.description,
+    useCase: system.useCase,
+    vendor: system.vendor,
+    modelType: system.modelType,
+    dataInputs: system.dataInputs,
+    dataOutputs: system.dataOutputs,
+    riskAssessmentsCount: system.riskAssessments.length,
+    hasEuAiActClassification: Boolean(system.euAiActClassification),
+    policyAssignmentsCount: system.policyAssignments.length,
+    evidenceCount: system.evidenceArtifacts.length,
+    requiredStages,
+    approvedStages: [...latestStageDecisions].filter(([, approved]) => approved).map(([stage]) => stage),
+    latestApprovalDecision: system.approvals[0]?.decision ?? null,
+    vendorProfile,
+  });
+  const canEdit = canRunWorkflows(session?.user.role);
   const costLookup = buildCostLookup(costBuckets);
   const telemetryRows = buildTelemetryActivityRows(usageBuckets, costLookup, 8);
   const telemetryProviders = new Set(usageBuckets.map((bucket) => bucket.provider));
@@ -352,6 +385,16 @@ export default async function SystemDetailPage({
         )}
       </div>
 
+      {assessed && system.riskAssessments[0] && (
+        <div className="rounded-lg border border-[var(--success-border)] bg-[var(--success-dim)] p-3 text-sm text-[var(--success-strong)]">
+          Risk assessment saved. Overall score {system.riskAssessments[0].overallScore.toFixed(1)}, and the system&rsquo;s
+          risk level is now {system.riskLevel.toLowerCase()}.{" "}
+          <Link href={`/registry/${system.id}?tab=overview`} className="underline">
+            See what&rsquo;s next
+          </Link>
+        </div>
+      )}
+
       <Tabs defaultValue={tab ?? "overview"}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -364,6 +407,16 @@ export default async function SystemDetailPage({
         </TabsList>
 
         <TabsContent value="overview">
+          <div className="mb-6">
+            <ChecklistCard
+              title="Governance checklist"
+              description="Everything this system needs before it's fully governed. Each open item links to where you complete it."
+              items={onboardingChecklist}
+              readOnly={!canEdit}
+              completeMessage="This system is fully documented, assessed and approved."
+              twoColumn
+            />
+          </div>
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
@@ -423,30 +476,36 @@ export default async function SystemDetailPage({
               classification={system.euAiActClassification}
               obligationSummary={euObligationSummary}
             />
-            <ApprovalDecisionCard
-              systemId={system.id}
-              latestDecision={system.approvals[0]?.decision ?? null}
-              governanceReady={governanceReady}
-              approvals={system.approvals}
-              blockers={approvalBlockers.map(({ message, href, category }) => ({
-                message,
-                href,
-                category,
-              }))}
-            />
-            <GovernanceStageReviewCard
-              systemId={system.id}
-              requiredStages={requiredStages}
-              reviews={system.governanceReviews}
-            />
+            <div id="approval" className="scroll-mt-6 [&>*]:h-full">
+              <ApprovalDecisionCard
+                systemId={system.id}
+                latestDecision={system.approvals[0]?.decision ?? null}
+                governanceReady={governanceReady}
+                approvals={system.approvals}
+                blockers={approvalBlockers.map(({ message, href, category }) => ({
+                  message,
+                  href,
+                  category,
+                }))}
+              />
+            </div>
+            <div id="reviews" className="scroll-mt-6 [&>*]:h-full">
+              <GovernanceStageReviewCard
+                systemId={system.id}
+                requiredStages={requiredStages}
+                reviews={system.governanceReviews}
+              />
+            </div>
             <GovernanceExceptionsCard
               systemId={system.id}
               exceptions={exceptionSummaries}
             />
-            <EvidenceArtifactsCard
-              systemId={system.id}
-              artifacts={system.evidenceArtifacts}
-            />
+            <div id="evidence" className="scroll-mt-6 [&>*]:h-full">
+              <EvidenceArtifactsCard
+                systemId={system.id}
+                artifacts={system.evidenceArtifacts}
+              />
+            </div>
             <GovernanceIncidentsCard
               systemId={system.id}
               incidents={system.governanceIncidents}

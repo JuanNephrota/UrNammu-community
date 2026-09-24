@@ -205,41 +205,26 @@ Dropdowns only show values that actually appear in your data — options that wo
 
 ### Registering a New System
 
-1. Click **Register AI System** in the top-right of the Registry page.
-2. Fill the form. You can either fill each field manually, or type the **System Name** and click the **Autofill with AI** button (sparkle icon) next to the Name field to have the AI assistant look up the tool and pre-populate:
-   - Description
-   - Use case
-   - Vendor (only filled if empty — an explicit entry is preserved)
-   - Model type (e.g. "LLM", "Code completion", "Image generation")
-   - Data inputs / outputs
-   - Risk level
-   - Data sensitivity
+Click **Register AI System** in the top-right of the Registry page (admins and compliance officers). Registration is a four-step guided flow:
 
-   A small success banner below the Name field lists which fields were filled and shows the AI assistant's reasoning. Review each value before saving.
+1. **Basics** — system name, owning department, what it does, use case and version. Type the name and click **Autofill with AI** (sparkle icon) to have the AI assistant look the tool up and fill in the description, use case, model type, data inputs and outputs, risk level and data sensitivity, and the vendor if you haven't entered one. Some of those fields are on later steps, so check them as you go. Continuing from this step creates the system as a `DRAFT`, with you as the owner.
+2. **Data & tech** — vendor (use "Internal" for systems built in-house), model type, the most sensitive data it touches (`PUBLIC`, `INTERNAL`, `CONFIDENTIAL` or `RESTRICTED`, which drives policy evaluation and the risk questions), and data inputs and outputs.
+3. **Governance** — an initial risk level (the risk assessment replaces it), status, how often it is re-reviewed, an optional next review date (blank means today plus the interval), and which sign-offs are required: Owner, Security, Legal, Compliance. Leave a stage off if this system's risk class doesn't need it.
+4. **Review** — a summary and what comes next. **Start risk assessment** opens the assessment with this system selected. If the vendor has no governance profile yet, there's a link to add one.
 
-3. The remaining fields you control:
-   - **Name**, **description**, **version**.
-   - **Owner** — the person accountable for the system (User picker).
-   - **Department**, **vendor**, **model type**.
-   - **Data sensitivity** — `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, or `RESTRICTED`. This drives downstream policy evaluation.
-   - **Use case**, **data inputs**, **data outputs**.
-   - **Review interval (days)** — how often the system must be re-assessed before an alert fires.
-4. **Set approval requirements** — four toggles (Owner / Security / Legal / Compliance) control which stages must sign off before the system can move to `APPROVED`. Leave a stage off if it is not required for this system's risk class.
-5. Click **Save**. The system is created with status `DRAFT`.
+Each step saves when you move on. If you stop partway, the system's **Governance checklist** links back to the step you left off on (`/registry/[id]/setup?step=…`). **Edit** on the system page still opens the single-page form with every field.
 
 > **Note** — the Autofill button requires the AI provider to be configured under **Settings → General**. If no provider is set, the button will surface a clear error message pointing there.
 
 ### System Detail Page
 
-Open a system from the Registry list. The detail page has these tabs:
+Open a system from the Registry list. The **Overview** tab opens with a **Governance checklist**: describe the system; document vendor, model and data; clear the vendor (external vendors only: the vendor needs a profile with an approved or conditional security review); complete a risk assessment; classify under the EU AI Act; assign policies; upload evidence; complete the required governance reviews; and record the approval decision. Each open item links to where you complete it, and the **Next step** button jumps to the first one. The checklist tracks progress; the **Recommended Next Actions** card further down prioritizes what to fix. The tabs are:
 
-- **Info** — the registered metadata; edit via the **Edit** button.
-- **Linked Agents** — agents pointing to this system, with autonomy badges.
-- **Risk Assessment** — the latest scores, assessment history, and open risk issues (`OPEN` / `IN_PROGRESS` / `RESOLVED` / `ACCEPTED`). **New assessment** opens a guided assessment for this system.
-- **Compliance** — policies assigned to this system, each with `COMPLIANT` / `PARTIALLY_COMPLIANT` / `NON_COMPLIANT` / `NOT_ASSESSED`, evidence text, and compliance issues. The *AI Assess* button (admins / compliance officers) runs gap analysis.
-- **Approval & Governance** — the staged review history, pending stages, governance exceptions, and evidence artifacts.
-- **Telemetry & Cost** — usage buckets linked to this system (30-day window), token consumption trend, cost attribution.
-- **Incidents & Alerts** — open and closed governance incidents plus related alerts.
+- **Overview** — the checklist, registered metadata and use case, the EU AI Act classification, the approval decision and staged review history, governance exceptions, evidence artifacts, incidents, telemetry attribution, and recommendations. Edit metadata via the **Edit** button.
+- **Agents (n)** — agents pointing to this system, with autonomy badges.
+- **Risk (n)** — the latest scores, assessment history, and open risk issues (`OPEN` / `IN_PROGRESS` / `RESOLVED` / `ACCEPTED`). **New assessment** opens a guided assessment for this system.
+- **Compliance (n)** — policies assigned to this system, each with `COMPLIANT` / `PARTIALLY_COMPLIANT` / `NON_COMPLIANT` / `NOT_ASSESSED`, evidence text, and compliance issues. The *AI Assess* button (admins / compliance officers) runs gap analysis.
+- **Audit Trail** — every recorded action on this system.
 
 ### EU AI Act Classification
 
@@ -1690,7 +1675,7 @@ Runs on every maintenance call. Produces alerts for:
 
 ### A. Register and approve a new SaaS AI tool
 
-1. **Registry → Register AI System** — enter vendor-SaaS details, mark data sensitivity, enable Security + Compliance approval stages.
+1. **Registry → Register AI System** — step through Basics, Data & tech (vendor, data sensitivity) and Governance (enable Security + Compliance sign-off), then add the vendor's profile if the Review step offers it.
 2. **Risk Center → New Assessment** — pick the system, apply the *Vendor SaaS* template or click **Generate Assessment with AI**, answer the contextual questions, refine scores and justifications, then submit on the Review step.
 3. **System → Compliance → Assign Policy** — pick applicable EU AI Act / SOC 2 policies. Run **AI Assess** to find gaps. Upload evidence.
 4. **System → Approval & Governance** — move status to `UNDER_REVIEW`. Security reviewer and compliance officer each click **Approve** with rationale.

@@ -13,6 +13,8 @@ interface ChecklistCardProps {
   /** Hide the "do next" links, e.g. for read-only viewers. */
   readOnly?: boolean;
   completeMessage?: string;
+  /** Lay items out in two columns on wide screens (for full-width placements). */
+  twoColumn?: boolean;
 }
 
 export function ChecklistCard({
@@ -21,6 +23,7 @@ export function ChecklistCard({
   items,
   readOnly,
   completeMessage = "Everything on this checklist is done.",
+  twoColumn,
 }: ChecklistCardProps) {
   const progress = checklistProgress(items);
 
@@ -75,7 +78,7 @@ export function ChecklistCard({
           )
         )}
 
-        <ul className="space-y-1">
+        <ul className={cn("space-y-1", twoColumn && "lg:grid lg:grid-cols-2 lg:gap-x-4 lg:space-y-0")}>
           {items.map((item) => {
             const content = (
               <>

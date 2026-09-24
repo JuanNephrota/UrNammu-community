@@ -175,6 +175,14 @@ Shared building blocks for step-by-step flows live in `src/components/workflow/`
 
 Wizards save each step to the real record rather than to a draft table, so a checklist built from that record always shows true progress.
 
+Current flows:
+
+- **Vendors** — see Vendor Governance Architecture above.
+- **Risk assessment** — `src/components/forms/risk-assessment-form.tsx` with steps from `src/lib/risk-assessment-steps.ts`. This is the one wizard that keeps state in memory until submit, because `POST /api/risk-assessments` recalculates the system's risk level.
+- **System registration** — `src/components/registry/system-setup-wizard.tsx` on `/registry/new` and `/registry/[id]/setup`. The Basics step `POST`s `/api/ai-systems` (including `discoveredToolId` for shadow AI conversions); later steps `PUT /api/ai-systems/[id]` with only their own fields. The system page's checklist comes from `getSystemChecklist` in `src/lib/system-onboarding.ts`.
+
+`updateAISystemSchema` is written out field by field rather than derived with `createAISystemSchema.partial()`. Zod 4 applies `.default()` even inside `.optional()`, so the derived schema turned a partial update such as `{ vendor }` into one that also reset risk level, status and the approval stages. An explicit empty string clears a nullable field.
+
 ## Shadow AI Architecture
 
 Shadow AI discovery is normalized into one pipeline even though the sources differ.

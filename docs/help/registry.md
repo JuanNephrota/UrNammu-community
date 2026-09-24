@@ -4,7 +4,7 @@ The registry is your central inventory of every managed AI system.
 
 ## Key actions
 
-- **Register AI System** — opens the registration form. Fill owner, department, vendor, data sensitivity, review interval, and required approval stages.
+- **Register AI System** — opens a four-step guided registration: Basics (with **Autofill with AI**), Data & tech, Governance (review cadence and required sign-offs), and Review. The system is saved as a draft after the first step, and each later step saves as you go.
 - **Search & filter** — filter by name, department, vendor, risk level, and status.
 - **Bulk actions** — archive or permanently delete (with typed-name confirmation).
 
