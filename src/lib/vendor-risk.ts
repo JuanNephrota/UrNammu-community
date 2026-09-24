@@ -10,6 +10,8 @@ export type VendorRiskInput = {
   contractStatus: string;
   securityReviewStatus: string;
   contractRenewalDate: Date | null;
+  /** Latest completed vendor questionnaire, if any (see vendor-questionnaire.ts). */
+  questionnaire?: { score: number; tier: string } | null;
 };
 
 export type VendorRiskFactor = {
@@ -178,6 +180,17 @@ export function getVendorRiskSummary(input: VendorRiskInput): VendorRiskSummary 
         input.unapprovedUseCases === 1
           ? "There is 1 live use case not covered by the approved list."
           : `There are ${input.unapprovedUseCases} live use cases not covered by the approved list.`,
+    });
+  }
+
+  const questionnairePoints: Record<string, number> = { CRITICAL: 25, HIGH: 15, MEDIUM: 6 };
+  const qPoints = input.questionnaire ? questionnairePoints[input.questionnaire.tier] ?? 0 : 0;
+  if (input.questionnaire && qPoints > 0) {
+    score += qPoints;
+    factors.push({
+      label: "Questionnaire findings",
+      points: qPoints,
+      detail: `The latest vendor questionnaire scored ${input.questionnaire.score}/100 (${input.questionnaire.tier.toLowerCase()} risk).`,
     });
   }
 

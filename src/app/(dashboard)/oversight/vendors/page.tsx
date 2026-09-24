@@ -1,10 +1,13 @@
 import Link from "next/link";
-import { Building2, FileCheck, Globe2, ShieldCheck } from "lucide-react";
+import { ArrowRight, Building2, FileCheck, Globe2, Plus, ShieldCheck } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { VendorProfileEditor } from "@/components/oversight/vendor-profile-editor";
+import { buttonVariants } from "@/components/ui/button";
+import { getSession } from "@/lib/auth-guard";
+import { canRunWorkflows, checklistProgress } from "@/lib/workflow";
+import { getVendorChecklist } from "@/lib/vendor-onboarding";
 import { getVendorRiskSummary } from "@/lib/vendor-risk";
 import { getVendorLifecycleSummary } from "@/lib/vendor-lifecycle";
 
@@ -35,8 +38,66 @@ function vendorRiskBadgeVariant(tier: string) {
   return "success";
 }
 
+type VendorStats = {
+  profileId: string | null;
+  website: string | null;
+  description: string | null;
+  systems: number;
+  openAlerts: number;
+  incidents: number;
+  exceptions: number;
+  highRisk: number;
+  discovered: number;
+  approvedUseCases: string[];
+  liveUseCases: string[];
+  unapprovedUseCases: string[];
+  subprocessors: string[];
+  dataResidency: string[];
+  contractStatus: string;
+  contractOwner: string | null;
+  contractStartDate: Date | null;
+  contractRenewalDate: Date | null;
+  renewalNoticeDays: number;
+  renewalNotes: string | null;
+  securityReviewStatus: string;
+  notes: string | null;
+  lastAssessmentCompletedAt: Date | null;
+  assessmentInProgress: boolean;
+  questionnaire: { score: number; tier: string } | null;
+};
+
+function emptyStats(): VendorStats {
+  return {
+    profileId: null,
+    website: null,
+    description: null,
+    systems: 0,
+    openAlerts: 0,
+    incidents: 0,
+    exceptions: 0,
+    highRisk: 0,
+    discovered: 0,
+    approvedUseCases: [],
+    liveUseCases: [],
+    unapprovedUseCases: [],
+    subprocessors: [],
+    dataResidency: [],
+    contractStatus: "UNKNOWN",
+    contractOwner: null,
+    contractStartDate: null,
+    contractRenewalDate: null,
+    renewalNoticeDays: 60,
+    renewalNotes: null,
+    securityReviewStatus: "NOT_REVIEWED",
+    notes: null,
+    lastAssessmentCompletedAt: null,
+    assessmentInProgress: false,
+    questionnaire: null,
+  };
+}
+
 export default async function VendorGovernancePage() {
-  const [systems, vendorProfiles] = await Promise.all([
+  const [systems, vendorProfiles, session] = await Promise.all([
     prisma.aISystem.findMany({
       where: { vendor: { not: null } },
       include: {
@@ -47,59 +108,28 @@ export default async function VendorGovernancePage() {
     }),
     prisma.vendorProfile.findMany({
       orderBy: { vendor: "asc" },
+      include: {
+        assessments: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          select: { status: true, completedAt: true, score: true, tier: true },
+        },
+      },
     }),
+    getSession(),
   ]);
+  const canEdit = canRunWorkflows(session?.user.role);
 
   const discoveredByVendor = await prisma.discoveredAITool.groupBy({
     by: ["vendor"],
     _count: true,
     where: { vendor: { not: null } },
   });
-  const vendorMap = new Map<string, {
-    systems: number;
-    openAlerts: number;
-    incidents: number;
-    exceptions: number;
-    highRisk: number;
-    discovered: number;
-    approvedUseCases: string[];
-    liveUseCases: string[];
-    unapprovedUseCases: string[];
-    subprocessors: string[];
-    dataResidency: string[];
-    contractStatus: string;
-    contractOwner: string | null;
-    contractStartDate: Date | null;
-    contractRenewalDate: Date | null;
-    renewalNoticeDays: number;
-    renewalNotes: string | null;
-    securityReviewStatus: string;
-    notes: string | null;
-  }>();
+  const vendorMap = new Map<string, VendorStats>();
 
   for (const system of systems) {
     const key = system.vendor ?? "Unknown";
-    const current = vendorMap.get(key) ?? {
-      systems: 0,
-      openAlerts: 0,
-      incidents: 0,
-      exceptions: 0,
-      highRisk: 0,
-      discovered: 0,
-      approvedUseCases: [],
-      liveUseCases: [],
-      unapprovedUseCases: [],
-      subprocessors: [],
-      dataResidency: [],
-      contractStatus: "UNKNOWN",
-      contractOwner: null,
-      contractStartDate: null,
-      contractRenewalDate: null,
-      renewalNoticeDays: 60,
-      renewalNotes: null,
-      securityReviewStatus: "NOT_REVIEWED",
-      notes: null,
-    };
+    const current = vendorMap.get(key) ?? emptyStats();
     current.systems += 1;
     current.openAlerts += system.alerts.length;
     current.incidents += system.governanceIncidents.length;
@@ -113,53 +143,13 @@ export default async function VendorGovernancePage() {
 
   for (const row of discoveredByVendor) {
     if (!row.vendor) continue;
-    const current = vendorMap.get(row.vendor) ?? {
-      systems: 0,
-      openAlerts: 0,
-      incidents: 0,
-      exceptions: 0,
-      highRisk: 0,
-      discovered: 0,
-      approvedUseCases: [],
-      liveUseCases: [],
-      unapprovedUseCases: [],
-      subprocessors: [],
-      dataResidency: [],
-      contractStatus: "UNKNOWN",
-      contractOwner: null,
-      contractStartDate: null,
-      contractRenewalDate: null,
-      renewalNoticeDays: 60,
-      renewalNotes: null,
-      securityReviewStatus: "NOT_REVIEWED",
-      notes: null,
-    };
+    const current = vendorMap.get(row.vendor) ?? emptyStats();
     current.discovered = row._count;
     vendorMap.set(row.vendor, current);
   }
 
   for (const profile of vendorProfiles) {
-    const current = vendorMap.get(profile.vendor) ?? {
-      systems: 0,
-      openAlerts: 0,
-      incidents: 0,
-      exceptions: 0,
-      highRisk: 0,
-      discovered: 0,
-      approvedUseCases: [],
-      liveUseCases: [],
-      unapprovedUseCases: [],
-      subprocessors: [],
-      dataResidency: [],
-      contractStatus: "UNKNOWN",
-      contractOwner: null,
-      contractStartDate: null,
-      contractRenewalDate: null,
-      renewalNoticeDays: 60,
-      renewalNotes: null,
-      securityReviewStatus: "NOT_REVIEWED",
-      notes: null,
-    };
+    const current = vendorMap.get(profile.vendor) ?? emptyStats();
     current.approvedUseCases = asStringArray(profile.approvedUseCases);
     current.subprocessors = asStringArray(profile.subprocessors);
     current.dataResidency = asStringArray(profile.dataResidency);
@@ -171,6 +161,16 @@ export default async function VendorGovernancePage() {
     current.renewalNotes = profile.renewalNotes;
     current.securityReviewStatus = profile.securityReviewStatus;
     current.notes = profile.notes;
+    current.profileId = profile.id;
+    current.website = profile.website;
+    current.description = profile.description;
+    const completedAssessment = profile.assessments.find((a) => a.status === "COMPLETED");
+    current.lastAssessmentCompletedAt = completedAssessment?.completedAt ?? null;
+    current.assessmentInProgress = profile.assessments.some((a) => a.status === "IN_PROGRESS");
+    current.questionnaire =
+      completedAssessment?.score != null && completedAssessment.tier
+        ? { score: completedAssessment.score, tier: completedAssessment.tier }
+        : null;
     current.unapprovedUseCases = current.liveUseCases.filter(
       (useCase) =>
         current.approvedUseCases.length > 0 &&
@@ -203,7 +203,11 @@ export default async function VendorGovernancePage() {
         contractStatus: stats.contractStatus,
         securityReviewStatus: stats.securityReviewStatus,
         contractRenewalDate: stats.contractRenewalDate,
+        questionnaire: stats.questionnaire,
       }),
+      onboarding: stats.profileId
+        ? checklistProgress(getVendorChecklist({ ...stats, id: stats.profileId }))
+        : null,
     }))
     .sort((a, b) => b.risk.score - a.risk.score || b.stats.systems - a.stats.systems);
 
@@ -232,6 +236,12 @@ export default async function VendorGovernancePage() {
         <Link href="/oversight">
           <Badge variant="info">Back to Oversight</Badge>
         </Link>
+        {canEdit && (
+          <Link href="/oversight/vendors/new" className={buttonVariants({ size: "sm" })}>
+            <Plus className="h-4 w-4" />
+            Add vendor
+          </Link>
+        )}
       </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -319,15 +329,26 @@ export default async function VendorGovernancePage() {
         </CardHeader>
         <CardContent>
           {vendors.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">No vendor-governed systems yet.</p>
+            <p className="text-sm text-[var(--text-muted)]">
+              No vendors yet. Vendors appear here once an AI system or shadow AI discovery names one{canEdit ? ", or add one with Add vendor" : ""}.
+            </p>
           ) : (
             <div className="space-y-3">
-              {vendors.map(({ vendor, stats, risk, lifecycle }) => (
+              {vendors.map(({ vendor, stats, risk, lifecycle, onboarding }) => (
                 <div key={vendor} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-4">
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--text-primary)]">{vendor}</p>
+                        {stats.profileId ? (
+                          <Link
+                            href={`/oversight/vendors/${stats.profileId}`}
+                            className="text-sm font-semibold text-[var(--text-primary)] hover:text-[var(--accent)]"
+                          >
+                            {vendor}
+                          </Link>
+                        ) : (
+                          <p className="text-sm font-semibold text-[var(--text-primary)]">{vendor}</p>
+                        )}
                         <p className="text-xs text-[var(--text-muted)]">
                           {stats.systems} governed systems · {stats.discovered} shadow AI discoveries
                         </p>
@@ -499,20 +520,49 @@ export default async function VendorGovernancePage() {
                       </div>
                     )}
 
-                    <VendorProfileEditor
-                      vendor={vendor}
-                      contractStatus={stats.contractStatus}
-                      contractOwner={stats.contractOwner}
-                      contractStartDate={stats.contractStartDate?.toISOString() ?? null}
-                      contractRenewalDate={stats.contractRenewalDate?.toISOString() ?? null}
-                      renewalNoticeDays={stats.renewalNoticeDays}
-                      renewalNotes={stats.renewalNotes}
-                      securityReviewStatus={stats.securityReviewStatus}
-                      dataResidency={stats.dataResidency}
-                      approvedUseCases={stats.approvedUseCases}
-                      subprocessors={stats.subprocessors}
-                      notes={stats.notes}
-                    />
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border-subtle)] p-3">
+                      {onboarding ? (
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--bg-elevated)]">
+                            <div
+                              className={`h-full rounded-full ${onboarding.complete ? "bg-[var(--success)]" : "bg-[var(--accent)]"}`}
+                              style={{ width: `${onboarding.percent}%` }}
+                            />
+                          </div>
+                          <p className="truncate text-xs text-[var(--text-muted)]">
+                            Onboarding {onboarding.done}/{onboarding.total}
+                            {onboarding.next ? ` · Next: ${onboarding.next.label}` : " · Complete"}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)]">
+                          In use, but no governance profile yet.
+                        </p>
+                      )}
+                      {stats.profileId ? (
+                        <Link
+                          href={
+                            canEdit && onboarding?.next?.href
+                              ? onboarding.next.href
+                              : `/oversight/vendors/${stats.profileId}`
+                          }
+                          className={buttonVariants({ variant: "outline", size: "sm" })}
+                        >
+                          {canEdit && onboarding?.next ? "Continue setup" : "Open profile"}
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      ) : (
+                        canEdit && (
+                          <Link
+                            href={`/oversight/vendors/new?vendor=${encodeURIComponent(vendor)}`}
+                            className={buttonVariants({ size: "sm" })}
+                          >
+                            Set up profile
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </Link>
+                        )
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}

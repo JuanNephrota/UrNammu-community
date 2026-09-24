@@ -159,6 +159,11 @@ enum VendorReviewStatus {
   REJECTED
 }
 
+enum VendorAssessmentStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
 enum RiskIssueStatus {
   OPEN
   IN_PROGRESS
@@ -684,14 +689,40 @@ model VendorProfile {
   renewalNoticeDays     Int                  @default(60)
   renewalNotes          String?              @db.Text
   securityReviewStatus  VendorReviewStatus   @default(NOT_REVIEWED)
+  website               String?
+  description           String?              @db.Text
   dataResidency         Json?
   approvedUseCases      Json?
   subprocessors         Json?
   notes                 String?              @db.Text
+  assessments           VendorAssessment[]
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
 
   @@index([vendor])
+}
+
+// Vendor-level security & data-handling questionnaire. Answers are saved per
+// wizard section while IN_PROGRESS; score/tier are computed on completion by
+// src/lib/vendor-questionnaire.ts and the completing reviewer's decision is
+// written back to VendorProfile.securityReviewStatus.
+model VendorAssessment {
+  id              String                 @id @default(cuid())
+  vendorProfile   VendorProfile          @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  vendorProfileId String
+  status          VendorAssessmentStatus @default(IN_PROGRESS)
+  answers         Json                   @default("{}")
+  score           Int?
+  tier            String?
+  decision        VendorReviewStatus?
+  decisionNotes   String?                @db.Text
+  startedBy       String
+  completedBy     String?
+  completedAt     DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([vendorProfileId, createdAt])
 }
 
 model IngestionRun {

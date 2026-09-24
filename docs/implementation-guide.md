@@ -82,6 +82,7 @@ The most important Prisma models are:
 - `GovernanceReview`, `GovernanceException`, `GovernanceIncident`
   Support staged signoff, exception handling, and oversight workflows.
 - `VendorProfile`
+- `VendorAssessment`
   Stores contract posture, lifecycle dates, review status, residency, subprocessors, approved use cases, and renewal notes.
 - `UsageBucket` and `CostBucket`
   The normalized telemetry layer for provider oversight.
@@ -140,17 +141,39 @@ If you add new approval gates or recommendation logic, update these shared libs 
 
 ## Vendor Governance Architecture
 
-Vendor governance now has three layers:
+Vendor governance has four layers:
 
-- profile data in `VendorProfile`
-- composite scoring in `src/lib/vendor-risk.ts`
+- profile data in `VendorProfile`, plus `VendorAssessment` rows for the vendor risk questionnaire
+- composite scoring in `src/lib/vendor-risk.ts` (a completed HIGH or CRITICAL questionnaire is one of its inputs)
 - lifecycle and renewal state in `src/lib/vendor-lifecycle.ts`
+- the questionnaire bank and scoring in `src/lib/vendor-questionnaire.ts`, and the onboarding checklist in `src/lib/vendor-onboarding.ts`
 
-The main page is:
+Pages:
 
-- `src/app/(dashboard)/oversight/vendors/page.tsx`
+- `src/app/(dashboard)/oversight/vendors/page.tsx` — the list
+- `.../vendors/new` — Add vendor (identity step). `POST /api/vendor-profiles/onboard` creates the profile, or returns the existing one matched case-insensitively.
+- `.../vendors/[id]` — vendor page with the checklist
+- `.../vendors/[id]/setup?step=` — profile wizard. Each step calls `PATCH /api/vendor-profiles/[id]` with only that step's fields.
+- `.../vendors/[id]/assessment?step=` — questionnaire. `POST /api/vendor-assessments` starts or resumes one, `PATCH /api/vendor-assessments/[id]` merges one section's answers, and `POST /api/vendor-assessments/[id]/complete` scores it, locks it and writes the decision to `VendorProfile.securityReviewStatus`.
+
+The older `POST /api/vendor-profiles` full upsert is still there for API clients, but the UI no longer uses it.
+
+Questionnaire questions are static and keyed by id. Stored answers go through `parseVendorAnswers`, which drops ids that no longer exist, so retiring a question is safe. Changing what a question means is not safe: add a new id instead, so old answers are not reinterpreted.
 
 If you add more vendor posture signals, prefer extending the shared scoring/lifecycle helpers instead of hard-coding logic directly in the page.
+
+## Guided Workflows
+
+Shared building blocks for step-by-step flows live in `src/components/workflow/` and `src/lib/workflow.ts`:
+
+- `WizardStepper` — the progress header. It uses a container query, so it collapses to "Step n of m" whenever the content area is narrow, not only on small screens.
+- `WizardFooter` — Back / Skip for now / Save & continue, with saving and error states.
+- `ChecklistCard` — a server component that renders `ChecklistItem[]` with a progress bar and a "Next step" link.
+- `TagInput` — a list field with one-click suggestions.
+- `resolveStepId` maps a `?step=` search param to a known step. Pages read `searchParams` on the server and pass the initial step down. Wizards update the URL with `history.replaceState`, so a step link can be shared and survives a reload.
+- `canRunWorkflows(role)` gates wizard pages to ADMIN and COMPLIANCE_OFFICER. The API routes enforce the same roles with `withRole`.
+
+Wizards save each step to the real record rather than to a draft table, so a checklist built from that record always shows true progress.
 
 ## Shadow AI Architecture
 

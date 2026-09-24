@@ -1004,16 +1004,25 @@ The **Test a prompt** panel on the rules page dry-runs a prompt against the curr
 
 ### Vendor Governance
 
-**Oversight → Vendors** tracks each vendor's lifecycle. A `VendorProfile` is auto-created for every vendor name in the Registry. On each profile:
+**Oversight → Vendors** tracks each AI vendor's contract, security review and risk. A vendor appears on the list as soon as an AI system or a shadow AI discovery names it, but it has no governance profile until someone sets one up. Each row shows onboarding progress and a **Continue setup** (or **Set up profile**) button that opens the next step.
 
-- **Contract status**: `UNKNOWN` / `IN_REVIEW` / `ACTIVE` / `EXPIRED` / `TERMINATED`.
-- **Contract dates** — start, renewal, renewal-notice days (default 60).
-- **Security review**: `NOT_REVIEWED` / `IN_PROGRESS` / `APPROVED` / `CONDITIONAL` / `REJECTED`.
-- **Data residency** (JSON) — allowed regions and notes.
-- **Approved use cases** (JSON).
-- **Subprocessors** (JSON).
+**Adding a vendor.** Click **Add vendor** (admins and compliance officers). The first step asks for the name, website, a short description and, optionally, the contract owner. Suggestions come from vendor names already used by systems and discoveries, so use the same spelling and they link up. If the vendor already has a profile, the wizard opens it instead of creating a duplicate.
 
-Approaching-renewal alerts fire automatically.
+**Completing the profile.** The setup wizard walks through five steps. Each step saves when you move on, so you can stop and come back:
+
+1. **Identity** — website and description. The vendor name can't be changed afterwards, because systems and discoveries link to it by name.
+2. **Contract** — owner, status (`UNKNOWN` / `IN_REVIEW` / `ACTIVE` / `EXPIRED` / `TERMINATED`), start and renewal dates, and the renewal-notice window (default 60 days).
+3. **Data** — data residency regions and subprocessors.
+4. **Use cases** — approved use cases (the use cases of systems already using the vendor are offered as suggestions) and any conditions.
+5. **Review** — a summary with each step marked complete or with gaps.
+
+**Vendor risk questionnaire.** On the vendor page, **Start questionnaire** opens 19 questions in five sections: security assurance (SOC 2, ISO 27001, pen testing, breach notice), data handling (training on your data, retention, encryption, human review, residency), access & monitoring (SSO, SCIM, audit logs), AI-specific controls (model disclosure, subprocessors, safety filtering, AI governance framework) and legal (DPA, BAA, IP indemnity). Each answer is Yes / Partly / No / Don't know, plus Not applicable where it makes sense, with an optional evidence note. Answers save as you move between sections, and a running score (0–100, higher is riskier) updates as you go. Unanswered questions count as "Don't know", so skipping never lowers the score. A risky or "Don't know" answer to a key control (training on your data, encryption, DPA), or leaving one unanswered, puts the vendor at HIGH or above, whatever the total.
+
+The last step lists the findings, suggests a decision and asks you to **Approve**, **Approve with conditions** (conditions required) or **Reject**. Completing the questionnaire locks it and sets the vendor's security review status to your decision. Starting one moves a never-reviewed vendor to `IN_PROGRESS`. To re-assess later, start a new questionnaire; earlier ones stay in the vendor's history. A HIGH or CRITICAL questionnaire result adds to the vendor's composite risk score.
+
+**Vendor page.** Clicking a vendor opens its page. It has an onboarding checklist (identity, contract owner, contract status and renewal date, data, use cases, a questionnaire completed within the last 12 months, and a security review decision), the profile, risk drivers, the AI systems using the vendor, flagged unapproved use cases and the questionnaire history. Each unfinished checklist item links straight to the step that completes it. Viewers see the same page read-only.
+
+Renewal alerts fire automatically once a vendor enters its renewal-notice window.
 
 ### Investigations
 

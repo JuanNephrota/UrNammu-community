@@ -441,7 +441,7 @@ Because every provider runs in its own function, a slow or failing provider does
 
 - **Overview** — totals, breakdowns, top cost drivers, anomaly findings, and two attribution panels: **Cost by Governed System** (spend per registered AI system, with the attributed share of total spend and an unattributed remainder) and **Cost by API Key** (per-key spend where the provider reports it; Anthropic rows are workspaces). Both read the mapping configured under **Settings → Provider Admin APIs → Usage Attribution**: a default system per provider plus per-key overrides, applied to usage and cost alike on the next sync.
 - **Usage** — drill into normalized buckets; link usage to a system for attribution.
-- **Vendors** — vendor profiles with contract lifecycle, security review, data residency, subprocessors, approved use cases.
+- **Vendors** — vendor profiles with contract lifecycle, security review, data residency, subprocessors, approved use cases. **Add vendor** starts a guided setup that saves after each step, and each vendor page has an onboarding checklist that links to whatever is missing. **Start questionnaire** on a vendor page runs a 19-question security and data-handling review. Finishing it records your decision (approve, approve with conditions, or reject) as the vendor's security review status.
 - **Investigations** — follow-up queue for alerts and incidents.
 - **Provider Posture** — side-by-side provider comparison: cost, tokens, incidents, risk tier.
 - **Provider Security** — audits each configured provider's secure-use and privacy configuration: credentials, encryption, data retention, training-on-data, residency, and vendor governance.

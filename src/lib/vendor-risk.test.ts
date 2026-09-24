@@ -41,3 +41,26 @@ test("vendor risk scoring stays low when posture is healthy", () => {
   assert.equal(summary.tier, "LOW");
   assert.equal(summary.factors.length, 0);
 });
+
+test("vendor risk scoring adds points for a high-risk questionnaire and none for a low one", () => {
+  const base = {
+    vendor: "Example AI",
+    systems: 1,
+    openAlerts: 0,
+    incidents: 0,
+    exceptions: 0,
+    highRisk: 0,
+    discovered: 0,
+    unapprovedUseCases: 0,
+    contractStatus: "ACTIVE",
+    securityReviewStatus: "APPROVED",
+    contractRenewalDate: null,
+  };
+  const high = getVendorRiskSummary({ ...base, questionnaire: { score: 55, tier: "HIGH" } });
+  assert.equal(high.score, 15);
+  assert.ok(high.factors.some((factor) => factor.label === "Questionnaire findings"));
+
+  const low = getVendorRiskSummary({ ...base, questionnaire: { score: 10, tier: "LOW" } });
+  assert.equal(low.score, 0);
+  assert.equal(getVendorRiskSummary(base).score, 0);
+});
