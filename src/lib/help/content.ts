@@ -115,7 +115,7 @@ This page is the governance hub for a single AI system. Each tab represents a di
 
 - **Overview** — registered metadata and use case, the EU AI Act classification, the approval decision and staged review history, governance exceptions, evidence artifacts, incidents, telemetry attribution, and automated recommendations.
 - **Agents (n)** — agents pointing to this system, with autonomy badges.
-- **Risk (n)** — the risk profile, a dimension radar, a score-history trend chart, and open risk issues. Create a new assessment from here.
+- **Risk (n)** — the risk profile, a dimension radar, a score-history trend chart, and open risk issues. **New assessment** opens a guided assessment for this system.
 - **Compliance (n)** — assigned policies, compliance status, evidence text, and compliance issues, plus the **Framework Controls** card for control-by-control assessment against NIST AI RMF, ISO 42001, the EU AI Act and SOC 2. The **AI Assess** button runs automated gap analysis.
 - **Audit Trail** — every recorded action on this system.
 
@@ -247,11 +247,19 @@ Each scored 0–100. Higher = more risk.
 - **Performance** — reliability and accuracy.
 - **Transparency** — explainability and traceability.
 
-Each score requires a justification so later reviewers can re-evaluate it.
+A justification is required for any score of 60 or above, and optional below that, so later reviewers can re-evaluate the score.
 
 ## Running an assessment
 
-Pick a template (Copilot / Vendor AI SaaS / Autonomous Agent / Customer-Facing AI) → score the dimensions or click **AI Suggest** → answer branching questions → review control gaps → save. The system's overall risk level updates automatically.
+**New Assessment** opens a five-step guided flow:
+
+- **System** — pick the system, then start from **Generate Assessment with AI** or a template (Copilot / Vendor AI SaaS / Autonomous Agent / Customer-Facing AI).
+- **Context** — focus areas, the recommended tier, control gaps, and the contextual questions, which must all be answered.
+- **Scores** — the six dimensions and their justifications.
+- **Mitigation** — optional residual scores and the generated issues.
+- **Review** — check everything, add notes, and submit.
+
+Nothing is saved until you submit. The system's overall risk level updates automatically when you do.
 
 ## Reassessment cadence
 

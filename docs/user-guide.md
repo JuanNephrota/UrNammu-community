@@ -235,7 +235,7 @@ Open a system from the Registry list. The detail page has these tabs:
 
 - **Info** — the registered metadata; edit via the **Edit** button.
 - **Linked Agents** — agents pointing to this system, with autonomy badges.
-- **Risk Assessment** — the latest scores, assessment history, and open risk issues (`OPEN` / `IN_PROGRESS` / `RESOLVED` / `ACCEPTED`). Create a new assessment from here.
+- **Risk Assessment** — the latest scores, assessment history, and open risk issues (`OPEN` / `IN_PROGRESS` / `RESOLVED` / `ACCEPTED`). **New assessment** opens a guided assessment for this system.
 - **Compliance** — policies assigned to this system, each with `COMPLIANT` / `PARTIALLY_COMPLIANT` / `NON_COMPLIANT` / `NOT_ASSESSED`, evidence text, and compliance issues. The *AI Assess* button (admins / compliance officers) runs gap analysis.
 - **Approval & Governance** — the staged review history, pending stages, governance exceptions, and evidence artifacts.
 - **Telemetry & Cost** — usage buckets linked to this system (30-day window), token consumption trend, cost attribution.
@@ -403,26 +403,27 @@ Generated agent risk reviews are saved, so they remain visible after refresh and
 
 ### Running a Risk Assessment
 
-Start from **Risk Center → New Assessment** or from **Registry → [system] → Risk Assessment → Create Assessment**.
+Start from **Risk Center → New Assessment** or from **Registry → [system] → Risk → New assessment**, which opens the assessment with that system already selected. The assessment is a five-step guided flow. A progress bar across the top shows where you are, and you can click back to any earlier step.
 
-1. **Pick a template (optional)**. Built-in templates prefill scores and questions:
+1. **System** — pick the AI system. Its current posture, evidence count, approval state and linked agents are shown. Then either click **Generate Assessment with AI**, which calls `/api/ai/classify` and fills in scores, per-dimension justifications, notes and issues from the system's description (the system needs a description first), or apply a template that prefills scores and justifications:
    - *Copilot* (productivity assistant, bounded)
    - *Vendor SaaS* (third-party hosted AI)
    - *Autonomous Agent* (multi-step agent with tools)
    - *Customer-Facing AI* (direct user interaction)
-2. **Score the 6 dimensions** (0–100 each). The UI shows an **overall score** derived from them.
+   Both are starting points, and you adjust everything in the next steps.
+2. **Context** — assessment focus areas, the recommended risk tier, control gaps found in the system record (missing policies, evidence or approvals), and the **contextual review questions**. The questions depend on the system's data sensitivity, use case and agents, and every one must be answered before you can continue. Systems with linked agents also show an agent risk overlay.
+3. **Scores** — score the six dimensions from 0 to 100 (higher is riskier). The overall score is their average.
    - **Bias** — fairness of outputs across groups.
    - **Security** — vulnerability to attack / model misuse.
    - **Privacy** — exposure of personal / restricted data.
    - **Fairness** — outcome equity and disparate impact.
    - **Performance** — reliability / accuracy.
    - **Transparency** — explainability / traceability.
-   For each, enter a **justification** so reviewers can re-evaluate the score later.
-3. **Use AI Suggest** (optional). The button calls `/api/ai/classify` and populates recommended scores, confidence levels, and per-dimension rationale. Review and adjust — the AI suggestion is a starting point, not the decision.
-4. **Answer branching questions** — the questionnaire expands based on data sensitivity, autonomy, and use case. Collapsible sections keep it scannable.
-5. **Review control gaps** — the system shows suggested mitigating controls for each high-score dimension. Mark as addressed (with evidence) or document a remediation plan.
-6. **Generate risk issues** — high-risk findings become `RiskAssessmentIssue` records with severity derived from score, status defaulting to `OPEN`. Each issue can then be worked independently, instead of treating the whole assessment as one large remediation item.
-7. **Submit**. The system's overall `riskLevel` is updated and the assessment joins the history.
+   A justification is optional below 60 and required at 60 or above. The justification box opens automatically once a score reaches 40.
+4. **Mitigation** — optionally record **residual scores**, the risk left after your controls, which appear next to the inherent scores on the radar and trend charts. This step also lists the **assessment issues**: high-risk dimensions become `RiskAssessmentIssue` records with a severity derived from the score and status `OPEN`, so each can be worked on its own.
+5. **Review** — the inherent score, recommended tier, issue count and every dimension score, plus overall notes. **Submit Assessment** saves it, updates the system's `riskLevel`, and opens the system's Risk tab.
+
+The assessment is saved only when you submit, because submitting changes the system's risk level. If you try to leave with unsaved answers, the browser warns you first.
 
 ### Reassessment Cadence
 
@@ -1690,7 +1691,7 @@ Runs on every maintenance call. Produces alerts for:
 ### A. Register and approve a new SaaS AI tool
 
 1. **Registry → Register AI System** — enter vendor-SaaS details, mark data sensitivity, enable Security + Compliance approval stages.
-2. **Risk Center → New Assessment** — pick the *Vendor SaaS* template, click **AI Suggest**, refine scores, document justifications, save.
+2. **Risk Center → New Assessment** — pick the system, apply the *Vendor SaaS* template or click **Generate Assessment with AI**, answer the contextual questions, refine scores and justifications, then submit on the Review step.
 3. **System → Compliance → Assign Policy** — pick applicable EU AI Act / SOC 2 policies. Run **AI Assess** to find gaps. Upload evidence.
 4. **System → Approval & Governance** — move status to `UNDER_REVIEW`. Security reviewer and compliance officer each click **Approve** with rationale.
 5. Status transitions to `APPROVED`; promote to `DEPLOYED`.

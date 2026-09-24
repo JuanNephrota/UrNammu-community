@@ -22,11 +22,19 @@ Each scored 0–100. Higher = more risk.
 - **Performance** — reliability and accuracy.
 - **Transparency** — explainability and traceability.
 
-Each score requires a justification so later reviewers can re-evaluate it.
+A justification is required for any score of 60 or above, and optional below that, so later reviewers can re-evaluate the score.
 
 ## Running an assessment
 
-Pick a template (Copilot / Vendor AI SaaS / Autonomous Agent / Customer-Facing AI) → score the dimensions or click **AI Suggest** → answer branching questions → review control gaps → save. The system's overall risk level updates automatically.
+**New Assessment** opens a five-step guided flow:
+
+- **System** — pick the system, then start from **Generate Assessment with AI** or a template (Copilot / Vendor AI SaaS / Autonomous Agent / Customer-Facing AI).
+- **Context** — focus areas, the recommended tier, control gaps, and the contextual questions, which must all be answered.
+- **Scores** — the six dimensions and their justifications.
+- **Mitigation** — optional residual scores and the generated issues.
+- **Review** — check everything, add notes, and submit.
+
+Nothing is saved until you submit. The system's overall risk level updates automatically when you do.
 
 ## Reassessment cadence
 

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Pencil, Bot, ClipboardList, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -614,6 +614,15 @@ export default async function SystemDetailPage({
         </TabsContent>
 
         <TabsContent value="risk">
+          <div className="mb-4 flex justify-end">
+            <Link
+              href={`/risk-center/assessments/new?systemId=${system.id}`}
+              className={buttonVariants({ size: "sm" })}
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              New assessment
+            </Link>
+          </div>
           {system.riskAssessments.length > 0 && (
             <div className="space-y-4 mb-4">
               <div className="grid gap-4 lg:grid-cols-2">
