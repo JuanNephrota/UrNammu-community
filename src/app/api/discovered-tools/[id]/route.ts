@@ -17,6 +17,17 @@ const updateDiscoveredToolSchema = z
       .optional(),
     notes: z.string().max(2000).nullish(),
     category: z.enum(AI_TOOL_CATEGORY_IDS).nullable().optional(),
+    // Why the reviewer made this call (guided triage). Kept in the audit log,
+    // not in `notes`, so it never overwrites observation notes.
+    rationale: z.string().trim().max(2000).optional(),
+    triage: z
+      .object({
+        dataExposure: z.enum(["none", "internal", "customer", "unknown"]).optional(),
+        businessNeed: z.enum(["yes", "no", "unknown"]).optional(),
+        approvedAlternative: z.enum(["yes", "no", "unknown"]).optional(),
+        recommended: z.enum(["register", "approve", "block", "dismiss"]).optional(),
+      })
+      .optional(),
   })
   .refine((data) => data.status !== undefined || data.category !== undefined, {
     message: "status or category is required",
@@ -231,6 +242,8 @@ export async function PUT(
         changes: {
           from: existing.status,
           to: nextStatus,
+          ...(parsed.data.rationale ? { rationale: parsed.data.rationale } : {}),
+          ...(parsed.data.triage ? { triage: parsed.data.triage } : {}),
           ...(identityEnforcement
             ? {
                 identityEnforcement: {

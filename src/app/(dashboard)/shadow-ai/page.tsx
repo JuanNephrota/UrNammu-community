@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload, X } from "lucide-react";
+import { ArrowRight, Plus, Search, Shield, RefreshCw, Loader2, Wifi, Clock, Upload, X } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -806,7 +806,16 @@ export default function ShadowAIPage() {
         <>
           {discovered.length > 0 && (
             <Card>
-              <CardHeader><CardTitle>Needs Review ({discovered.length})</CardTitle></CardHeader>
+              <CardHeader className="flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+                <CardTitle>Needs Review ({discovered.length})</CardTitle>
+                <Link
+                  href={`/shadow-ai/${discovered[0].id}/triage`}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
+                >
+                  Start triage
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   {discovered.map((tool) => (
@@ -849,7 +858,14 @@ export default function ShadowAIPage() {
                             />
                           </div>
                         </div>
-                        <div className="flex gap-2 shrink-0 ml-4">
+                        <div className="flex flex-wrap justify-end gap-2 shrink-0 ml-4">
+                          <Link
+                            href={`/shadow-ai/${tool.id}/triage`}
+                            className={buttonVariants({ size: "sm" })}
+                            aria-label={`Review ${tool.toolName}`}
+                          >
+                            Review
+                          </Link>
                           <Button
                             size="sm"
                             variant="outline"

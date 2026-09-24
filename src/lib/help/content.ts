@@ -393,7 +393,7 @@ Names from app inventories and OAuth grants are matched to the registry loosely 
 
 The page splits discoveries into three sections:
 
-- **Needs Review** — high-confidence matches and legacy tools. These are confirmed AI tools that need a governance decision: **Convert to Governed System**, **Register & Assess**, **Approve**, or **Block**.
+- **Needs Review** — high-confidence matches and legacy tools. These are confirmed AI tools that need a governance decision. **Review** (or **Start triage** for the first in the queue) opens a guided review: what was found, three questions (data exposure, business need, approved alternative), then a suggested outcome. You register, approve, block or dismiss, with a reason that goes in the audit log, then move to the next tool. The quick actions (**Convert to Governed System**, **Register & Assess**, **Approve**, **Block**, **Dismiss**) are still on each row.
 - **Low-Confidence Candidates** — medium and low-confidence matches. Each shows a confidence badge, score, and match reasons. Actions: **Promote** (move to main queue as high-confidence) or **Dismiss** (permanently suppress with a reason).
 - **Resolved** — tools that have been registered, approved, or blocked.
 

@@ -749,9 +749,21 @@ The Shadow AI page splits discoveries into three sections:
    - **Dismiss** — removes the tool from the queue with a required reason. Creates a `DismissedCandidate` record that prevents the tool from resurfacing on future scans. Dismissed candidates are shown as a count at the bottom of the page.
 3. **Resolved** — tools that have been registered, approved, or blocked. A tool marked **Blocked** shows an **Unblock** action here, which moves it back to `UNDER_REVIEW` for re-evaluation — useful for reversing an accidental block or a policy change without deleting the record.
 
-On a tool's row in "Needs Review":
+**Guided review.** Each row in "Needs Review" has a **Review** button, and **Start triage** in the section header opens the first tool in the queue. The review has three steps:
 
-- **Convert to Governed System** — navigates to the full system creation form with every field pre-populated (see *AI-assisted auto-fill* below).
+1. **Understand** — the vendor, domain, category, how it was found, first and last seen, the users observed, the OAuth scopes granted (broad ones such as Drive, Gmail, Calendar or Mail are highlighted), why it was matched, registry flags (for example "the consumer tier trains on prompts" or "data is processed in China"), and the vendor's governance status. **Start review** moves the tool to `UNDER_REVIEW` so colleagues can see someone is handling it.
+2. **Assess** — three questions: the most sensitive data people put into it, whether there is a real business need, and whether an already-approved tool does the same job. "Don't know" is a valid answer.
+3. **Decide** — a suggested outcome with its reasons, then your choice:
+   - **Register as an AI system** — **Register with guided setup** opens the registration wizard pre-filled from the discovery. **Quick register & assess** creates the system directly and opens the risk assessment.
+   - **Approve without registering**, **Block** or **Dismiss** — each needs a short reason. The reason and your three answers are stored in the audit log with the status change.
+
+   The suggestion is block when the vendor's security review was rejected, when there is no business need, when an approved alternative exists and company data is involved, or when customer data goes into a tool flagged for training on prompts or China hosting. It is register when customer data is involved, nobody knows what data goes in, or the tool holds broad OAuth scopes. It is approve only when there is a business need and no company data. Everything else defaults to register.
+
+After a decision the review shows what happened. For a block, that means whether the domain is on the blocklist feed and what the identity-provider enforcement did. **Next in queue** moves straight to the next tool.
+
+The quick actions stay on each row for reviewers who already know the answer:
+
+- **Convert to Governed System** — opens the guided registration with every field pre-populated (see *AI-assisted auto-fill* below).
 - **Register & Assess** — auto-creates an AISystem with AI-inferred fields (use case, model type, data inputs / outputs, risk level, sensitivity) and routes directly to the risk assessment form.
 - **Approve** — permit its use without adding to the Registry.
 - **Block** — mark the tool as not allowed. This records the decision *and*, where an enforcement layer is configured, actually enforces it — see [Enforcing a Block](#enforcing-a-block) below.
@@ -801,7 +813,7 @@ When you click **Convert to Governed System** or **Register & Assess** on a disc
 
 While the AI assistant is working, a floating "**Analyzing {toolName}**..." banner appears in the bottom-right of the Shadow AI page and the button label flips to "Analyzing..." / "Classifying..." (disabled to prevent double-clicks). The banner auto-dismisses when the destination page loads.
 
-For the **Convert to Governed System** path, the registration form renders with every inferred field pre-populated and a green "**AI-assisted**" banner at the top showing the model's reasoning. You can review and edit anything before saving.
+For the **Convert to Governed System** path (and **Register with guided setup** in the guided review), the registration wizard opens with every inferred field pre-populated and a green "**AI-assisted**" banner at the top showing the model's reasoning. You can review and edit anything as you go through the steps, and the discovery is linked to the system when the first step saves.
 
 For the **Register & Assess** path, the system is created directly with the AI-inferred values. The audit log records which fields were AI-inferred plus the model's reasoning, so reviewers always know what was human- vs machine-decided.
 
