@@ -12,6 +12,18 @@ import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
 import { AgentAIRiskCard } from "@/components/agents/agent-ai-risk-card";
 import { McpGovernanceCard } from "@/components/agents/mcp-governance-card";
 import { AgentKillSwitch } from "@/components/agents/agent-kill-switch";
+import { AgentCharterCard } from "@/components/agents/agent-charter-card";
+import { ApprovalDecisionCard } from "@/components/registry/approval-decision-card";
+import { GovernanceStageReviewCard } from "@/components/registry/governance-stage-review-card";
+import { ChecklistCard } from "@/components/workflow/checklist-card";
+import { WorkflowSummaryCard } from "@/components/workflow/workflow-summary-card";
+import { loadAgentGovernance } from "@/lib/agent-governance-data";
+import {
+  getAgentApprovalBlockers,
+  getAgentChecklist,
+  getAgentRequiredStages,
+  getAgentWorkflowSummary,
+} from "@/lib/agent-governance";
 
 function daysAgo(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -48,6 +60,14 @@ export default async function AgentDetailPage({
     },
   });
   if (!agent) notFound();
+
+  const governance = await loadAgentGovernance(agent.id);
+  if (!governance) notFound();
+  const blockers = getAgentApprovalBlockers(governance.input);
+  const workflow = getAgentWorkflowSummary(governance.input, blockers);
+  const checklist = getAgentChecklist(governance.input, blockers);
+  const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
+  const requiredStages = getAgentRequiredStages(governance.input);
 
   const since30d = daysAgo(30);
   const [toolProfiles, calls30d, unapproved30d, lastCall] = await Promise.all([
@@ -125,7 +145,39 @@ export default async function AgentDetailPage({
         </div>
       )}
 
+      <ChecklistCard
+        title="Governance checklist"
+        description="Everything this agent needs before it is approved and monitored. Each open item links to where you complete it."
+        items={checklist}
+        readOnly={!canOperate}
+        completeMessage="This agent is chartered, controlled, reviewed and approved."
+        twoColumn
+      />
+
       <div className="grid gap-6 lg:grid-cols-2">
+        <WorkflowSummaryCard workflow={workflow} status={agent.status} className="lg:col-span-2" />
+        <div className="lg:col-span-2">
+          <AgentCharterCard agent={agent} canEdit={canOperate} />
+        </div>
+        <div id="approval" className="scroll-mt-6 [&>*]:h-full">
+          <ApprovalDecisionCard
+            systemId={agent.id}
+            endpoint={`/api/agents/${agent.id}/approval`}
+            subjectNoun="agent"
+            latestDecision={governance.agent.approvals[0]?.decision ?? null}
+            governanceReady={governanceReady}
+            approvals={governance.agent.approvals}
+            blockers={blockers.map(({ message, href, category, soft }) => ({ message, href, category, soft }))}
+          />
+        </div>
+        <div id="reviews" className="scroll-mt-6 [&>*]:h-full">
+          <GovernanceStageReviewCard
+            systemId={agent.id}
+            endpoint={`/api/agents/${agent.id}/governance-review`}
+            requiredStages={requiredStages}
+            reviews={governance.agent.governanceReviews}
+          />
+        </div>
         <Card>
           <CardHeader><CardTitle>Details</CardTitle></CardHeader>
           <CardContent>
@@ -189,6 +241,7 @@ export default async function AgentDetailPage({
             </div>
           </CardContent>
         </Card>
+        <div id="mcp" className="scroll-mt-6 lg:col-span-2">
         <McpGovernanceCard
           agent={{
             id: agent.id,
@@ -204,6 +257,8 @@ export default async function AgentDetailPage({
           profiles={toolProfiles}
           stats={{ calls30d, unapproved30d, lastCallAt: lastCall?.createdAt ?? null }}
         />
+        </div>
+        <div id="risk" className="scroll-mt-6 lg:col-span-2">
         <AgentAIRiskCard
           agent={{
             id: agent.id,
@@ -264,6 +319,7 @@ export default async function AgentDetailPage({
               : null
           }
         />
+        </div>
       </div>
     </div>
   );

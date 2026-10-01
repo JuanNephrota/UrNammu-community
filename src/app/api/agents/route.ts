@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withAuth, withRole } from "@/lib/auth-guard";
-import { createAgentSchema } from "@/lib/validations/agent";
+import { createAgentSchema, normalizeAgentText } from "@/lib/validations/agent";
 import { createAuditLog } from "@/lib/audit";
 
 export async function GET() {
@@ -28,10 +28,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const data = normalizeAgentText(parsed.data);
     const agent = await prisma.aIAgent.create({
       data: {
-        ...parsed.data,
+        ...data,
         ownerId: session.user.userId,
+        // Approval restarts the clock; until then the interval counts from registration.
+        nextReviewDate: new Date(Date.now() + data.reviewIntervalDays * 24 * 60 * 60 * 1000),
       },
     });
 

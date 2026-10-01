@@ -48,7 +48,7 @@ Not in scope here: alerts when a suspended agent keeps calling (the denial
 rows already show it), and blocking traffic that carries no `x-agent-id`
 (that is the discovery problem, handled by `docs/plans/agent-discovery.md`).
 
-## 2. ☐ Agent charter and approval gate (planning & design phase)
+## 2. ☑ Agent charter and approval gate (PR: `feat/agent-charter-approval`)
 
 The article: define purpose, scope, decision boundaries, access limits, risk
 classification, ownership and approval workflow *before* development, or
@@ -59,19 +59,27 @@ autonomy level. Every governance table (`SystemApproval`, `GovernanceReview`,
 `GovernanceException`, `EvidenceArtifact`, `GovernanceIncident`) keys on
 `aiSystemId` only, so an agent can go DRAFT → DEPLOYED with no sign-off.
 
-Proposed:
+Shipped (decision: agent-scoped twin tables, not polymorphic — every existing
+`aiSystem` include and the notifications feed stay non-nullable; the UI is
+shared instead, via an `endpoint` prop on the two reviewer cards):
 
-- Charter fields on `AIAgent`: `purpose`, `inScopeActions[]`,
-  `outOfScopeActions[]`, `successCriteria`, `decisionBoundaries` (text).
-- Extend the four-stage review, approval blockers and the "what's left"
-  checklist (`src/lib/workflow.ts`, `approval-blockers.ts`,
-  `governance-workflow.ts`) to agents. Design decision to make first: make
-  the governance tables polymorphic (`aiSystemId?` + `agentId?` with a check
-  constraint) or add agent-scoped twins. Polymorphic keeps the UI and the
-  notifications feed single-sourced; twins keep the Prisma relations simple.
-- Autonomy policy defaults as blockers: FULL_AUTONOMY requires
-  `mcpEnforcement = "enforce"` and non-empty allowlists; HIGH/CRITICAL risk
-  requires a completed Risk Center assessment.
+- Charter on `AIAgent`: `purpose`, `inScopeActions[]`, `outOfScopeActions[]`,
+  `decisionBoundaries`, `successCriteria`; `require*Approval` ×4,
+  `reviewIntervalDays`, `nextReviewDate`. `AgentApproval`,
+  `AgentGovernanceReview` (migration `20260930150000_agent_charter_approval`).
+- `src/lib/agent-governance.ts`: charter status, blockers (hard/soft),
+  workflow summary, checklist. Hard: charter incomplete, suspended,
+  FULL_AUTONOMY without enforce+allowlist, HIGH/CRITICAL with no risk basis
+  (parent assessment or agent risk review), missing stage review, no/overdue
+  review date. Soft: optional charter fields, SUPERVISED without enforcement,
+  human-review contradictions, unapproved observed tools, no parent system.
+- `POST /api/agents/[id]/approval` (refuses APPROVED on hard blockers;
+  approval restarts the review clock), `POST /api/agents/[id]/governance-review`,
+  and the `PUT` gate: no transition into APPROVED/DEPLOYED without an approval.
+- Detail page: checklist, workflow card, charter card, approval + stage
+  review cards. Form: charter and approval-requirement sections.
+
+Deferred to item 4: evidence artifacts for agents and the notifications feed.
 
 ## 3. ☐ Structured human-review triggers enforced at the proxy (authority)
 

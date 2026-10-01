@@ -7,6 +7,25 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 - Register a **system** for the AI capability (e.g. "Claude-based support assistant").
 - Register an **agent** when that capability runs autonomously with defined tools, triggers, or human-review rules. Agents link back to a parent system via **Connected Systems**.
 
+## Charter and approval
+
+Every agent carries a **charter**: its purpose, the actions it may take (in scope), the actions it must never take (out of scope), the decision boundaries where it has to stop and hand off, and its success criteria. Purpose, at least one in-scope action and the decision boundaries are required before approval; the rest is recommended. Edit it on the agent form; it shows on the **Agent Charter** card.
+
+Approval works like it does for systems. The **Governance checklist** at the top of the detail page lists what is left; the **Governance Workflow** card gives the stage and the next actions; **Stage Reviews** collects the required sign-offs (Owner, Security and Compliance by default, Legal optional — set on the agent form under **Approval Requirements**); **Approval Review** records the decision. Approving sets the agent to APPROVED (a DEPLOYED agent stays DEPLOYED) and restarts the review interval; **Request Changes** and **Revoke** return it to UNDER REVIEW.
+
+Approval is refused while any of these hold:
+
+- the charter is incomplete;
+- the agent is **suspended** (resume it first, or keep it suspended and do not approve);
+- autonomy is **FULL_AUTONOMY** and MCP enforcement is not **Enforce** with at least one allowed server — there is no human to catch a bad tool call;
+- risk is **HIGH** or **CRITICAL** and there is no risk basis: neither a Risk Center assessment on the parent system nor an agent risk review;
+- a required stage review is missing;
+- there is no next-review date, or it has passed.
+
+Softer items (optional charter fields, SUPERVISED without enforcement, human-review settings that contradict the autonomy level, unapproved observed tools, no parent system) are listed as recommendations and do not block.
+
+Moving an agent to **APPROVED** or **DEPLOYED** on the edit form also requires a recorded approval; agents that are already live can be edited freely.
+
 ## Autonomy levels
 
 - `FULL_AUTONOMY` — agent acts with no human in the loop. Highest scrutiny.

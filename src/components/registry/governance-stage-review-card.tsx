@@ -34,10 +34,13 @@ export function GovernanceStageReviewCard({
   systemId,
   requiredStages,
   reviews,
+  endpoint,
 }: {
   systemId: string;
   requiredStages: Stage[];
   reviews: Review[];
+  /** POST target; defaults to the AI-system route. Agents pass their own. */
+  endpoint?: string;
 }) {
   const router = useRouter();
   const [rationale, setRationale] = useState("");
@@ -56,7 +59,7 @@ export function GovernanceStageReviewCard({
     setSubmittingStage(`${stage}-${approved}`);
     setError(null);
     try {
-      const res = await fetch(`/api/ai-systems/${systemId}/governance-review`, {
+      const res = await fetch(endpoint ?? `/api/ai-systems/${systemId}/governance-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

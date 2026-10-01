@@ -24,22 +24,23 @@ type Approval = {
 export type ApprovalBlockerView = {
   message: string;
   href?: string;
-  category:
-    | "risk"
-    | "policy"
-    | "compliance_status"
-    | "compliance_evidence"
-    | "policy_rule"
-    | "stage_review"
-    | "review_date"
-    | "eu_ai_act_classification"
-    | "eu_ai_act_prohibited"
-    | "eu_ai_act_obligation";
+  /** Free-form so the card can serve systems and agents; see `soft`. */
+  category: string;
+  /**
+   * Soft blockers are shown as recommendations and do not disable approval.
+   * When omitted, the system convention applies (only `compliance_evidence`
+   * is soft).
+   */
+  soft?: boolean;
 };
+
+function isSoftBlocker(blocker: ApprovalBlockerView): boolean {
+  return blocker.soft ?? blocker.category === "compliance_evidence";
+}
 
 const decisionStyles = {
   APPROVED: {
-    label: "Approve System",
+    label: "Approve",
     icon: CheckCircle2,
     variant: "success" as const,
   },
@@ -61,12 +62,18 @@ export function ApprovalDecisionCard({
   governanceReady,
   approvals,
   blockers = [],
+  endpoint,
+  subjectNoun = "system",
 }: {
   systemId: string;
   latestDecision: Approval["decision"] | null;
   governanceReady: boolean;
   approvals: Approval[];
   blockers?: ApprovalBlockerView[];
+  /** POST target; defaults to the AI-system approval route. Agents pass their own. */
+  endpoint?: string;
+  /** "system" or "agent" — used in labels and copy. */
+  subjectNoun?: string;
 }) {
   const router = useRouter();
   const [rationale, setRationale] = useState("");
@@ -78,7 +85,7 @@ export function ApprovalDecisionCard({
     setError(null);
 
     try {
-      const res = await fetch(`/api/ai-systems/${systemId}/approval`, {
+      const res = await fetch(endpoint ?? `/api/ai-systems/${systemId}/approval`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -110,8 +117,9 @@ export function ApprovalDecisionCard({
     }
   }
 
-  const hardBlockers = blockers.filter((b) => b.category !== "compliance_evidence");
-  const softBlockers = blockers.filter((b) => b.category === "compliance_evidence");
+  const hardBlockers = blockers.filter((b) => !isSoftBlocker(b));
+  const softBlockers = blockers.filter(isSoftBlocker);
+  const Noun = subjectNoun.charAt(0).toUpperCase() + subjectNoun.slice(1);
 
   return (
     <Card>
@@ -134,7 +142,7 @@ export function ApprovalDecisionCard({
 
         <p className="text-sm text-[var(--text-secondary)]">
           Record formal approval decisions here so the registry has a durable review trail. Approvals
-          set the system to `APPROVED`, while change requests and revocations return it to `UNDER REVIEW`.
+          set the {subjectNoun} to `APPROVED`, while change requests and revocations return it to `UNDER REVIEW`.
           Final approval is gated by the required stage reviews and active governance controls.
         </p>
 
@@ -168,7 +176,7 @@ export function ApprovalDecisionCard({
           <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] p-3">
             <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
               <Info className="h-3.5 w-3.5" />
-              Evidence recommended
+              Recommended before approval
             </p>
             <ul className="mt-2 space-y-1.5 text-sm">
               {softBlockers.map((blocker, idx) => (
@@ -214,7 +222,11 @@ export function ApprovalDecisionCard({
                 className={decision === "APPROVED" ? "bg-[var(--accent)] text-[var(--bg-deep)] hover:brightness-110" : undefined}
               >
                 <Icon className="mr-2 h-4 w-4" />
-                {submitting === decision ? "Saving..." : config.label}
+                {submitting === decision
+                  ? "Saving..."
+                  : decision === "APPROVED"
+                    ? `Approve ${Noun}`
+                    : config.label}
               </Button>
             );
           })}

@@ -27,6 +27,16 @@ interface AgentFormProps {
     mcpServerAllowlist?: string[];
     mcpToolAllowlist?: string[];
     mcpEnforcement?: string;
+    purpose?: string | null;
+    inScopeActions?: string[];
+    outOfScopeActions?: string[];
+    decisionBoundaries?: string | null;
+    successCriteria?: string | null;
+    requireOwnerApproval?: boolean;
+    requireSecurityApproval?: boolean;
+    requireLegalApproval?: boolean;
+    requireComplianceApproval?: boolean;
+    reviewIntervalDays?: number;
   };
   systems: { id: string; name: string }[];
 }
@@ -47,6 +57,10 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
   const [mcpTools, setMcpTools] = useState<string[]>(initialData?.mcpToolAllowlist ?? []);
   const [mcpServerInput, setMcpServerInput] = useState("");
   const [mcpToolInput, setMcpToolInput] = useState("");
+  const [inScope, setInScope] = useState<string[]>(initialData?.inScopeActions ?? []);
+  const [outOfScope, setOutOfScope] = useState<string[]>(initialData?.outOfScopeActions ?? []);
+  const [inScopeInput, setInScopeInput] = useState("");
+  const [outOfScopeInput, setOutOfScopeInput] = useState("");
 
   const isEditing = !!initialData?.id;
 
@@ -71,6 +85,17 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
       mcpServerAllowlist: mcpServers,
       mcpToolAllowlist: mcpTools,
       mcpEnforcement: (formData.get("mcpEnforcement") as string) || "monitor",
+      // Charter. Empty strings are sent as-is; the API normalises them to null.
+      purpose: formData.get("purpose") as string,
+      inScopeActions: inScope,
+      outOfScopeActions: outOfScope,
+      decisionBoundaries: formData.get("decisionBoundaries") as string,
+      successCriteria: formData.get("successCriteria") as string,
+      requireOwnerApproval: formData.get("requireOwnerApproval") === "on",
+      requireSecurityApproval: formData.get("requireSecurityApproval") === "on",
+      requireLegalApproval: formData.get("requireLegalApproval") === "on",
+      requireComplianceApproval: formData.get("requireComplianceApproval") === "on",
+      reviewIntervalDays: Number(formData.get("reviewIntervalDays") || 365),
     };
 
     try {
@@ -80,7 +105,13 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        const detail = Array.isArray(payload.blockers) && payload.blockers.length
+          ? `\n• ${payload.blockers.map((b: { message: string }) => b.message).join("\n• ")}`
+          : "";
+        throw new Error(`${payload.error ?? "Failed to save"}${detail}`);
+      }
       const agent = await res.json();
       router.push(`/agents/${agent.id}`);
       router.refresh();
@@ -102,7 +133,7 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">{error}</div>
+        <div className="whitespace-pre-line rounded-md bg-[var(--critical)]/10 p-3 text-sm text-[var(--critical)]">{error}</div>
       )}
 
       <Card>
@@ -191,6 +222,98 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
         </CardContent>
       </Card>
 
+      <Card id="charter" className="scroll-mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            Agent Charter
+            <HelpHint hint="agent_charter" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-[var(--text-muted)]">
+            Define what the agent is for and where it must stop before anyone approves it. Purpose, at least one
+            in-scope action and the decision boundaries are required for approval; the rest is recommended.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="purpose">Purpose *</Label>
+            <Textarea id="purpose" name="purpose" defaultValue={initialData?.purpose ?? ""} rows={2}
+              placeholder="The business outcome this agent exists to produce, in one or two sentences." />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>In-scope actions *</Label>
+              <div className="flex gap-2">
+                <Input placeholder="e.g. issue refund ≤ $100" value={inScopeInput} onChange={(e) => setInScopeInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addChip(inScopeInput, inScope, setInScope, setInScopeInput); }}} />
+                <Button type="button" variant="outline" onClick={() => addChip(inScopeInput, inScope, setInScope, setInScopeInput)}>Add</Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {inScope.map((a) => (
+                  <span key={a} className="inline-flex items-center gap-1 rounded-full bg-[var(--success-dim)] px-3 py-1 text-xs font-medium text-[var(--success-strong)]">
+                    {a}
+                    <button type="button" onClick={() => setInScope(inScope.filter((x) => x !== a))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Out-of-scope actions</Label>
+              <div className="flex gap-2">
+                <Input placeholder="e.g. change a shipping address" value={outOfScopeInput} onChange={(e) => setOutOfScopeInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addChip(outOfScopeInput, outOfScope, setOutOfScope, setOutOfScopeInput); }}} />
+                <Button type="button" variant="outline" onClick={() => addChip(outOfScopeInput, outOfScope, setOutOfScope, setOutOfScopeInput)}>Add</Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {outOfScope.map((a) => (
+                  <span key={a} className="inline-flex items-center gap-1 rounded-full bg-[var(--critical-dim)] px-3 py-1 text-xs font-medium text-[var(--critical-strong)]">
+                    {a}
+                    <button type="button" onClick={() => setOutOfScope(outOfScope.filter((x) => x !== a))} className="ml-1 hover:text-[var(--critical)]">&times;</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="decisionBoundaries">Decision boundaries *</Label>
+            <Textarea id="decisionBoundaries" name="decisionBoundaries" defaultValue={initialData?.decisionBoundaries ?? ""} rows={3}
+              placeholder="Thresholds, data classes or situations where the agent must stop and hand off to a person." />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="successCriteria">Success criteria</Label>
+            <Textarea id="successCriteria" name="successCriteria" defaultValue={initialData?.successCriteria ?? ""} rows={2}
+              placeholder="How you will know it is working, and what would make you retire it." />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card id="approval-requirements" className="scroll-mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            Approval Requirements
+            <HelpHint hint="agent_approval_stages" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              ["requireOwnerApproval", "Owner review", initialData?.requireOwnerApproval ?? true],
+              ["requireSecurityApproval", "Security review", initialData?.requireSecurityApproval ?? true],
+              ["requireLegalApproval", "Legal review", initialData?.requireLegalApproval ?? false],
+              ["requireComplianceApproval", "Compliance review", initialData?.requireComplianceApproval ?? true],
+            ] as const).map(([name, label, checked]) => (
+              <label key={name} className="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2 text-sm">
+                <input type="checkbox" name={name} defaultChecked={checked} className="h-4 w-4 accent-[var(--accent)]" />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="space-y-2 sm:max-w-xs">
+            <Label htmlFor="reviewIntervalDays">Review interval (days)</Label>
+            <Input id="reviewIntervalDays" name="reviewIntervalDays" type="number" min={1} max={730}
+              defaultValue={initialData?.reviewIntervalDays ?? 365} />
+            <p className="text-xs text-[var(--text-muted)]">Each recorded approval restarts this clock.</p>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader><CardTitle>Capabilities</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -232,7 +355,7 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="mcp" className="scroll-mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-1.5">
             MCP Tool Governance

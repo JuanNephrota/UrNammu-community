@@ -40,6 +40,16 @@ export default async function EditAgentPage({
           mcpServerAllowlist: agent.mcpServerAllowlist,
           mcpToolAllowlist: agent.mcpToolAllowlist,
           mcpEnforcement: agent.mcpEnforcement,
+          purpose: agent.purpose,
+          inScopeActions: agent.inScopeActions,
+          outOfScopeActions: agent.outOfScopeActions,
+          decisionBoundaries: agent.decisionBoundaries,
+          successCriteria: agent.successCriteria,
+          requireOwnerApproval: agent.requireOwnerApproval,
+          requireSecurityApproval: agent.requireSecurityApproval,
+          requireLegalApproval: agent.requireLegalApproval,
+          requireComplianceApproval: agent.requireComplianceApproval,
+          reviewIntervalDays: agent.reviewIntervalDays,
         }}
         systems={systems}
       />

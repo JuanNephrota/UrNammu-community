@@ -15,6 +15,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
 4. [AI System Registry](#4-ai-system-registry)
    - [EU AI Act Classification](#eu-ai-act-classification)
 5. [AI Agents](#5-ai-agents)
+   - [Charter and Approval Gate](#charter-and-approval-gate)
    - [MCP Tool Governance](#mcp-tool-governance)
    - [Kill Switch](#kill-switch)
 6. [Risk Center](#6-risk-center)
@@ -292,6 +293,39 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 ### Human Review Triggers
 
 Agents can declare triggers (JSON list) that force a human step — e.g. "dollar amount > $1 000", "contains PII", "new vendor". These feed the risk review and are shown on the agent detail page.
+
+### Charter and Approval Gate
+
+Agents go through the same approve-before-deploy gate as systems, with agent-specific blockers.
+
+**Charter** (agent form → *Agent Charter*; shown on the detail page):
+
+| Field | Required for approval | What it captures |
+|---|---|---|
+| Purpose | Yes | The business outcome the agent exists to produce. |
+| In-scope actions | Yes (≥ 1) | What it may do on its own. |
+| Out-of-scope actions | Recommended | What it must never do, even if asked. |
+| Decision boundaries | Yes | Thresholds, data classes or situations where it must stop and hand off. |
+| Success criteria | Recommended | How you know it works, and what would make you retire it. |
+
+**Approval requirements** (agent form → *Approval Requirements*): which stage reviews are required (Owner, Security, Compliance on by default; Legal off) and the review interval in days. Each recorded approval restarts the interval.
+
+**On the detail page:** the *Governance checklist* (charter → parent system → controls → risk basis → stage reviews → approval → proxy attribution), the *Governance Workflow* card with the current stage and next actions, *Stage Reviews*, and *Approval Review*. Approve sets the agent to `APPROVED` (a `DEPLOYED` agent stays deployed); Request Changes and Revoke return it to `UNDER_REVIEW`.
+
+**Hard blockers** (approval refused, and the edit form refuses a status change into `APPROVED`/`DEPLOYED` without an approval on record):
+
+| Blocker | Why |
+|---|---|
+| Charter incomplete | No purpose, no in-scope actions, or no decision boundaries. |
+| Suspended | The kill switch is on. Resume first, or keep it off and don't approve. |
+| FULL_AUTONOMY without enforcement | Requires MCP enforcement *Enforce* with at least one allowed server. |
+| HIGH/CRITICAL with no risk basis | Needs a Risk Center assessment on the parent system or an agent risk review. |
+| Missing stage review | A required stage has no approval, or its latest decision was Request Changes. |
+| No or overdue review date | Set the interval on the form; approval starts the clock. |
+
+**Recommendations** (shown, not blocking): optional charter fields empty, SUPERVISED without enforcement, human-review settings that contradict the autonomy level (or required with no triggers), observed MCP tools not on the allowlist, no parent system linked.
+
+Decisions and stage reviews are audit-logged (`AgentApproval`, `AgentGovernanceReview`).
 
 ### MCP Tool Governance
 

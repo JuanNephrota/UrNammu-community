@@ -241,6 +241,8 @@ model User {
   ownedSystems AISystem[]    @relation("SystemOwner")
   ownedAgents  AIAgent[]     @relation("AgentOwner")
   suspendedAgents AIAgent[]  @relation("AgentSuspendedBy")
+  agentApprovals         AgentApproval[]
+  agentGovernanceReviews AgentGovernanceReview[]
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
   syncRuns     ProviderSyncRun[]
@@ -327,6 +329,22 @@ model AIAgent {
   status              AISystemStatus @default(DRAFT)
   department          String?
 
+  // Charter — defined before the agent is approved (docs/plans/agentic-governance-playbook.md §2).
+  purpose            String?  @db.Text
+  inScopeActions     String[] @default([])
+  outOfScopeActions  String[] @default([])
+  decisionBoundaries String?  @db.Text
+  successCriteria    String?  @db.Text
+
+  // Approval gate: which stage sign-offs are required before approval, and the
+  // review cadence. Mirrors AISystem so the same reviewer UI serves both.
+  requireOwnerApproval      Boolean  @default(true)
+  requireSecurityApproval   Boolean  @default(true)
+  requireLegalApproval      Boolean  @default(false)
+  requireComplianceApproval Boolean  @default(true)
+  reviewIntervalDays        Int      @default(365)
+  nextReviewDate            DateTime?
+
   // MCP tool governance. Empty allowlists mean "observe only". Entries:
   // servers match the declared name or URL host (wildcards allowed); tools are
   // "tool", "server/tool" or "server/*". `mcpEnforcement` is "monitor"
@@ -346,12 +364,46 @@ model AIAgent {
 
   auditLogs    AuditLog[]        @relation("AgentAuditLogs")
   riskReviews  AgentRiskReview[]
+  approvals         AgentApproval[]
+  governanceReviews AgentGovernanceReview[]
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
   discoveries  DiscoveredAgent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Agent-scoped twins of SystemApproval / GovernanceReview. Kept separate rather
+// than making those tables polymorphic so every existing `aiSystem` include and
+// notification stays non-nullable.
+model AgentApproval {
+  id              String           @id @default(cuid())
+  agent           AIAgent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId         String
+  decidedByUser   User             @relation(fields: [decidedByUserId], references: [id], onDelete: Cascade)
+  decidedByUserId String
+  decision        ApprovalDecision
+  rationale       String?          @db.Text
+  createdAt       DateTime         @default(now())
+
+  @@index([agentId, createdAt])
+  @@index([decidedByUserId, createdAt])
+}
+
+model AgentGovernanceReview {
+  id              String                @id @default(cuid())
+  agent           AIAgent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId         String
+  stage           GovernanceReviewStage
+  decidedByUser   User                  @relation(fields: [decidedByUserId], references: [id], onDelete: Cascade)
+  decidedByUserId String
+  approved        Boolean               @default(false)
+  rationale       String?               @db.Text
+  createdAt       DateTime              @default(now())
+
+  @@index([agentId, stage, createdAt])
+  @@index([decidedByUserId, createdAt])
 }
 
 // ─── Agent Discovery ────────────────────────────────────

@@ -28,6 +28,10 @@ export const HELP_HINTS = {
     "Servers match the declared name or URL host (wildcards like *.example.com allowed). Tools are `tool`, `server/tool`, or `server/*`. Empty = observe only.",
   mcp_enforcement:
     "Monitor records dry-run denials and alerts. Enforce returns 403 for unlisted servers and narrows each server's allowed_tools so the provider only exposes allowlisted tools.",
+  agent_charter:
+    "Purpose, the actions the agent may and may not take, the limits it must stay within, and how success is measured. Required before approval; reviewers and the AI risk review read it.",
+  agent_approval_stages:
+    "Which stakeholders must sign off before this agent can be approved. Owner, Security and Compliance are on by default; Legal is off. Approval restarts the review interval.",
   agent_kill_switch:
     "Suspend makes both proxies refuse every request carrying this agent's x-agent-id (403, recorded as a denial) until Resume. RETIRED agents are refused the same way. Applies regardless of MCP enforcement mode.",
 
