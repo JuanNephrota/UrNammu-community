@@ -13,16 +13,7 @@ export type RegexValidationResult =
   | { ok: true }
   | { ok: false; error: string };
 
-const MAX_PATTERN_LEN = 500;
-
-// Shapes that trip catastrophic backtracking most commonly: a quantifier
-// applied directly to a group that itself contains a greedy quantifier.
-// Examples we want to reject:  (.*)+, (a+)+, (\w*)+, (a|a)+
-const REDOS_SHAPES: RegExp[] = [
-  /\([^)]*[+*][^)]*\)[+*]/,   // (X*)+ or (X+)* or (X+)+
-  /\((?:\.\*|\.\+|\\w\*|\\w\+|\\s\*|\\s\+)\)[+*]/, // (.*)+, (\w*)+, etc.
-  /\(([^|)]+)\|\1\)/,          // (a|a) — trivial alternation
-];
+import { MAX_PATTERN_LEN, REDOS_SHAPES } from "./regex-safety";
 
 /**
  * Validate a single regex source string. Returns `{ ok: true }` or a

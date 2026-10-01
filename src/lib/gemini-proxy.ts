@@ -25,6 +25,7 @@ import {
   isGeminiSseStream,
   parseGeminiPath,
   policyViewOf,
+  isCanonicalProxyPath,
 } from "./proxy-providers";
 import { summarizeMcpForMetadata, type ObservedToolUse } from "./mcp-tool-governance";
 import { recordToolActivity, type AgentGovernance } from "./mcp-tool-activity";
@@ -55,6 +56,9 @@ const PROVIDER = "gemini";
 export async function handleGeminiProxy(req: NextRequest, subpath: string): Promise<Response> {
   const authError = await authenticateProxyRequest(req);
   if (authError) return authError;
+  if (!isCanonicalProxyPath(subpath)) {
+    return NextResponse.json({ error: "Invalid proxy path" }, { status: 400 });
+  }
 
   const search = req.nextUrl.search;
   const apiKey = req.headers.get("x-goog-api-key");

@@ -18,6 +18,7 @@ import {
 } from "./policy-loader";
 import { evaluateRequest, extractPromptText } from "./policy-enforcement";
 import { logPolicyDenial } from "./db";
+import { sanitizeText } from "./sensitive-detect";
 import { MCP_SERVER_DENIAL_RULE } from "./tool-activity";
 import {
   evaluateServers,
@@ -240,7 +241,10 @@ export async function runPolicyGate(input: {
   });
   if (evaluation.decision !== "deny") return null;
 
-  const promptExcerpt = extractPromptText(input.policyBody).slice(0, 1000);
+  // The denial that fires is usually the one *because* of a secret or PII, so
+  // the excerpt goes through the same redaction as the other stored excerpts
+  // and stays short.
+  const promptExcerpt = (sanitizeText(extractPromptText(input.policyBody)) ?? "").slice(0, 220);
   void logPolicyDenial({
     provider: input.provider,
     model: input.model,

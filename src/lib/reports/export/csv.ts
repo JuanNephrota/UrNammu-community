@@ -1,13 +1,9 @@
 import type { ReportResult } from "../types";
 import { formatCell } from "./format";
+import { csvField } from "../../csv-safe";
 
-function escapeCsv(value: string): string {
-  // RFC 4180: quote fields containing comma, quote, CR or LF; double inner quotes.
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
+// RFC 4180 quoting plus spreadsheet-formula neutralization.
+const escapeCsv = csvField;
 
 // Render a report result to a UTF-8 CSV buffer. A BOM is prepended so Excel
 // detects the encoding and renders unicode + leading-zero values correctly.

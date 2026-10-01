@@ -4,8 +4,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
+import { getSession } from "@/lib/auth-guard";
 
 export default async function AuditTrailPage() {
+  const session = await getSession();
+  if (!session || !["ADMIN", "COMPLIANCE_OFFICER"].includes(session.user.role)) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Audit Trail" description="Complete history of governance actions" />
+        <p className="text-sm text-[var(--text-muted)]">
+          The audit trail is limited to administrators and compliance officers.
+        </p>
+      </div>
+    );
+  }
+
   const logs = await prisma.auditLog.findMany({
     take: 100,
     orderBy: { createdAt: "desc" },

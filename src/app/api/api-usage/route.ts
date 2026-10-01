@@ -17,7 +17,8 @@ const createUsageSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  return withAuth(async () => {
+  return withAuth(async (session) => {
+    const isAuthor = ["ADMIN", "COMPLIANCE_OFFICER"].includes(session.user.role);
     const url = new URL(req.url);
     const provider = url.searchParams.get("provider");
     const department = url.searchParams.get("department");
@@ -40,7 +41,16 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
       include: { user: { select: { name: true, email: true } } },
     });
-    return NextResponse.json(logs, {
+    // Flagged-prompt excerpts and who sent them are governance-role data.
+    const visible = isAuthor
+      ? logs
+      : logs.map((log) => {
+          const redacted: Record<string, unknown> = { ...log };
+          delete redacted.promptMetadata;
+          delete redacted.user;
+          return redacted;
+        });
+    return NextResponse.json(visible, {
       headers: {
         "X-Total-Count": String(total),
         "X-Page-Size": String(take),

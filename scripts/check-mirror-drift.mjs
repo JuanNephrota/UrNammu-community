@@ -17,6 +17,7 @@ const MIRRORS = [
   { app: "src/lib/model-pricing.ts", proxy: "ai-proxy/src/lib/pricing.ts" },
   { app: "src/lib/proxy-providers.ts", proxy: "ai-proxy/src/lib/proxy-providers.ts" },
   { app: "src/lib/prompt-hash.ts", proxy: "ai-proxy/src/lib/prompt-hash.ts" },
+  { app: "src/lib/regex-safety.ts", proxy: "ai-proxy/src/lib/regex-safety.ts" },
   {
     app: "src/lib/caller-fingerprint.ts",
     proxy: "ai-proxy/src/lib/caller-fingerprint.ts",

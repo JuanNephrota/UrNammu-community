@@ -33,6 +33,7 @@ import {
   policyViewOf,
   resolveAzureModel,
   type OpenAIEndpoint,
+  isCanonicalProxyPath,
 } from "./proxy-providers";
 import {
   extractDeclaredMcpServers,
@@ -196,6 +197,9 @@ export async function handleOpenAIProxy(
 ): Promise<Response> {
   const authError = await authenticateProxyRequest(req);
   if (authError) return authError;
+  if (!isCanonicalProxyPath(subpath)) {
+    return NextResponse.json({ error: "Invalid proxy path" }, { status: 400 });
+  }
 
   const provider = flavor === "azure" ? "azure_openai" : "chatgpt";
   const pricingProvider: PricingProviderInput = flavor === "azure" ? "azure_openai" : "openai";

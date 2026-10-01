@@ -29,6 +29,7 @@ import {
   policyViewOf,
   selectBedrockForwardHeaders,
   splitEventStreamFrames,
+  isCanonicalProxyPath,
 } from "./proxy-providers";
 import {
   extractAnthropicStreamToolUse,
@@ -72,6 +73,9 @@ const PROVIDER = "bedrock";
 export async function handleBedrockProxy(req: NextRequest, subpath: string): Promise<Response> {
   const authError = await authenticateProxyRequest(req);
   if (authError) return authError;
+  if (!isCanonicalProxyPath(subpath)) {
+    return NextResponse.json({ error: "Invalid proxy path" }, { status: 400 });
+  }
 
   const authorization = req.headers.get("authorization");
   const sigv4 = parseSigV4Authorization(authorization);

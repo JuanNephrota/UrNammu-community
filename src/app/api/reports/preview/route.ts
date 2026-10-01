@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth-guard";
+import { withAuth, forbiddenResponse } from "@/lib/auth-guard";
+import { canQueryDataSource } from "@/lib/reports/access";
 import { runReportQuery } from "@/lib/reports/query";
 import { reportConfigSchema, DATA_SOURCE_VALUES } from "@/lib/validations/report";
 import { z } from "zod";
@@ -18,7 +19,7 @@ const previewSchema = z.object({
 // return a capped JSON result. Powers the builder's live preview and the
 // saved-report detail view.
 export async function POST(req: NextRequest) {
-  return withAuth(async () => {
+  return withAuth(async (session) => {
     const body = await req.json().catch(() => ({}));
     const parsed = previewSchema.safeParse(body);
     if (!parsed.success) {
@@ -27,6 +28,8 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    if (!canQueryDataSource(parsed.data.dataSource, session)) return forbiddenResponse();
 
     try {
       const result = await runReportQuery(

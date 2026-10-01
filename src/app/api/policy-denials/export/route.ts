@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { csvField } from "@/lib/csv-safe";
 import { prisma } from "@/lib/prisma";
 import { withRole } from "@/lib/auth-guard";
 import { listBlockedEvents, type BlockedEventSource } from "@/lib/blocked-events";
@@ -16,12 +17,7 @@ function defaultSince(): Date {
   return d;
 }
 
-function escapeCell(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
+const escapeCell = csvField;
 
 function toCsvRow(cells: (string | number | null | undefined)[]): string {
   return cells.map((cell) => escapeCell(String(cell ?? ""))).join(",");

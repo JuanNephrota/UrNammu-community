@@ -9,6 +9,12 @@ import { prisma } from "./prisma";
 import { verifyPassword } from "./passwords";
 import { isDemoModeEnabled } from "./demo-mode";
 import { AUTH_SETTINGS_KEYS, getSetting } from "./settings";
+import {
+  allowedSignInDomains,
+  decideSsoSignIn,
+  initialAdminEmail,
+  shouldPromoteInitialAdmin,
+} from "./sign-in-policy";
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -72,6 +78,24 @@ export async function hydrateJwtClaims(
   }
 
   return revokeClaims(token, "DELETED");
+}
+
+/**
+ * The first ADMIN comes from an explicit INITIAL_ADMIN_EMAIL, and only while no
+ * active ADMIN exists. (Promoting "whoever signs in when there is one user" let
+ * a stranger take a fresh deployment and re-promoted a lone survivor.)
+ */
+async function promoteInitialAdmin(email: string) {
+  const initialAdmin = initialAdminEmail();
+  if (!initialAdmin) return;
+  const activeAdminCount = await prisma.user.count({
+    where: { role: "ADMIN", status: "ACTIVE" },
+  });
+  if (!shouldPromoteInitialAdmin({ email, initialAdmin, activeAdminCount })) return;
+  await prisma.user.updateMany({
+    where: { email, role: { not: "ADMIN" } },
+    data: { role: "ADMIN" },
+  });
 }
 
 export async function getAuthOptions(): Promise<NextAuthOptions> {
@@ -203,30 +227,35 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
       strategy: "jwt",
     },
     callbacks: {
-      async signIn({ user, account }) {
+      async signIn({ user, account, profile }) {
         const email = typeof user.email === "string" ? user.email : null;
-        if (
-          (account?.provider === "google" || account?.provider === "azure-ad") &&
-          email
-        ) {
+        if (account?.provider === "google" || account?.provider === "azure-ad") {
           // SSO bypasses the credentials providers' own status check, so gate
           // it here — a suspended account must not get a session from Google
-          // or Entra either.
+          // or Entra either, and a stranger must not get a new one.
+          if (!email) return false;
           const existing = await prisma.user.findUnique({
             where: { email },
             select: { status: true },
           });
           if (existing && !isActiveStatus(existing.status)) return false;
 
-          const userCount = await prisma.user.count({
-            where: { status: "ACTIVE" },
+          const decision = decideSsoSignIn({
+            provider: account.provider,
+            email,
+            emailVerified: (profile as { email_verified?: boolean } | undefined)
+              ?.email_verified,
+            accountExists: Boolean(existing),
+            isProduction,
+            allowedDomains: allowedSignInDomains(),
+            initialAdmin: initialAdminEmail(),
           });
-          if (userCount <= 1) {
-            await prisma.user.updateMany({
-              where: { email },
-              data: { role: "ADMIN" },
-            });
+          if (!decision.allowed) {
+            console.warn(`[auth] SSO sign-in refused (${decision.reason})`);
+            return false;
           }
+
+          if (existing) await promoteInitialAdmin(email);
         }
         return true;
       },
@@ -246,6 +275,13 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           session.user.department = token.department as string | null;
         }
         return session;
+      },
+    },
+    events: {
+      // The adapter creates the row after signIn() returns, so a first-ever
+      // sign-in can only be promoted here.
+      async createUser({ user }) {
+        if (user.email) await promoteInitialAdmin(user.email);
       },
     },
     pages: {

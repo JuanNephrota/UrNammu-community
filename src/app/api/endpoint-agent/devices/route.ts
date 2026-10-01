@@ -5,12 +5,12 @@ import { withAuth } from "@/lib/auth-guard";
 /**
  * GET /api/endpoint-agent/devices
  *
- * Fleet listing for the console. Any authenticated user can read it — the
- * device inventory is governance data, not a secret — but `tokenHash` is never
- * selected, so no response can leak a device credential.
+ * Fleet listing for the console. Any authenticated user can read it, but
+ * `tokenHash` is never selected, and `machineId` is withheld from VIEWER.
  */
 export async function GET(req: NextRequest) {
-  return withAuth(async () => {
+  return withAuth(async (session) => {
+    const isAuthor = ["ADMIN", "COMPLIANCE_OFFICER"].includes(session.user.role);
     const params = req.nextUrl.searchParams;
     const status = params.get("status");
     const platform = params.get("platform");
@@ -46,6 +46,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(devices);
+    // machineId is half of what re-enrollment needs, so keep it with the
+    // governance roles that actually act on devices.
+    return NextResponse.json(
+      isAuthor
+        ? devices
+        : devices.map((device) => {
+            const redacted: Record<string, unknown> = { ...device };
+            delete redacted.machineId;
+            return redacted;
+          }),
+    );
   });
 }

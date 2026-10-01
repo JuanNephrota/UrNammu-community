@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRole } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { csvField } from "@/lib/csv-safe";
 
 export async function GET(req: NextRequest) {
   return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async () => {
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
           String(system.compliantAssignments),
           String(system.totalAssignments),
         ]
-          .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+          .map((value) => csvField(String(value)))
           .join(",")
       );
       return new NextResponse([header.join(","), ...rows].join("\n"), {

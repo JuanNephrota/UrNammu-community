@@ -6,6 +6,7 @@ import type {
   GovernanceReviewStage,
   Prisma,
 } from "@prisma/client";
+import { isSafeRuntimePattern } from "./regex-safety";
 
 export type PolicyRuleEnforcement = "ADVISORY" | "BLOCK";
 
@@ -190,16 +191,9 @@ function normalizeRuntime(input: NormalizeInput): PolicyRuntimeRules | undefined
   if (allowedModelsRuntime) runtime.allowedModelsRuntime = allowedModelsRuntime;
   if (blockedModelsRuntime) runtime.blockedModelsRuntime = blockedModelsRuntime;
   if (blockedPromptPatterns) {
-    // Drop any pattern that fails to compile — keeps bad form input from
-    // breaking the proxy later. Flags are forced to "i" at eval time.
-    const valid = blockedPromptPatterns.filter((source) => {
-      try {
-        new RegExp(source, "i");
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    // Drop any pattern that fails to compile or has a catastrophic-backtracking
+    // shape — keeps bad form input from breaking (or stalling) the proxy later. Flags are forced to "i" at eval time.
+    const valid = blockedPromptPatterns.filter(isSafeRuntimePattern);
     if (valid.length) runtime.blockedPromptPatterns = valid;
   }
 
@@ -370,13 +364,7 @@ export function parsePolicyRules(value: Prisma.JsonValue | null | undefined): Po
     if (Array.isArray(runtimeInput.blockedPromptPatterns)) {
       const valid = (runtimeInput.blockedPromptPatterns as unknown[]).filter(
         (entry): entry is string => {
-          if (typeof entry !== "string" || !entry.trim().length) return false;
-          try {
-            new RegExp(entry, "i");
-            return true;
-          } catch {
-            return false;
-          }
+          return typeof entry === "string" && isSafeRuntimePattern(entry);
         }
       );
       if (valid.length) runtime.blockedPromptPatterns = valid;

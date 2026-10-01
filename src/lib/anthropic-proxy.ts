@@ -15,7 +15,12 @@ import {
   runMcpServerGate,
 } from "./proxy-common";
 import { runPolicyGate } from "./proxy-policy-gate";
-import { canonicalizeRequest, policyViewOf } from "./proxy-providers";
+import {
+  ANTHROPIC_METERED_PATH,
+  canonicalizeRequest,
+  isAllowedAnthropicPath,
+  policyViewOf,
+} from "./proxy-providers";
 import {
   accountTokens,
   calculateCost,
@@ -73,9 +78,16 @@ export async function handleAnthropicProxy(
   const authError = await authenticateProxyRequest(req);
   if (authError) return authError;
 
-  // Get the Anthropic API key
+  if (!isAllowedAnthropicPath(subpath)) {
+    return NextResponse.json({ error: "Unsupported Anthropic API path" }, { status: 404 });
+  }
+
+  // The server's own key only backs the metered, policy-gated Messages call.
+  // Every other path needs the client's key, or a proxy-key holder could
+  // reach the org's files/batches/admin surface.
   const apiKey =
-    req.headers.get("x-api-key") ?? process.env.ANTHROPIC_API_KEY;
+    req.headers.get("x-api-key") ??
+    (subpath === ANTHROPIC_METERED_PATH ? process.env.ANTHROPIC_API_KEY : undefined);
 
   if (!apiKey) {
     return NextResponse.json(

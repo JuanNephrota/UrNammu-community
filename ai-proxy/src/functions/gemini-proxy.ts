@@ -21,6 +21,7 @@ import {
   isGeminiSseStream,
   parseGeminiPath,
   policyViewOf,
+  isCanonicalProxyPath,
 } from "../lib/proxy-providers";
 import {
   authenticate,
@@ -62,7 +63,11 @@ async function geminiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const clientHeader = req.headers.get("x-goog-api-client");
   if (clientHeader) forwardHeaders["x-goog-api-client"] = clientHeader;
 
-  const parsed = parseGeminiPath(subpathOf(req, "/"));
+  const subpath = subpathOf(req, "/");
+  if (!isCanonicalProxyPath(subpath)) {
+    return { status: 400, jsonBody: { error: "Invalid proxy path" } };
+  }
+  const parsed = parseGeminiPath(subpath);
   const targetUrl = `${GEMINI_BASE}${parsed.path}${search}`;
   const model = parsed.model ?? "unknown";
 

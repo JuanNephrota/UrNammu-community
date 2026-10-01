@@ -23,6 +23,7 @@ import {
   parseSigV4Authorization,
   policyViewOf,
   selectBedrockForwardHeaders,
+  isCanonicalProxyPath,
 } from "../lib/proxy-providers";
 import {
   authenticate,
@@ -76,7 +77,11 @@ async function bedrockProxy(req: HttpRequest): Promise<HttpResponseInit> {
   }
 
   const url = new URL(req.url);
-  const parsed = parseBedrockPath(subpathOf(req, "/"));
+  const subpath = subpathOf(req, "/");
+  if (!isCanonicalProxyPath(subpath)) {
+    return { status: 400, jsonBody: { error: "Invalid proxy path" } };
+  }
+  const parsed = parseBedrockPath(subpath);
   const targetUrl = `https://${host}${parsed.path}${url.search}`;
   const rawModelId = parsed.modelId;
   const model = rawModelId ? normalizeModelId(rawModelId) : "unknown";

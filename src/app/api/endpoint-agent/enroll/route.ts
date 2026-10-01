@@ -4,6 +4,11 @@ import { bearerTokenMatches } from "@/lib/secret-compare";
 import { enrollDevice, getEnrollmentSecret } from "@/lib/endpoint-agent";
 import { endpointEnrollSchema } from "@/lib/validations/endpoint-agent";
 import { logger } from "@/lib/observability";
+import { clientKey, createRateLimiter } from "@/lib/rate-limit";
+
+// Generous for a fleet behind one office NAT, tight enough to stop secret
+// guessing and device-row flooding from a single host.
+const allowEnroll = createRateLimiter(60, 60_000);
 
 /**
  * POST /api/endpoint-agent/enroll
@@ -13,12 +18,19 @@ import { logger } from "@/lib/observability";
  * agent persists and uses for everything afterwards.
  *
  * The enrollment secret is necessarily readable on every managed laptop, so it
- * is treated as a low-value credential: it can only create a device row and
- * mint a token for a machine the caller names. It cannot read the fleet, read
- * anyone else's data, or resurrect a revoked device. Rotate it in
- * Settings → Endpoint Agent if a laptop is lost.
+ * is treated as a low-value credential: it can create a device row and mint a
+ * token for a machine the caller names — including re-enrolling one that is
+ * already live, which invalidates that device's token. That last case raises
+ * an alert (see enrollDevice) rather than being refused, because a reimaged
+ * laptop legitimately arrives the same way. It cannot read the fleet or
+ * resurrect a revoked device. Rotate the secret in Settings → Endpoint Agent
+ * if a laptop is lost.
  */
 export async function POST(req: NextRequest) {
+  if (!allowEnroll(clientKey(req.headers))) {
+    return NextResponse.json({ error: "Too many enrollment attempts" }, { status: 429 });
+  }
+
   const secret = await getEnrollmentSecret();
   if (!secret) {
     // Fail closed and say why: an operator who has not generated the secret

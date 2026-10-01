@@ -13,7 +13,7 @@ import {
   extractDeclaredMcpServers,
   summarizeMcpForMetadata,
 } from "../lib/mcp-tool-governance";
-import { canonicalizeRequest, policyViewOf } from "../lib/proxy-providers";
+import { canonicalizeRequest, isAllowedAnthropicPath, policyViewOf } from "../lib/proxy-providers";
 import {
   authenticate,
   resolveAttribution,
@@ -40,8 +40,17 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const authError = authenticate(req);
   if (authError) return authError;
 
-  // API key
-  const apiKey = req.headers.get("x-api-key") ?? process.env.ANTHROPIC_API_KEY;
+  // Target path from route params; only known Anthropic endpoints are forwarded.
+  const url = new URL(req.url);
+  const subpath = url.pathname.replace(/^\/api\/proxy\/anthropic/, "") || MESSAGES_ENDPOINT;
+  if (!isAllowedAnthropicPath(subpath)) {
+    return { status: 404, jsonBody: { error: "Unsupported Anthropic API path" } };
+  }
+
+  // The server's own key only backs the metered, policy-gated Messages call.
+  const apiKey =
+    req.headers.get("x-api-key") ??
+    (subpath === MESSAGES_ENDPOINT ? process.env.ANTHROPIC_API_KEY : undefined);
   if (!apiKey) {
     return { status: 400, jsonBody: { error: "No Anthropic API key" } };
   }
@@ -54,9 +63,6 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   if (attributionError) return attributionError;
   const { department, userEmail, aiSystemId, agent, client } = attribution;
 
-  // Build target URL from route params
-  const url = new URL(req.url);
-  const subpath = url.pathname.replace(/^\/api\/proxy\/anthropic/, "") || MESSAGES_ENDPOINT;
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;
 
   // Read body first — MCP passthrough needs it.

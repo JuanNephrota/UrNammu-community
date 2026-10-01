@@ -12,6 +12,7 @@
 #   Parameter 5  Enrollment secret      (from Settings → Endpoint Agent)
 #   Parameter 6  Binary URL             https://.../urnammu-agent-darwin-universal
 #   Parameter 7  Expected version       0.5.0        (optional; see below)
+#   Parameter 8  Signing Team ID        ABCDE12345   (required; pins the signer)
 #
 # Then Policies → New, add the script, and scope it. Trigger: Recurring
 # Check-in with Execution Frequency "Ongoing" — the script is idempotent and
@@ -37,6 +38,7 @@ CONSOLE_URL="${4:-}"
 ENROLLMENT_SECRET="${5:-}"
 BINARY_URL="${6:-}"
 EXPECTED_VERSION="${7:-}"
+EXPECTED_TEAM_ID="${8:-}"
 
 SUPPORT_DIR="/Library/Application Support/UrNammu"
 CONFIG_PATH="$SUPPORT_DIR/agent.json"
@@ -49,8 +51,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ -z "$CONSOLE_URL" ] || [ -z "$ENROLLMENT_SECRET" ] || [ -z "$BINARY_URL" ]; then
-  echo "parameters 4 (console URL), 5 (enrollment secret) and 6 (binary URL) are required" >&2
+if [ -z "$CONSOLE_URL" ] || [ -z "$ENROLLMENT_SECRET" ] || [ -z "$BINARY_URL" ] || [ -z "$EXPECTED_TEAM_ID" ]; then
+  echo "parameters 4 (console URL), 5 (enrollment secret), 6 (binary URL) and 8 (signing Team ID) are required" >&2
   exit 1
 fi
 
@@ -90,6 +92,18 @@ mkdir -p "$SUPPORT_DIR"
 chmod 755 "$SUPPORT_DIR"
 
 # ─── Binary ──────────────────────────────────────────────
+# Pin the signer, not just "validly signed": a bare verify passes any
+# Developer ID binary, including one an attacker signed with their own
+# certificate and served from a compromised BINARY_URL.
+case "$BINARY_URL" in
+  https://*) ;;
+  *) echo "BINARY_URL must be an https:// URL" >&2; exit 1 ;;
+esac
+if ! printf '%s' "$EXPECTED_TEAM_ID" | /usr/bin/grep -Eq '^[A-Z0-9]{10}$'; then
+  echo "EXPECTED_TEAM_ID must be the 10-character Apple Team ID that signs the agent" >&2
+  exit 1
+fi
+
 TMP_BINARY=$(mktemp)
 trap 'rm -f "$TMP_BINARY"' EXIT
 if ! /usr/bin/curl -fsSL "$BINARY_URL" -o "$TMP_BINARY"; then
@@ -99,8 +113,8 @@ fi
 
 # Refuse a binary Gatekeeper would reject and TCC could never grant Full Disk
 # Access to — better a red policy in Jamf than a silently dead agent.
-if ! /usr/bin/codesign --verify --strict "$TMP_BINARY" 2>/dev/null; then
-  echo "downloaded binary is not validly signed; refusing to install" >&2
+if ! /usr/bin/codesign --verify --strict -R="anchor apple generic and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\"" "$TMP_BINARY" 2>/dev/null; then
+  echo "downloaded binary is not signed by Team ID $EXPECTED_TEAM_ID; refusing to install" >&2
   exit 1
 fi
 

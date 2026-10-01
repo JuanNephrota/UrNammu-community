@@ -41,6 +41,7 @@ import {
   policyViewOf,
   resolveAzureModel,
   type OpenAIEndpoint,
+  isCanonicalProxyPath,
 } from "./proxy-providers";
 import { loadSetting } from "./settings-loader";
 import {
@@ -125,6 +126,9 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
     const url = new URL(req.url);
     const search = url.search;
     const subpath = subpathOf(req, "/v1/chat/completions");
+    if (!isCanonicalProxyPath(subpath)) {
+      return { status: 400, jsonBody: { error: "Invalid proxy path" } };
+    }
 
     // ── Upstream credentials + target ──
     const forwardHeaders: Record<string, string> = {

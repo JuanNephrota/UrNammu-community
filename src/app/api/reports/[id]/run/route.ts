@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withAuth } from "@/lib/auth-guard";
 import { createAuditLog } from "@/lib/audit";
 import { runReportSchema } from "@/lib/validations/report";
-import { canView, loadDefinition, MAX_STORED_ARTIFACT_BYTES } from "@/lib/reports/access";
+import { canQueryDataSource, canView, loadDefinition, MAX_STORED_ARTIFACT_BYTES } from "@/lib/reports/access";
 import { generateReport } from "@/lib/reports/generate";
 import type { ReportConfig, ReportDataSourceKey } from "@/lib/reports/types";
 
@@ -23,6 +23,8 @@ export async function POST(
     const definition = await loadDefinition(id);
     if (!definition) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (!canView(definition, session))
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!canQueryDataSource(definition.dataSource, session))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));

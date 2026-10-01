@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { csvField } from "@/lib/csv-safe";
 import { type ColumnDef, type Column } from "@tanstack/react-table";
 import {
   ArrowUpDown,
@@ -111,7 +112,7 @@ const CSV_COLUMNS: { key: keyof PersonUsageTableRow; label: string }[] = [
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return "";
   const s = Array.isArray(v) ? v.map((x) => (SURFACE_LABELS as Record<string, string>)[String(x)] ?? String(x)).join("; ") : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return csvField(s);
 }
 
 function downloadCsv(rows: PersonUsageTableRow[], filename: string) {

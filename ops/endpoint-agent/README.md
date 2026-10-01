@@ -160,7 +160,10 @@ to every machine forever.
 2. Paste `iru-audit-*` as the **Audit Script** and `iru-remediate-*` as the
    **Remediation Script**. Run Windows scripts in **64-bit** PowerShell.
 3. Set `CONSOLE_URL` / `$ConsoleUrl` identically in **both** halves, plus
-   `ENROLLMENT_SECRET` and `BINARY_URL` in the remediation half.
+   `ENROLLMENT_SECRET`, `BINARY_URL` (must be `https://`) and the signer pin in
+   the remediation half: `EXPECTED_TEAM_ID` (macOS) / `$ExpectedThumbprint`
+   (Windows). The installers refuse a binary that is validly signed but not by
+   that identity.
 4. Execution Frequency: **every 15 minutes** (check-in) or **daily**.
 
 Two levers drive the fleet from the audit script, because a failing audit is
@@ -190,6 +193,7 @@ Jamf is Apple-only, so pair it with Iru or Hexnode for Windows.
    | 5 | Enrollment secret |
    | 6 | Binary URL |
    | 7 | Expected version *(optional)* |
+   | 8 | Signing Team ID *(required — pins who signed the binary)* |
 
 3. **Policies → New**, add the script, scope it, trigger **Recurring
    Check-in**, frequency **Ongoing**.

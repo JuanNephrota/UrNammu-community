@@ -952,7 +952,7 @@ Usage and cost buckets are the long-term aggregate and are **never** pruned. The
 
 ## Tips
 
-- The first user to sign in via Google OAuth is auto-promoted to \`ADMIN\`. Subsequent users default to \`VIEWER\`.
+- Sign-in is limited to \`ALLOWED_SIGN_IN_DOMAINS\`; the first \`ADMIN\` is \`INITIAL_ADMIN_EMAIL\` (promoted only while no active admin exists). Other users default to \`VIEWER\`.
 - Settings UI values **win over** environment variables. Env vars are the fallback when the DB value is absent.
 - Do **not** rotate \`SETTINGS_ENCRYPTION_KEY\` in place — encrypted settings will become unreadable.
 `,

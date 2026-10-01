@@ -324,15 +324,62 @@ export interface EnrollmentResult {
   reEnrolled: boolean;
 }
 
+const LIVE_DEVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const REENROLL_ALERT_SOURCE = "endpoint_reenrollment";
+
+async function alertOnLiveReEnrollment(
+  existing: EndpointDevice,
+  payload: EndpointEnrollPayload,
+): Promise<void> {
+  const lastSeen = existing.lastSeenAt?.getTime() ?? 0;
+  if (Date.now() - lastSeen > LIVE_DEVICE_WINDOW_MS) return;
+
+  const title = `Endpoint device re-enrolled while active: ${existing.hostname}`;
+  const since = new Date(Date.now() - LIVE_DEVICE_WINDOW_MS);
+  try {
+    const open = await prisma.alert.findFirst({
+      where: { source: REENROLL_ALERT_SOURCE, title, status: "OPEN", createdAt: { gte: since } },
+      select: { id: true },
+    });
+    if (open) return;
+
+    const newEmail = payload.userEmail?.toLowerCase() ?? null;
+    const userChanged = Boolean(existing.userEmail && newEmail && existing.userEmail !== newEmail);
+    await prisma.alert.create({
+      data: {
+        title,
+        description:
+          `This device was reporting within the last 24 hours and then enrolled again, which issued a new token and invalidated the previous one. ` +
+          `Expected after a reimage or reinstall. If it was not, someone holding the enrollment secret may be impersonating the device — consider rotating the secret in Settings → Endpoint Agent.` +
+          (userChanged
+            ? ` The attributed user changed from ${existing.userEmail} to ${newEmail}.`
+            : ""),
+        severity: "MEDIUM",
+        source: REENROLL_ALERT_SOURCE,
+      },
+    });
+    logger.warn("endpoint_agent.enroll.live_reenrollment", {
+      deviceId: existing.id,
+      machineId: existing.machineId,
+      userChanged,
+    });
+  } catch (error) {
+    // The alert is advisory; never let it block a legitimate enrollment.
+    logger.error("endpoint_agent.enroll.alert_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /**
  * Enroll, or re-enroll, a machine.
  *
  * Re-enrollment (agent reinstall, wiped state directory) updates the existing
  * row by `machineId` and issues a fresh token, which invalidates the old one.
- * That is the desired behaviour for a reinstall, and an acceptable one for an
- * attacker who already holds the enrollment secret *and* can name an existing
- * machineId — they would gain nothing they could not get by enrolling a new
- * device. A REVOKED device is the exception: it stays revoked, and re-running
+ * That is right for a reinstall, but it also means anyone holding the
+ * enrollment secret *and* a machineId can knock a live agent offline and report
+ * as it — so a re-enrollment of a device seen in the last 24 hours raises an
+ * alert. A REVOKED device is the exception: it stays revoked, and re-running
  * the installer will not resurrect it.
  */
 export async function enrollDevice(
@@ -349,6 +396,11 @@ export async function enrollDevice(
     });
     return { revoked: true };
   }
+
+  // Re-enrolling a device that was reporting moments ago replaces its token and
+  // silently silences the real agent. A reimaged laptop looks identical, so do
+  // not refuse — but make it visible, including any change of attributed user.
+  if (existing) await alertOnLiveReEnrollment(existing, payload);
 
   const token = generateDeviceToken();
   const shared = {

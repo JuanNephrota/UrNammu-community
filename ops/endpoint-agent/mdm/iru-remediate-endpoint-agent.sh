@@ -17,6 +17,8 @@ set -euo pipefail
 CONSOLE_URL="https://REPLACE-ME.example.com"
 ENROLLMENT_SECRET="REPLACE-ME"
 BINARY_URL="https://REPLACE-ME/urnammu-agent-darwin-universal"
+# The Apple Team ID of the Developer ID certificate that signs the agent.
+EXPECTED_TEAM_ID="REPLACE-ME"
 
 SUPPORT_DIR="/Library/Application Support/UrNammu"
 CONFIG_PATH="$SUPPORT_DIR/agent.json"
@@ -42,6 +44,18 @@ mkdir -p "$SUPPORT_DIR"
 chmod 755 "$SUPPORT_DIR"
 
 # ─── Binary ──────────────────────────────────────────────
+# Pin the signer, not just "validly signed": a bare verify passes any
+# Developer ID binary, including one an attacker signed with their own
+# certificate and served from a compromised BINARY_URL.
+case "$BINARY_URL" in
+  https://*) ;;
+  *) echo "BINARY_URL must be an https:// URL" >&2; exit 1 ;;
+esac
+if ! printf '%s' "$EXPECTED_TEAM_ID" | /usr/bin/grep -Eq '^[A-Z0-9]{10}$'; then
+  echo "EXPECTED_TEAM_ID must be the 10-character Apple Team ID that signs the agent" >&2
+  exit 1
+fi
+
 TMP_BINARY=$(mktemp)
 trap 'rm -f "$TMP_BINARY"' EXIT
 if ! /usr/bin/curl -fsSL "$BINARY_URL" -o "$TMP_BINARY"; then
@@ -52,8 +66,8 @@ fi
 # Refuse a binary Gatekeeper would reject and TCC could never grant Full Disk
 # Access to. Failing loudly here beats a silently dead agent that the audit
 # will then try to fix on every check-in.
-if ! /usr/bin/codesign --verify --strict "$TMP_BINARY" 2>/dev/null; then
-  echo "downloaded binary is not validly signed; refusing to install" >&2
+if ! /usr/bin/codesign --verify --strict -R="anchor apple generic and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\"" "$TMP_BINARY" 2>/dev/null; then
+  echo "downloaded binary is not signed by Team ID $EXPECTED_TEAM_ID; refusing to install" >&2
   exit 1
 fi
 

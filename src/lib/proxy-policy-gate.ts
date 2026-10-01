@@ -14,6 +14,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "./prisma";
 import { getSetting, parseEnforcementMode, type PolicyEnforcementMode } from "./settings";
 import { parsePolicyRules, type PolicyRuntimeRules } from "./policy-rules";
+import { sanitizeText } from "./prompt-risk";
+import { isSafeRuntimePattern, MAX_PROMPT_SCAN_CHARS } from "./regex-safety";
 
 export type LoadedPolicy = {
   policyId: string;
@@ -196,13 +198,11 @@ export async function evaluateRequest(input: {
     }
     if (rules.blockedPromptPatterns?.length && promptText) {
       for (const source of rules.blockedPromptPatterns) {
-        let re: RegExp;
-        try {
-          re = new RegExp(source, "i");
-        } catch {
-          continue;
-        }
-        if (re.test(promptText)) {
+        // Policies saved before the editor screened patterns may still hold a
+        // catastrophic one; skip it rather than let it stall the proxy.
+        if (!isSafeRuntimePattern(source)) continue;
+        const re = new RegExp(source, "i");
+        if (re.test(promptText.slice(0, MAX_PROMPT_SCAN_CHARS))) {
           push("prompt_pattern_blocked", `Prompt matched blocked pattern /${source}/i in policy "${policy.policyName}".`);
           break;
         }
@@ -260,7 +260,10 @@ export async function runPolicyGate(input: PolicyGateInput): Promise<NextRespons
   });
   if (evaluation.decision !== "deny") return null;
 
-  const promptExcerpt = extractPromptText(input.policyBody).slice(0, 1000);
+  // The denial that fires is usually the one *because* of a secret or PII, so
+  // the excerpt goes through the same redaction as the other stored excerpts
+  // and stays short.
+  const promptExcerpt = (sanitizeText(extractPromptText(input.policyBody)) ?? "").slice(0, 220);
   void prisma.policyDenial
     .create({
       data: {

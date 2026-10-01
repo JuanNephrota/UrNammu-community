@@ -705,3 +705,43 @@ export function policyViewOf(canonical: CanonicalRequest): Record<string, unknow
   if (canonical.maxTokens !== null) view.max_tokens = canonical.maxTokens;
   return view;
 }
+
+// ─── Path hygiene (all providers) ───────────────────────────────────────────
+
+const ENCODED_TRAVERSAL = /%2e|%2f|%5c/i;
+
+/**
+ * True when a client-supplied subpath is safe to forward verbatim: no dot
+ * segments, empty segments, backslashes, control characters or encoded
+ * dot/slash. Policy gating and usage metering key off the *classified* path,
+ * so a path the classifier reads one way and the upstream normalises another
+ * (`/v1/messages/../messages`, `//v1/messages`) would be forwarded as an
+ * ungated, unmetered passthrough.
+ */
+export function isCanonicalProxyPath(subpath: string): boolean {
+  if (!subpath.startsWith("/")) return false;
+  if (ENCODED_TRAVERSAL.test(subpath)) return false;
+  if (subpath.includes("\\") || /[\u0000-\u001f\u007f?#]/.test(subpath)) return false;
+  const segments = subpath.split("/").slice(1);
+  return segments.every(
+    (segment, index) =>
+      segment !== "." &&
+      segment !== ".." &&
+      (segment !== "" || index === segments.length - 1)
+  );
+}
+
+/** The one Anthropic endpoint the proxy meters and policy-gates. */
+export const ANTHROPIC_METERED_PATH = "/v1/messages";
+
+const ANTHROPIC_ALLOWED_PATHS: RegExp[] = [
+  /^\/v1\/messages$/,
+  /^\/v1\/messages\/count_tokens$/,
+  /^\/v1\/messages\/batches(\/[A-Za-z0-9_-]+(\/(results|cancel))?)?$/,
+  /^\/v1\/models(\/[A-Za-z0-9._:-]+)?$/,
+];
+
+/** Anthropic is allowlisted rather than forwarded blindly (files, admin, ... stay closed). */
+export function isAllowedAnthropicPath(subpath: string): boolean {
+  return isCanonicalProxyPath(subpath) && ANTHROPIC_ALLOWED_PATHS.some((re) => re.test(subpath));
+}

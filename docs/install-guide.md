@@ -457,7 +457,7 @@ DATABASE_URL="<prod-url>" npx prisma migrate deploy
 
 1. Complete the [Google OAuth integration setup](#81-google-oauth-sign-in).
 2. Start the app.
-3. The **first user to sign in via Google is auto-promoted to `ADMIN`**. All subsequent Google sign-ins default to `VIEWER` and must be promoted by an admin.
+3. Set `ALLOWED_SIGN_IN_DOMAINS` (comma-separated email domains allowed to create accounts) and `INITIAL_ADMIN_EMAIL` (the first `ADMIN`, promoted only while no active admin exists). In production, without an allowlist, new SSO accounts are refused. Later sign-ins default to `VIEWER` and must be promoted by an admin.
 
 ### 5.2 If using dev credentials
 
@@ -840,7 +840,7 @@ A signed binary pushed by MDM to macOS and Windows that reports which AI tools a
    ```
    Windows needs an Authenticode signature from your own code-signing certificate.
 3. **Host the binaries** somewhere the fleet can reach over HTTPS.
-4. **Push the deploy script** for your MDM, with `CONSOLE_URL`, `ENROLLMENT_SECRET` and `BINARY_URL` set. Scripts for three live in `ops/endpoint-agent/mdm/`:
+4. **Push the deploy script** for your MDM, with `CONSOLE_URL`, `ENROLLMENT_SECRET` and `BINARY_URL` (https only) set, plus the signer pin — `EXPECTED_TEAM_ID` on macOS, `EXPECTED_THUMBPRINT` on Windows. The scripts refuse a binary that is validly signed but not by that identity. Scripts for three live in `ops/endpoint-agent/mdm/`:
 
    | MDM | macOS | Windows |
    |-----|-------|---------|
@@ -852,7 +852,7 @@ A signed binary pushed by MDM to macOS and Windows that reports which AI tools a
 
    **Iru** uses an audit-and-remediation pair, which is the cheapest option at scale: the audit runs a few local checks, so a 15-minute check-in stays quiet until something is actually wrong rather than re-downloading the binary fleet-wide. Set `CONSOLE_URL` identically in both halves. Bumping `EXPECTED_VERSION` in the audit is how an upgrade rolls out.
 
-   **Jamf Pro** takes its values from policy parameters 4-7 (Jamf reserves `$1`-`$3`): console URL, enrollment secret, binary URL, and an optional expected version. Set parameter 7 — without it an Ongoing policy re-downloads the agent on every check-in.
+   **Jamf Pro** takes its values from policy parameters 4-8 (Jamf reserves `$1`-`$3`): console URL, enrollment secret, binary URL, an optional expected version, and the signing Team ID (parameter 8, required). Set parameter 7 — without it an Ongoing policy re-downloads the agent on every check-in.
 
    The scripts contain no MDM-specific API calls, so adapting one to Intune, Workspace ONE or Mosyle is mostly a matter of how that console passes parameters. Details for all three are in `ops/endpoint-agent/README.md`.
 

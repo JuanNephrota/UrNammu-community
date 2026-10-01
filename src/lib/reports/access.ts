@@ -32,6 +32,17 @@ export function canMutate(
   );
 }
 
+// Sources that carry per-person data or the full audit trail. VIEWER may run
+// reports over everything else, but these stay with the governance roles.
+const PERSON_LEVEL_SOURCES = ["AUDIT_LOG", "PEOPLE_USAGE", "API_USAGE"];
+
+export function canQueryDataSource(dataSource: string, session: AuthSession): boolean {
+  return (
+    !PERSON_LEVEL_SOURCES.includes(dataSource) ||
+    AUTHOR_ROLES.includes(session.user.role)
+  );
+}
+
 export function isAuthor(session: AuthSession): boolean {
   return AUTHOR_ROLES.includes(session.user.role);
 }

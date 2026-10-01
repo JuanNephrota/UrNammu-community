@@ -80,12 +80,10 @@
     "next": "16.3.4",
     "next-auth": "^4.24.14",
     "openai": "^6.34.0",
-    "prisma": "^6.19.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.6.0",
-    "vercel": "^59.16.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -97,8 +95,10 @@
     "eslint-config-next": "16.3.4",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
-    "typescript": "^6"
+    "typescript": "^6",
+    "vercel": "^59.16.0"
   }
 }

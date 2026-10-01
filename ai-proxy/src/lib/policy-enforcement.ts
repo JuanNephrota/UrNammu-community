@@ -9,6 +9,7 @@
 
 import { prisma } from "./db";
 import type { LoadedPolicy } from "./policy-loader";
+import { isSafeRuntimePattern, MAX_PROMPT_SCAN_CHARS } from "./regex-safety";
 
 export type PolicyRuntimeRules = {
   allowedModelsRuntime?: string[];
@@ -55,15 +56,7 @@ export function parseRuntimeRules(rules: unknown): PolicyRuntimeRules | null {
 
   if (Array.isArray(input.blockedPromptPatterns)) {
     const valid = (input.blockedPromptPatterns as unknown[]).filter(
-      (entry): entry is string => {
-        if (typeof entry !== "string" || !entry.trim().length) return false;
-        try {
-          new RegExp(entry, "i");
-          return true;
-        } catch {
-          return false;
-        }
-      }
+      (entry): entry is string => typeof entry === "string" && isSafeRuntimePattern(entry)
     );
     if (valid.length) out.blockedPromptPatterns = valid;
   }
@@ -218,13 +211,11 @@ export async function evaluateRequest(input: EvaluationInput): Promise<Evaluatio
     }
     if (rules.blockedPromptPatterns?.length && promptText) {
       for (const source of rules.blockedPromptPatterns) {
-        let re: RegExp;
-        try {
-          re = new RegExp(source, "i");
-        } catch {
-          continue;
-        }
-        if (re.test(promptText)) {
+        // Policies saved before the editor screened patterns may still hold a
+        // catastrophic one; skip it rather than let it stall the proxy.
+        if (!isSafeRuntimePattern(source)) continue;
+        const re = new RegExp(source, "i");
+        if (re.test(promptText.slice(0, MAX_PROMPT_SCAN_CHARS))) {
           push(
             "prompt_pattern_blocked",
             `Prompt matched blocked pattern /${source}/i in policy "${policy.policyName}".`

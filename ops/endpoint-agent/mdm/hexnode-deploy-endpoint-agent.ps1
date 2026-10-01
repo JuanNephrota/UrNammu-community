@@ -13,6 +13,8 @@ $ErrorActionPreference = 'Stop'
 $ConsoleUrl       = $env:CONSOLE_URL       ; if (-not $ConsoleUrl)       { $ConsoleUrl       = 'https://REPLACE-ME.vercel.app' }
 $EnrollmentSecret = $env:ENROLLMENT_SECRET ; if (-not $EnrollmentSecret) { $EnrollmentSecret = 'REPLACE-ME' }
 $BinaryUrl        = $env:BINARY_URL        ; if (-not $BinaryUrl)        { $BinaryUrl        = 'https://REPLACE-ME/urnammu-agent-windows-amd64.exe' }
+# Thumbprint of the Authenticode certificate that signs the agent.
+$ExpectedThumbprint = $env:EXPECTED_THUMBPRINT ; if (-not $ExpectedThumbprint) { $ExpectedThumbprint = 'REPLACE-ME' }
 
 if ($ConsoleUrl -eq 'https://REPLACE-ME.vercel.app' -or $EnrollmentSecret -eq 'REPLACE-ME') {
     Write-Error 'CONSOLE_URL and ENROLLMENT_SECRET must be set before deploying'
@@ -23,6 +25,15 @@ $SupportDir = Join-Path $env:ProgramData 'UrNammu'
 $ConfigPath = Join-Path $SupportDir 'agent.json'
 $BinaryPath = Join-Path $SupportDir 'urnammu-agent.exe'
 $TaskName   = 'UrNammu Endpoint Agent'
+
+if ($BinaryUrl -notmatch '^https://') {
+    Write-Error 'BinaryUrl must be an https:// URL'
+    exit 1
+}
+if (-not $ExpectedThumbprint -or $ExpectedThumbprint -eq 'REPLACE-ME') {
+    Write-Error 'ExpectedThumbprint (the Authenticode signing certificate thumbprint) must be set before deploying'
+    exit 1
+}
 
 New-Item -ItemType Directory -Force -Path $SupportDir | Out-Null
 
@@ -39,6 +50,13 @@ try {
     $signature = Get-AuthenticodeSignature -FilePath $TempBinary
     if ($signature.Status -ne 'Valid') {
         Write-Error "downloaded binary is not validly signed ($($signature.Status)); refusing to install"
+        exit 1
+    }
+    # Pin the signer, not just "validly signed": any Authenticode-signed binary
+    # (including an attacker's) reports Valid.
+    $actualThumbprint = ($signature.SignerCertificate.Thumbprint -replace '\s', '').ToUpper()
+    if ($actualThumbprint -ne ($ExpectedThumbprint -replace '\s', '').ToUpper()) {
+        Write-Error "downloaded binary is signed by $actualThumbprint, not the pinned certificate; refusing to install"
         exit 1
     }
 

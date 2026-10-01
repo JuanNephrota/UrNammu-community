@@ -76,7 +76,7 @@ Open the UrNammu URL provided by your admin. The login page shows every sign-in 
 - **Microsoft / Entra ID** — appears when the tenant has been configured in Settings → Users & Identity.
 - **Dev credentials** — only appears if `ENABLE_DEV_LOGIN=true`. Intended for local development and demo environments.
 
-**The first user to sign in via Google is automatically promoted to `ADMIN`.** All later users default to `VIEWER` until an admin promotes them.
+**Sign-in is restricted to `ALLOWED_SIGN_IN_DOMAINS`** (comma-separated, e.g. `example.com`), and the first `ADMIN` is the address in `INITIAL_ADMIN_EMAIL` — promoted only while no active admin exists. In production, with no allowlist configured, new SSO accounts are refused; existing accounts are unaffected. Later users default to `VIEWER` until an admin promotes them.
 
 ### Getting help inside the app
 
@@ -1553,7 +1553,7 @@ The dedicated **Integrations** settings area (also surfaced as the top-level **I
 2. Authorized redirect URI: `https://<urnammu-host>/api/auth/callback/google`.
 3. Copy the client ID and secret into **Settings → Users & Identity**.
 4. Click **Test Google Auth**.
-5. The first user to sign in is promoted to `ADMIN`.
+5. The address in `INITIAL_ADMIN_EMAIL` is promoted to `ADMIN` on first sign-in (only while no active admin exists).
 
 ### Google Workspace (shadow AI discovery)
 

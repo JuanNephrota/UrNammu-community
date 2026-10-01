@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { withAuth } from "@/lib/auth-guard";
+import { withRole } from "@/lib/auth-guard";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  return withAuth(async () => {
+  return withRole(["ADMIN", "COMPLIANCE_OFFICER"], async () => {
     const { id } = await params;
     const alert = await prisma.alert.findUnique({ where: { id } });
     if (!alert) {
