@@ -15,8 +15,8 @@ import {
 import { logUsage } from "./db";
 import { scanResponseForSensitiveInfo } from "./sensitive-detect";
 import {
-  extractAnthropicStreamToolUse,
-  extractOpenAIStreamToolUses,
+  createAnthropicToolUseAccumulator,
+  createOpenAIToolUseAccumulator,
   summarizeMcpForMetadata,
   type DeclaredMcpServer,
   type ObservedToolUse,
@@ -29,7 +29,7 @@ import {
   splitEventStreamFrames,
   type OpenAIEndpoint,
 } from "./proxy-providers";
-import { recordToolActivity } from "./tool-activity";
+import { evaluateAgentReviewTriggers, recordHumanReviewMatches, recordToolActivity } from "./tool-activity";
 import type { LoadedAgent } from "./agent-loader";
 
 export interface StreamContext {
@@ -64,6 +64,8 @@ export interface StreamContext {
    * Claude Code / Cursor telemetry that carried the same prompt.
    */
   promptHash?: string | null;
+  /** Set when the handler already withheld this response over a human-review trigger. */
+  reviewDecision?: "blocked";
 }
 
 /** Shared tail: response DLP, the usage row (when tokens were charged) and tool activity. */
@@ -124,6 +126,7 @@ async function finalizeStream(
     );
   }
 
+  const reviewMatches = await evaluateAgentReviewTriggers(ctx.agent, toolUses);
   await recordToolActivity({
     agent: ctx.agent ?? null,
     aiSystemId: ctx.aiSystemId,
@@ -134,7 +137,22 @@ async function finalizeStream(
     department: ctx.department,
     declaredServers: ctx.declaredServers ?? [],
     toolUses,
+    reviewMatches,
   });
+  if (ctx.agent && reviewMatches.length > 0) {
+    await recordHumanReviewMatches({
+      agent: ctx.agent,
+      matches: reviewMatches,
+      blocked: ctx.reviewDecision === "blocked",
+      provider: ctx.provider,
+      model: ctx.model,
+      aiSystemId: ctx.aiSystemId,
+      userEmail: ctx.userEmail,
+      department: ctx.department,
+      requestId: ctx.requestId,
+      isStreaming: true,
+    });
+  }
 }
 
 /** Iterate the `data:` payloads of an SSE stream. */
@@ -167,10 +185,11 @@ export async function extractAnthropicStreamUsage(stream: Readable, ctx: StreamC
     let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
+    const toolAccumulator = createAnthropicToolUseAccumulator();
     for await (const data of sseDataLines(stream)) {
       try {
         const event = JSON.parse(data);
-        const toolUse = extractAnthropicStreamToolUse(event);
+        const toolUse = toolAccumulator.push(event);
         if (toolUse) toolUses.push(toolUse);
         usage = mergeAnthropicStreamUsage(usage, event);
         if (
@@ -184,6 +203,7 @@ export async function extractAnthropicStreamUsage(stream: Readable, ctx: StreamC
         // skip non-JSON lines
       }
     }
+    toolUses.push(...toolAccumulator.flush());
     await finalizeStream(ctx, usage, responseTextParts, toolUses);
   } catch (err) {
     console.error("Failed to extract Anthropic stream usage:", err);
@@ -203,10 +223,11 @@ export async function extractOpenAIStreamUsage(stream: Readable, ctx: StreamCont
     let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
+    const toolAccumulator = createOpenAIToolUseAccumulator(endpoint);
     for await (const data of sseDataLines(stream)) {
       try {
         const event = JSON.parse(data);
-        toolUses.push(...extractOpenAIStreamToolUses(event));
+        toolUses.push(...toolAccumulator.push(event));
         usage = merge(usage, event);
         const text = extractOpenAIStreamText(endpoint, event);
         if (text) responseTextParts.push(text);
@@ -214,6 +235,7 @@ export async function extractOpenAIStreamUsage(stream: Readable, ctx: StreamCont
         // skip
       }
     }
+    toolUses.push(...toolAccumulator.flush());
     await finalizeStream(ctx, usage, responseTextParts, toolUses, {
       usageInjected: ctx.usageInjected ?? false,
     });
@@ -273,6 +295,7 @@ export async function extractBedrockStreamUsage(stream: Readable, ctx: StreamCon
     let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
+    const toolAccumulator = createAnthropicToolUseAccumulator();
     for await (const chunk of stream) {
       const bytes: Uint8Array = typeof chunk === "string" ? Buffer.from(chunk) : new Uint8Array(chunk);
       const merged = new Uint8Array(pending.length + bytes.length);
@@ -288,10 +311,11 @@ export async function extractBedrockStreamUsage(stream: Readable, ctx: StreamCon
         if (e.type === "content_block_delta" && e.delta?.type === "text_delta" && typeof e.delta.text === "string") {
           responseTextParts.push(e.delta.text);
         }
-        const toolUse = extractAnthropicStreamToolUse(event);
+        const toolUse = toolAccumulator.push(event);
         if (toolUse) toolUses.push(toolUse);
       }
     }
+    toolUses.push(...toolAccumulator.flush());
     await finalizeStream(ctx, usage, responseTextParts, toolUses);
   } catch (err) {
     console.error("Failed to extract Bedrock stream usage:", err);

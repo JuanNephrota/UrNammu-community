@@ -60,9 +60,9 @@ test("extracts observed tool uses from Anthropic responses and stream events", (
     { type: "mcp_tool_result", tool_use_id: "1", content: [] },
   ]);
   assert.deepEqual(uses, [
-    { kind: "mcp_tool_use", toolName: "search_issues", serverName: "jira" },
-    { kind: "server_tool_use", toolName: "web_search", serverName: null },
-    { kind: "tool_use", toolName: "get_weather", serverName: null },
+    { kind: "mcp_tool_use", toolName: "search_issues", serverName: "jira", input: {}, id: "1" },
+    { kind: "server_tool_use", toolName: "web_search", serverName: null, input: {}, id: "2" },
+    { kind: "tool_use", toolName: "get_weather", serverName: null, input: {}, id: "3" },
   ]);
 
   assert.deepEqual(
@@ -92,7 +92,7 @@ test("extracts observed tool uses from OpenAI responses and streams", () => {
   const chat = extractOpenAIToolUses({
     choices: [{ message: { tool_calls: [{ type: "function", function: { name: "get_weather", arguments: "{}" } }] } }],
   });
-  assert.deepEqual(chat, [{ kind: "tool_use", toolName: "get_weather", serverName: null }]);
+  assert.deepEqual(chat, [{ kind: "tool_use", toolName: "get_weather", serverName: null, input: {} }]);
 
   assert.deepEqual(
     extractOpenAIStreamToolUses({ type: "response.output_item.done", item: { type: "mcp_call", name: "x", server_label: "s" } }),
@@ -100,7 +100,7 @@ test("extracts observed tool uses from OpenAI responses and streams", () => {
   );
   assert.deepEqual(
     extractOpenAIStreamToolUses({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "f", arguments: "" } }] } }] }),
-    [{ kind: "tool_use", toolName: "f", serverName: null }]
+    [{ kind: "tool_use", toolName: "f", serverName: null }] // empty arguments → no input key
   );
   // Continuation chunks carry only argument fragments, no name.
   assert.deepEqual(extractOpenAIStreamToolUses({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "{\"a\"" } }] } }] }), []);

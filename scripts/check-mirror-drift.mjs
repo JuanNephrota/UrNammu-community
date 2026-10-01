@@ -34,6 +34,11 @@ const MIRRORS = [
     proxy: "ai-proxy/src/lib/agent-runtime-gate.ts",
     proxyHeaderLines: 2,
   },
+  {
+    app: "src/lib/human-review-triggers.ts",
+    proxy: "ai-proxy/src/lib/human-review-triggers.ts",
+    proxyHeaderLines: 2,
+  },
 ];
 
 const errors = [];

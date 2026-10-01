@@ -37,13 +37,21 @@ import {
 } from "./proxy-providers";
 import {
   extractDeclaredMcpServers,
-  extractOpenAIStreamToolUses,
+  collectOpenAIToolUsesFromSse,
+  createOpenAIToolUseAccumulator,
   extractOpenAIToolUses,
   summarizeMcpForMetadata,
   type DeclaredMcpServer,
   type ObservedToolUse,
 } from "./mcp-tool-governance";
-import { recordToolActivity, type AgentGovernance } from "./mcp-tool-activity";
+import {
+  agentEnforcesReview,
+  evaluateAgentReviewTriggers,
+  recordHumanReviewMatches,
+  recordToolActivity,
+  type AgentGovernance,
+} from "./mcp-tool-activity";
+import { humanReviewBlockedBody } from "./human-review-triggers";
 import {
   authenticateProxyRequest,
   logProxyUsage,
@@ -496,25 +504,50 @@ export async function handleOpenAIProxy(
   const requestId = upstreamRequestId(upstream);
 
   if (responsePayload.kind === "stream") {
-    const [clientStream, logStream] = responsePayload.body.tee();
-    after(
-      extractOpenAIStreamUsage(logStream, {
-        provider,
-        pricingProvider,
-        endpoint,
-        model,
-        department,
-        userEmail,
-        latencyMs,
-        aiSystemId,
+    const streamCtx = {
+      provider,
+      pricingProvider,
+      endpoint,
+      model,
+      department,
+      userEmail,
+      latencyMs,
+      aiSystemId,
+      agent,
+      declaredServers,
+      promptRisk,
+      requestId,
+      injectedUsage: injectUsage,
+      baseMeta,
+      logPrefix,
+    };
+    // Human-review triggers in enforce mode: hold the whole stream, decide,
+    // then either withhold it (403) or replay it to the client unchanged.
+    let upstreamBody: ReadableStream<Uint8Array> = responsePayload.body;
+    if (upstream.ok && agentEnforcesReview(agent)) {
+      const bufferedText = await new Response(responsePayload.body).text();
+      const reviewMatches = await evaluateAgentReviewTriggers(
         agent,
-        declaredServers,
-        promptRisk,
-        requestId,
-        injectedUsage: injectUsage,
-        baseMeta,
-        logPrefix,
-      }).catch((err) => {
+        collectOpenAIToolUsesFromSse(bufferedText, endpoint)
+      );
+      if (reviewMatches.length > 0) {
+        after(
+          extractOpenAIStreamUsage(new Response(bufferedText).body!, { ...streamCtx, reviewDecision: "blocked" }).catch(
+            (err) => {
+              logger.error(`${logPrefix}.stream_usage_failed`, {
+                model,
+                error: err instanceof Error ? err.message : "Unknown error",
+              });
+            }
+          )
+        );
+        return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+      }
+      upstreamBody = new Response(bufferedText).body!;
+    }
+    const [clientStream, logStream] = upstreamBody.tee();
+    after(
+      extractOpenAIStreamUsage(logStream, streamCtx).catch((err) => {
         logger.error(`${logPrefix}.stream_usage_failed`, {
           model,
           error: err instanceof Error ? err.message : "Unknown error",
@@ -637,6 +670,8 @@ export async function handleOpenAIProxy(
       aiSystemId,
     });
   }
+  const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+  const reviewBlocked = reviewMatches.length > 0 && agentEnforcesReview(agent);
   await recordToolActivity({
     agent,
     aiSystemId,
@@ -647,7 +682,25 @@ export async function handleOpenAIProxy(
     department,
     declaredServers,
     toolUses,
+    reviewMatches,
   });
+  if (agent && reviewMatches.length > 0) {
+    await recordHumanReviewMatches({
+      agent,
+      matches: reviewMatches,
+      blocked: reviewBlocked,
+      provider,
+      model,
+      aiSystemId,
+      userEmail,
+      department,
+      requestId,
+      isStreaming: false,
+    });
+  }
+  if (reviewBlocked && agent && upstream.ok) {
+    return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+  }
 
   if (!upstream.ok) {
     const sanitized = sanitizeOpenAIUpstreamError(upstream.status, responsePayload);
@@ -689,6 +742,8 @@ async function extractOpenAIStreamUsage(
     injectedUsage: boolean;
     baseMeta: Record<string, unknown>;
     logPrefix: string;
+    /** Set when the handler already withheld this response over a review trigger. */
+    reviewDecision?: "blocked";
   }
 ) {
   try {
@@ -698,6 +753,7 @@ async function extractOpenAIStreamUsage(
     let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
+    const toolAccumulator = createOpenAIToolUseAccumulator(ctx.endpoint);
     const merge = ctx.endpoint === "responses" ? mergeOpenAIResponsesStreamUsage : mergeOpenAIStreamUsage;
 
     while (true) {
@@ -713,7 +769,7 @@ async function extractOpenAIStreamUsage(
         try {
           const event = JSON.parse(data);
           usage = merge(usage, event);
-          toolUses.push(...extractOpenAIStreamToolUses(event));
+          toolUses.push(...toolAccumulator.push(event));
           const text = extractOpenAIStreamText(ctx.endpoint, event);
           if (text) responseTextParts.push(text);
         } catch {
@@ -721,6 +777,8 @@ async function extractOpenAIStreamUsage(
         }
       }
     }
+    toolUses.push(...toolAccumulator.flush());
+    const reviewMatches = await evaluateAgentReviewTriggers(ctx.agent, toolUses);
 
     const accounted = accountTokens(usage);
     const pricing = calculateCost(ctx.pricingProvider, ctx.model, usage);
@@ -791,7 +849,22 @@ async function extractOpenAIStreamUsage(
       department: ctx.department,
       declaredServers: ctx.declaredServers,
       toolUses,
+      reviewMatches,
     });
+    if (ctx.agent && reviewMatches.length > 0) {
+      await recordHumanReviewMatches({
+        agent: ctx.agent,
+        matches: reviewMatches,
+        blocked: ctx.reviewDecision === "blocked",
+        provider: ctx.provider,
+        model: ctx.model,
+        aiSystemId: ctx.aiSystemId,
+        userEmail: ctx.userEmail,
+        department: ctx.department,
+        requestId: ctx.requestId,
+        isStreaming: true,
+      });
+    }
   } catch (err) {
     logger.error(`${ctx.logPrefix}.stream_usage_failed`, {
       model: ctx.model,

@@ -23,10 +23,17 @@ import {
 import { logUsage } from "./db";
 import { computePromptHash, extractUserPromptText } from "./prompt-hash";
 import { loadPromptHashSalt } from "./prompt-hash-salt";
-import { extractOpenAIStreamUsage } from "./stream-parser";
+import { extractOpenAIStreamUsage, type StreamContext } from "./stream-parser";
 import { scanResponseForSensitiveInfo } from "./sensitive-detect";
-import { recordToolActivity } from "./tool-activity";
 import {
+  agentEnforcesReview,
+  evaluateAgentReviewTriggers,
+  recordHumanReviewMatches,
+  recordToolActivity,
+} from "./tool-activity";
+import { humanReviewBlockedBody } from "./human-review-triggers";
+import {
+  collectOpenAIToolUsesFromSse,
   extractDeclaredMcpServers,
   extractOpenAIToolUses,
   summarizeMcpForMetadata,
@@ -387,15 +394,7 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
 
     // ── Streaming ──
     if (isStreaming && upstream.ok && upstream.body) {
-      const nodeStream = Readable.fromWeb(upstream.body as unknown as ReadableStream<Uint8Array>);
-      const clientPass = new PassThrough();
-      const logPass = new PassThrough();
-      nodeStream.pipe(clientPass);
-      nodeStream.pipe(logPass);
-
-      // Fire-and-forget with an error handler — Azure Functions has no
-      // `waitUntil`, and an unhandled rejection would crash the worker.
-      void extractOpenAIStreamUsage(logPass, {
+      const streamCtx: StreamContext = {
         provider,
         pricingProvider,
         endpoint,
@@ -410,7 +409,38 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
         usageInjected,
         promptHash,
         baseMeta,
-      }).catch((err: unknown) => {
+      };
+
+      // Human-review triggers in enforce mode: hold the whole stream, decide,
+      // then either withhold it (403) or replay it to the client unchanged.
+      let nodeStream: Readable;
+      if (agentEnforcesReview(agent)) {
+        const bufferedText = await upstream.text();
+        const reviewMatches = await evaluateAgentReviewTriggers(
+          agent,
+          collectOpenAIToolUsesFromSse(bufferedText, endpoint)
+        );
+        if (reviewMatches.length > 0) {
+          void extractOpenAIStreamUsage(Readable.from([bufferedText]), {
+            ...streamCtx,
+            reviewDecision: "blocked",
+          }).catch((err: unknown) => {
+            console.error("extractOpenAIStreamUsage (withheld) failed:", err);
+          });
+          return { status: 403, jsonBody: humanReviewBlockedBody(agent, reviewMatches) };
+        }
+        nodeStream = Readable.from([bufferedText]);
+      } else {
+        nodeStream = Readable.fromWeb(upstream.body as unknown as ReadableStream<Uint8Array>);
+      }
+      const clientPass = new PassThrough();
+      const logPass = new PassThrough();
+      nodeStream.pipe(clientPass);
+      nodeStream.pipe(logPass);
+
+      // Fire-and-forget with an error handler — Azure Functions has no
+      // `waitUntil`, and an unhandled rejection would crash the worker.
+      void extractOpenAIStreamUsage(logPass, streamCtx).catch((err: unknown) => {
         console.error("extractOpenAIStreamUsage failed:", err);
       });
 
@@ -495,6 +525,9 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
       },
     }).catch((err) => console.error("logUsage failed:", err));
 
+    const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+    const reviewBlocked = reviewMatches.length > 0 && upstream.ok && agentEnforcesReview(agent);
+
     await recordToolActivity({
       agent,
       aiSystemId,
@@ -505,7 +538,25 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
       department,
       declaredServers,
       toolUses,
+      reviewMatches,
     });
+    if (agent && reviewMatches.length > 0) {
+      await recordHumanReviewMatches({
+        agent,
+        matches: reviewMatches,
+        blocked: reviewBlocked,
+        provider,
+        model,
+        aiSystemId,
+        userEmail,
+        department,
+        requestId,
+        isStreaming: false,
+      });
+    }
+    if (reviewBlocked && agent) {
+      return { status: 403, jsonBody: humanReviewBlockedBody(agent, reviewMatches) };
+    }
 
     return {
       status: upstream.status,

@@ -32,14 +32,22 @@ import {
   type TokenUsage,
 } from "./model-pricing";
 import {
-  extractAnthropicStreamToolUse,
+  collectAnthropicToolUsesFromSse,
+  createAnthropicToolUseAccumulator,
   extractAnthropicToolUses,
   extractDeclaredMcpServers,
   summarizeMcpForMetadata,
   type DeclaredMcpServer,
   type ObservedToolUse,
 } from "./mcp-tool-governance";
-import { recordToolActivity, type AgentGovernance } from "./mcp-tool-activity";
+import {
+  agentEnforcesReview,
+  evaluateAgentReviewTriggers,
+  recordHumanReviewMatches,
+  recordToolActivity,
+  type AgentGovernance,
+} from "./mcp-tool-activity";
+import { humanReviewBlockedBody } from "./human-review-triggers";
 import type { ClientFingerprint } from "./caller-fingerprint";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
@@ -258,8 +266,43 @@ export async function handleAnthropicProxy(
       anthropicResponse.headers.get("Content-Type") ??
       "text/event-stream";
 
+    // Human-review triggers in enforce mode: a tool call's arguments only
+    // exist once the stream has finished, so hold the whole response, decide,
+    // and either withhold it (403) or replay it to the client unchanged.
+    let upstreamBody: ReadableStream<Uint8Array> = anthropicResponse.body;
+    if (anthropicResponse.ok && agentEnforcesReview(agent)) {
+      const bufferedText = await anthropicResponse.text();
+      const reviewMatches = await evaluateAgentReviewTriggers(
+        agent,
+        collectAnthropicToolUsesFromSse(bufferedText)
+      );
+      if (reviewMatches.length > 0) {
+        after(
+          extractStreamUsage(new Response(bufferedText).body!, {
+            model,
+            department,
+            userEmail,
+            latencyMs,
+            subpath,
+            aiSystemId: attributedSystemId,
+            promptRisk,
+            mcp: mcpResult,
+            agent,
+            client,
+            declaredServers,
+            requestId: anthropicResponse.headers.get("request-id"),
+            reviewDecision: "blocked",
+          }).catch((err) => {
+            console.error("extractStreamUsage (withheld) failed:", err);
+          })
+        );
+        return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+      }
+      upstreamBody = new Response(bufferedText).body!;
+    }
+
     // Tee the stream: one for the client, one to extract usage
-    const [clientStream, logStream] = anthropicResponse.body.tee();
+    const [clientStream, logStream] = upstreamBody.tee();
 
     // Extract usage from the log stream after the response is sent.
     // Using `after` keeps the runtime alive long enough for the stream to drain
@@ -400,6 +443,9 @@ export async function handleAnthropicProxy(
     });
   }
 
+  const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+  const reviewBlocked = reviewMatches.length > 0 && agentEnforcesReview(agent);
+
   await recordToolActivity({
     agent,
     aiSystemId: attributedSystemId,
@@ -410,7 +456,25 @@ export async function handleAnthropicProxy(
     department,
     declaredServers,
     toolUses,
+    reviewMatches,
   });
+  if (agent && reviewMatches.length > 0) {
+    await recordHumanReviewMatches({
+      agent,
+      matches: reviewMatches,
+      blocked: reviewBlocked,
+      provider: "claude",
+      model,
+      aiSystemId: attributedSystemId,
+      userEmail,
+      department,
+      requestId,
+      isStreaming: false,
+    });
+  }
+  if (reviewBlocked && agent) {
+    return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+  }
 
   return NextResponse.json(responseBody, {
     status: anthropicResponse.status,
@@ -437,6 +501,8 @@ async function extractStreamUsage(
     client: ClientFingerprint;
     declaredServers: DeclaredMcpServer[];
     requestId: string | null;
+    /** Set when the handler already withheld this response over a review trigger. */
+    reviewDecision?: "blocked";
   }
 ) {
   try {
@@ -446,6 +512,7 @@ async function extractStreamUsage(
     let usage: TokenUsage = EMPTY_USAGE;
     const responseTextParts: string[] = [];
     const toolUses: ObservedToolUse[] = [];
+    const toolAccumulator = createAnthropicToolUseAccumulator();
 
     while (true) {
       const { done, value } = await reader.read();
@@ -479,15 +546,18 @@ async function extractStreamUsage(
             responseTextParts.push(event.delta.text);
           }
 
-          // content_block_start announces tool invocations (mcp_tool_use,
-          // server_tool_use, tool_use) — the governance signal for agents.
-          const toolUse = extractAnthropicStreamToolUse(event);
+          // Tool invocations (mcp_tool_use, server_tool_use, tool_use) are
+          // emitted once their arguments have fully streamed — the governance
+          // signal for agents and the input to human-review triggers.
+          const toolUse = toolAccumulator.push(event);
           if (toolUse) toolUses.push(toolUse);
         } catch {
           // skip non-JSON lines
         }
       }
     }
+    toolUses.push(...toolAccumulator.flush());
+    const reviewMatches = await evaluateAgentReviewTriggers(ctx.agent, toolUses);
 
     const accounted = accountTokens(usage);
     const pricing = calculateCost("anthropic", ctx.model, usage);
@@ -560,7 +630,22 @@ async function extractStreamUsage(
       department: ctx.department,
       declaredServers: ctx.declaredServers,
       toolUses,
+      reviewMatches,
     });
+    if (ctx.agent && reviewMatches.length > 0) {
+      await recordHumanReviewMatches({
+        agent: ctx.agent,
+        matches: reviewMatches,
+        blocked: ctx.reviewDecision === "blocked",
+        provider: "claude",
+        model: ctx.model,
+        aiSystemId: ctx.aiSystemId,
+        userEmail: ctx.userEmail,
+        department: ctx.department,
+        requestId: ctx.requestId,
+        isStreaming: true,
+      });
+    }
   } catch (err) {
     console.error("Failed to extract stream usage:", err);
   }

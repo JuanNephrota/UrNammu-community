@@ -13,6 +13,12 @@ import { AgentAIRiskCard } from "@/components/agents/agent-ai-risk-card";
 import { McpGovernanceCard } from "@/components/agents/mcp-governance-card";
 import { AgentKillSwitch } from "@/components/agents/agent-kill-switch";
 import { AgentCharterCard } from "@/components/agents/agent-charter-card";
+import { HumanReviewCard, type HumanReviewMatchRow } from "@/components/agents/human-review-card";
+import {
+  HUMAN_REVIEW_RULE,
+  normalizeHumanReviewTriggers,
+  normalizeReviewEnforcement,
+} from "@/lib/human-review-triggers";
 import { ApprovalDecisionCard } from "@/components/registry/approval-decision-card";
 import { GovernanceStageReviewCard } from "@/components/registry/governance-stage-review-card";
 import { ChecklistCard } from "@/components/workflow/checklist-card";
@@ -68,6 +74,28 @@ export default async function AgentDetailPage({
   const checklist = getAgentChecklist(governance.input, blockers);
   const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
   const requiredStages = getAgentRequiredStages(governance.input);
+  const reviewTriggers = normalizeHumanReviewTriggers(agent.humanReviewTriggers);
+  const reviewEnforcement = normalizeReviewEnforcement(agent.humanReviewEnforcement);
+  const reviewDenials = await prisma.policyDenial.findMany({
+    where: {
+      requestMetadata: { path: ["agentId"], equals: agent.id },
+      reasons: { array_contains: [{ ruleKey: HUMAN_REVIEW_RULE }] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 8,
+    select: { id: true, createdAt: true, provider: true, model: true, mode: true, requestMetadata: true },
+  });
+  const recentReviewMatches: HumanReviewMatchRow[] = reviewDenials.map((row) => {
+    const meta = (row.requestMetadata ?? {}) as { matches?: Array<{ trigger: string; tool: string; detail: string }> };
+    return {
+      id: row.id,
+      createdAt: row.createdAt,
+      provider: row.provider,
+      model: row.model,
+      mode: row.mode,
+      matches: Array.isArray(meta.matches) ? meta.matches : [],
+    };
+  });
 
   const since30d = daysAgo(30);
   const [toolProfiles, calls30d, unapproved30d, lastCall] = await Promise.all([
@@ -158,6 +186,15 @@ export default async function AgentDetailPage({
         <WorkflowSummaryCard workflow={workflow} status={agent.status} className="lg:col-span-2" />
         <div className="lg:col-span-2">
           <AgentCharterCard agent={agent} canEdit={canOperate} />
+        </div>
+        <div className="lg:col-span-2">
+          <HumanReviewCard
+            agent={{ id: agent.id, humanReviewRequired: agent.humanReviewRequired, autonomyLevel: agent.autonomyLevel }}
+            triggers={reviewTriggers}
+            enforcement={reviewEnforcement}
+            recentMatches={recentReviewMatches}
+            canEdit={canOperate}
+          />
         </div>
         <div id="approval" className="scroll-mt-6 [&>*]:h-full">
           <ApprovalDecisionCard

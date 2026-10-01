@@ -5,7 +5,8 @@
  * approval API so both see the same blockers.
  */
 import { prisma } from "./prisma";
-import { countHumanReviewTriggers, type AgentGovernanceInput } from "./agent-governance";
+import { type AgentGovernanceInput } from "./agent-governance";
+import { isEnforceableTrigger, normalizeHumanReviewTriggers } from "./human-review-triggers";
 
 const decidedBy = { select: { name: true, email: true } } as const;
 
@@ -20,6 +21,7 @@ export async function loadAgentGovernance(agentId: string) {
     },
   });
   if (!agent) return null;
+  const triggers = normalizeHumanReviewTriggers(agent.humanReviewTriggers);
 
   const [unapprovedToolProfiles, observedProfiles] = await Promise.all([
     prisma.agentToolProfile.count({ where: { agentId, approved: false } }),
@@ -33,7 +35,9 @@ export async function loadAgentGovernance(agentId: string) {
     riskLevel: agent.riskLevel,
     autonomyLevel: agent.autonomyLevel,
     humanReviewRequired: agent.humanReviewRequired,
-    humanReviewTriggersCount: countHumanReviewTriggers(agent.humanReviewTriggers),
+    humanReviewTriggersCount: triggers.length,
+    enforceableTriggersCount: triggers.filter(isEnforceableTrigger).length,
+    humanReviewEnforcement: agent.humanReviewEnforcement,
     purpose: agent.purpose,
     inScopeActions: agent.inScopeActions,
     outOfScopeActions: agent.outOfScopeActions,

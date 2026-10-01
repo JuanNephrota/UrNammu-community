@@ -35,7 +35,35 @@ export type ObservedToolUse = {
   toolName: string;
   /** MCP server name for mcp_tool_use; null for provider/client tools. */
   serverName: string | null;
+  /**
+   * The call's arguments (`tool_use.input`, OpenAI `function.arguments` /
+   * `mcp_call.arguments`, parsed when they are JSON). Present only when the
+   * response carried them; human-review triggers evaluate against this.
+   */
+  input?: unknown;
+  /** Provider call id (`tool_use.id`, `call_id`), when present. */
+  id?: string;
 };
+
+/** OpenAI ships arguments as a JSON string; Anthropic as an object. */
+function parseArguments(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function withArgs(use: ObservedToolUse, input: unknown, id: unknown): ObservedToolUse {
+  const out: ObservedToolUse = { ...use };
+  if (input !== undefined) out.input = input;
+  const callId = str(id);
+  if (callId) out.id = callId;
+  return out;
+}
 
 export type McpEnforcementMode = "monitor" | "enforce";
 
@@ -133,11 +161,11 @@ function blockToToolUse(block: unknown): ObservedToolUse | null {
   if (!name) return null;
   switch (b.type) {
     case "mcp_tool_use":
-      return { kind: "mcp_tool_use", toolName: name, serverName: str(b.server_name) };
+      return withArgs({ kind: "mcp_tool_use", toolName: name, serverName: str(b.server_name) }, b.input, b.id);
     case "server_tool_use":
-      return { kind: "server_tool_use", toolName: name, serverName: null };
+      return withArgs({ kind: "server_tool_use", toolName: name, serverName: null }, b.input, b.id);
     case "tool_use":
-      return { kind: "tool_use", toolName: name, serverName: null };
+      return withArgs({ kind: "tool_use", toolName: name, serverName: null }, b.input, b.id);
     default:
       return null;
   }
@@ -190,7 +218,15 @@ export function extractOpenAIToolUses(responseBody: unknown): ObservedToolUse[] 
           | Record<string, unknown>
           | undefined;
         const name = str(fn?.name);
-        if (name) out.push({ kind: "tool_use", toolName: name, serverName: null });
+        if (name) {
+          out.push(
+            withArgs(
+              { kind: "tool_use", toolName: name, serverName: null },
+              parseArguments(fn?.arguments),
+              (call as Record<string, unknown>).id
+            )
+          );
+        }
       }
     }
   }
@@ -204,11 +240,23 @@ function openAIOutputItemToToolUse(raw: unknown): ObservedToolUse | null {
   switch (item.type) {
     case "mcp_call": {
       const name = str(item.name);
-      return name ? { kind: "mcp_tool_use", toolName: name, serverName: str(item.server_label) } : null;
+      return name
+        ? withArgs(
+            { kind: "mcp_tool_use", toolName: name, serverName: str(item.server_label) },
+            parseArguments(item.arguments),
+            item.id
+          )
+        : null;
     }
     case "function_call": {
       const name = str(item.name);
-      return name ? { kind: "tool_use", toolName: name, serverName: null } : null;
+      return name
+        ? withArgs(
+            { kind: "tool_use", toolName: name, serverName: null },
+            parseArguments(item.arguments),
+            item.call_id ?? item.id
+          )
+        : null;
     }
     case "web_search_call":
     case "file_search_call":
@@ -255,6 +303,169 @@ export function extractOpenAIStreamToolUses(event: unknown): ObservedToolUse[] {
     }
   }
   return out;
+}
+
+// ─── Streaming accumulators ────────────────────────────────────────────────
+//
+// The `extract*Stream*` helpers above see a tool call the moment its header
+// arrives, which is all allowlisting needs. Human-review triggers need the
+// ARGUMENTS, which stream in afterwards: Anthropic sends `input_json_delta`
+// fragments until `content_block_stop`; Chat Completions sends
+// `delta.tool_calls[].function.arguments` fragments per call index; the
+// Responses API sends the whole item on `response.output_item.done`. These
+// accumulators emit a use only once its arguments are complete.
+
+export type AnthropicToolUseAccumulator = {
+  /** Feed one SSE event; returns the completed use when a tool block closes. */
+  push(event: unknown): ObservedToolUse | null;
+  /** Uses whose block never closed (stream cut short). */
+  flush(): ObservedToolUse[];
+};
+
+export function createAnthropicToolUseAccumulator(): AnthropicToolUseAccumulator {
+  const open = new Map<number, { use: ObservedToolUse; json: string }>();
+  const indexOf = (e: Record<string, unknown>) => (typeof e.index === "number" ? e.index : -1);
+  const finalize = (entry: { use: ObservedToolUse; json: string }): ObservedToolUse => {
+    if (!entry.json) return entry.use;
+    return withArgs(entry.use, parseArguments(entry.json), entry.use.id);
+  };
+  return {
+    push(event) {
+      if (!event || typeof event !== "object") return null;
+      const e = event as Record<string, unknown>;
+      if (e.type === "content_block_start") {
+        const use = blockToToolUse(e.content_block);
+        if (use) open.set(indexOf(e), { use, json: "" });
+        return null;
+      }
+      if (e.type === "content_block_delta") {
+        const delta = e.delta as Record<string, unknown> | undefined;
+        if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          const entry = open.get(indexOf(e));
+          if (entry) entry.json += delta.partial_json;
+        }
+        return null;
+      }
+      if (e.type === "content_block_stop") {
+        const entry = open.get(indexOf(e));
+        if (!entry) return null;
+        open.delete(indexOf(e));
+        return finalize(entry);
+      }
+      return null;
+    },
+    flush() {
+      const out = Array.from(open.values()).map(finalize);
+      open.clear();
+      return out;
+    },
+  };
+}
+
+export type OpenAIToolUseAccumulator = {
+  /** Feed one SSE event; returns the uses completed by it. */
+  push(event: unknown): ObservedToolUse[];
+  /** Chat Completions calls still open when the stream ends. */
+  flush(): ObservedToolUse[];
+};
+
+export function createOpenAIToolUseAccumulator(
+  endpoint: "responses" | "chat_completions" | string = "chat_completions"
+): OpenAIToolUseAccumulator {
+  // Chat Completions: one partial call per (choice, index).
+  const open = new Map<string, { name: string | null; id: string | null; args: string }>();
+  const finalizeAll = (): ObservedToolUse[] => {
+    const out: ObservedToolUse[] = [];
+    for (const partial of open.values()) {
+      if (!partial.name) continue;
+      out.push(
+        withArgs({ kind: "tool_use", toolName: partial.name, serverName: null }, parseArguments(partial.args), partial.id)
+      );
+    }
+    open.clear();
+    return out;
+  };
+  return {
+    push(event) {
+      if (!event || typeof event !== "object") return [];
+      const e = event as Record<string, unknown>;
+      if (endpoint === "responses" || e.type === "response.output_item.done") {
+        if (e.type === "response.output_item.done" && e.item) {
+          const use = openAIOutputItemToToolUse(e.item);
+          return use ? [use] : [];
+        }
+        return [];
+      }
+      if (!Array.isArray(e.choices)) return [];
+      const out: ObservedToolUse[] = [];
+      e.choices.forEach((rawChoice, choiceIndex) => {
+        const choice = rawChoice as Record<string, unknown> | null;
+        const delta = choice?.delta as Record<string, unknown> | undefined;
+        const calls = delta?.tool_calls;
+        if (Array.isArray(calls)) {
+          for (const rawCall of calls) {
+            const call = rawCall as Record<string, unknown> | null;
+            if (!call) continue;
+            const fn = call.function as Record<string, unknown> | undefined;
+            const key = `${choiceIndex}:${typeof call.index === "number" ? call.index : 0}`;
+            const partial = open.get(key) ?? { name: null, id: null, args: "" };
+            if (str(fn?.name)) partial.name = str(fn?.name);
+            if (str(call.id)) partial.id = str(call.id);
+            if (typeof fn?.arguments === "string") partial.args += fn.arguments;
+            open.set(key, partial);
+          }
+        }
+        if (choice?.finish_reason) out.push(...finalizeAll());
+      });
+      return out;
+    },
+    flush: finalizeAll,
+  };
+}
+
+/** `data:` payloads of an SSE body, in order; `[DONE]` and blanks skipped. */
+export function sseDataPayloads(text: string): string[] {
+  const out: string[] = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    out.push(data);
+  }
+  return out;
+}
+
+/** Every tool use (with arguments) in a fully buffered Anthropic SSE body. */
+export function collectAnthropicToolUsesFromSse(text: string): ObservedToolUse[] {
+  const acc = createAnthropicToolUseAccumulator();
+  const out: ObservedToolUse[] = [];
+  for (const data of sseDataPayloads(text)) {
+    try {
+      const use = acc.push(JSON.parse(data));
+      if (use) out.push(use);
+    } catch {
+      // skip non-JSON payloads
+    }
+  }
+  return [...out, ...acc.flush()];
+}
+
+/** Every tool use (with arguments) in a fully buffered OpenAI SSE body. */
+export function collectOpenAIToolUsesFromSse(
+  text: string,
+  endpoint: "responses" | "chat_completions" | string = "chat_completions"
+): ObservedToolUse[] {
+  const acc = createOpenAIToolUseAccumulator(endpoint);
+  const out: ObservedToolUse[] = [];
+  for (const data of sseDataPayloads(text)) {
+    try {
+      out.push(...acc.push(JSON.parse(data)));
+    } catch {
+      // skip
+    }
+  }
+  return [...out, ...acc.flush()];
 }
 
 // ─── Allowlist evaluation ──────────────────────────────────────────────────

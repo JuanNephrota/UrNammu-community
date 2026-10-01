@@ -2,13 +2,20 @@ import { app, HttpRequest, HttpResponseInit } from "@azure/functions";
 import { Readable, PassThrough } from "stream";
 import { accountTokens, calculateCost, usageFromAnthropic, usageMetadata } from "../lib/pricing";
 import { logUsage } from "../lib/db";
-import { extractAnthropicStreamUsage } from "../lib/stream-parser";
+import { extractAnthropicStreamUsage, type StreamContext } from "../lib/stream-parser";
 import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
 import { applyMcpPassthrough } from "../lib/mcp-passthrough";
-import { recordToolActivity } from "../lib/tool-activity";
+import {
+  agentEnforcesReview,
+  evaluateAgentReviewTriggers,
+  recordHumanReviewMatches,
+  recordToolActivity,
+} from "../lib/tool-activity";
+import { humanReviewBlockedBody } from "../lib/human-review-triggers";
 import { computePromptHash, extractUserPromptText } from "../lib/prompt-hash";
 import { loadPromptHashSalt } from "../lib/prompt-hash-salt";
 import {
+  collectAnthropicToolUsesFromSse,
   extractAnthropicToolUses,
   extractDeclaredMcpServers,
   summarizeMcpForMetadata,
@@ -35,7 +42,7 @@ function upstreamRequestId(res: Response): string | null {
   return res.headers.get("request-id") ?? res.headers.get("x-request-id");
 }
 
-async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
+export async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   // Auth
   const authError = authenticate(req);
   if (authError) return authError;
@@ -186,25 +193,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
 
   // ── Streaming ──
   if (isStreaming && anthropicRes.body) {
-    const nodeStream = Readable.fromWeb(
-      anthropicRes.body as unknown as ReadableStream<Uint8Array>
-    );
-    const clientPass = new PassThrough();
-    const logPass = new PassThrough();
-
-    nodeStream.pipe(clientPass);
-    nodeStream.pipe(logPass);
-
-    // Kick off the extractor now so it drains `logPass` in parallel with the
-    // client consuming `clientPass`. We MUST attach an error handler — Azure
-    // Functions has no `waitUntil`, so the promise is effectively fire-and-
-    // forget and an unhandled rejection would crash the worker.
-    //
-    // The function host keeps this invocation alive while the response body
-    // stream is open; in practice the extractor finishes at/before the client
-    // stream ends. If the client disconnects mid-stream the extractor may not
-    // complete — accepted limitation until telemetry moves to a queue.
-    const extractPromise = extractAnthropicStreamUsage(logPass, {
+    const streamCtx: StreamContext = {
       provider: "claude",
       pricingProvider: "anthropic",
       model,
@@ -220,7 +209,47 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
       mcp: mcpResult.detected
         ? { servers: mcpResult.mcpServerCount, forwardedHeaders: mcpResult.forwarded }
         : null,
-    }).catch((err: unknown) => {
+    };
+
+    // Human-review triggers in enforce mode: a tool call's arguments only
+    // exist once the stream has finished, so hold the whole response, decide,
+    // and either withhold it (403) or replay it to the client unchanged.
+    let nodeStream: Readable;
+    if (anthropicRes.ok && agentEnforcesReview(agent)) {
+      const bufferedText = await anthropicRes.text();
+      const reviewMatches = await evaluateAgentReviewTriggers(
+        agent,
+        collectAnthropicToolUsesFromSse(bufferedText)
+      );
+      if (reviewMatches.length > 0) {
+        void extractAnthropicStreamUsage(Readable.from([bufferedText]), {
+          ...streamCtx,
+          reviewDecision: "blocked",
+        }).catch((err: unknown) => {
+          console.error("extractAnthropicStreamUsage (withheld) failed:", err);
+        });
+        return { status: 403, jsonBody: humanReviewBlockedBody(agent, reviewMatches) };
+      }
+      nodeStream = Readable.from([bufferedText]);
+    } else {
+      nodeStream = Readable.fromWeb(anthropicRes.body as unknown as ReadableStream<Uint8Array>);
+    }
+    const clientPass = new PassThrough();
+    const logPass = new PassThrough();
+
+    nodeStream.pipe(clientPass);
+    nodeStream.pipe(logPass);
+
+    // Kick off the extractor now so it drains `logPass` in parallel with the
+    // client consuming `clientPass`. We MUST attach an error handler — Azure
+    // Functions has no `waitUntil`, so the promise is effectively fire-and-
+    // forget and an unhandled rejection would crash the worker.
+    //
+    // The function host keeps this invocation alive while the response body
+    // stream is open; in practice the extractor finishes at/before the client
+    // stream ends. If the client disconnects mid-stream the extractor may not
+    // complete — accepted limitation until telemetry moves to a queue.
+    const extractPromise = extractAnthropicStreamUsage(logPass, streamCtx).catch((err: unknown) => {
       console.error("extractAnthropicStreamUsage failed:", err);
     });
     // Silence "floating promise" linters while still not blocking the response.
@@ -323,6 +352,9 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     console.error("logUsage failed:", err);
   });
 
+  const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+  const reviewBlocked = reviewMatches.length > 0 && anthropicRes.ok && agentEnforcesReview(agent);
+
   await recordToolActivity({
     agent,
     aiSystemId,
@@ -333,7 +365,25 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
     department,
     declaredServers,
     toolUses,
+    reviewMatches,
   });
+  if (agent && reviewMatches.length > 0) {
+    await recordHumanReviewMatches({
+      agent,
+      matches: reviewMatches,
+      blocked: reviewBlocked,
+      provider: "claude",
+      model,
+      aiSystemId,
+      userEmail,
+      department,
+      requestId,
+      isStreaming: false,
+    });
+  }
+  if (reviewBlocked && agent) {
+    return { status: 403, jsonBody: humanReviewBlockedBody(agent, reviewMatches) };
+  }
 
   return {
     status: anthropicRes.status,

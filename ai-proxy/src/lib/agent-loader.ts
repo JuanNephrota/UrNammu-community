@@ -10,6 +10,12 @@
 
 import { prisma } from "./db";
 import { normalizeEnforcement, type McpGovernanceConfig } from "./mcp-tool-governance";
+import {
+  normalizeHumanReviewTriggers,
+  normalizeReviewEnforcement,
+  type HumanReviewEnforcement,
+  type HumanReviewTrigger,
+} from "./human-review-triggers";
 
 export type LoadedAgent = {
   id: string;
@@ -19,6 +25,8 @@ export type LoadedAgent = {
   status: string;
   suspendedAt: Date | null;
   config: McpGovernanceConfig;
+  /** Human-review triggers and how a match is handled; see human-review-triggers.ts. */
+  review: { triggers: HumanReviewTrigger[]; enforcement: HumanReviewEnforcement };
 };
 
 type CacheEntry = { value: LoadedAgent | null; expiresAt: number };
@@ -44,6 +52,8 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
         mcpEnforcement: true,
         status: true,
         suspendedAt: true,
+        humanReviewTriggers: true,
+        humanReviewEnforcement: true,
       },
     });
   } catch (err) {
@@ -65,6 +75,10 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
           serverAllowlist: row.mcpServerAllowlist,
           toolAllowlist: row.mcpToolAllowlist,
           enforcement: normalizeEnforcement(row.mcpEnforcement),
+        },
+        review: {
+          triggers: normalizeHumanReviewTriggers(row.humanReviewTriggers),
+          enforcement: normalizeReviewEnforcement(row.humanReviewEnforcement),
         },
       }
     : null;

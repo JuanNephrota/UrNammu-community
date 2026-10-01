@@ -26,6 +26,8 @@ function governed(overrides: Partial<AgentGovernanceInput> = {}): AgentGovernanc
     autonomyLevel: "HUMAN_IN_THE_LOOP",
     humanReviewRequired: true,
     humanReviewTriggersCount: 2,
+    enforceableTriggersCount: 2,
+    humanReviewEnforcement: "enforce",
     purpose: "Issue refunds under policy",
     inScopeActions: ["lookup order", "issue refund <= $100"],
     outOfScopeActions: ["change shipping address"],
@@ -141,8 +143,19 @@ test("FULL_AUTONOMY requires enforce mode with an allowlist; SUPERVISED only rec
 test("human-review inconsistencies are soft", () => {
   const contradiction = getAgentApprovalBlockers(governed({ humanReviewRequired: false }));
   assert.deepEqual(contradiction.map((b) => [b.category, b.soft]), [["human_review", true]]);
-  const noTriggers = getAgentApprovalBlockers(governed({ humanReviewTriggersCount: 0 }));
+  const noTriggers = getAgentApprovalBlockers(governed({ humanReviewTriggersCount: 0, enforceableTriggersCount: 0 }));
   assert.deepEqual(noTriggers.map((b) => [b.category, b.soft]), [["human_review", true]]);
+  assert.match(noTriggers[0].message, /no triggers are declared/);
+  const notesOnly = getAgentApprovalBlockers(governed({ humanReviewTriggersCount: 2, enforceableTriggersCount: 0 }));
+  assert.match(notesOnly[0].message, /notes only/);
+  const monitored = getAgentApprovalBlockers(governed({ humanReviewEnforcement: "monitor" }));
+  assert.deepEqual(monitored.map((b) => [b.category, b.soft]), [["human_review", true]]);
+  assert.match(monitored[0].message, /only monitored/);
+  // FULL_AUTONOMY has no human loop, so monitor-only triggers are not flagged there.
+  const full = getAgentApprovalBlockers(
+    governed({ autonomyLevel: "FULL_AUTONOMY", humanReviewRequired: false, humanReviewEnforcement: "monitor", mcpEnforcement: "enforce", mcpServerAllowlist: ["x"] })
+  );
+  assert.deepEqual(full, []);
 });
 
 test("risk basis: HIGH/CRITICAL hard-block without one; MEDIUM is only nudged; an agent risk review counts", () => {

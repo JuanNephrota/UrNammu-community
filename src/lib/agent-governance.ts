@@ -37,7 +37,11 @@ export type AgentGovernanceInput = {
   riskLevel: RiskLevel;
   autonomyLevel: AutonomyLevel;
   humanReviewRequired: boolean;
+  /** All declared triggers, notes included. */
   humanReviewTriggersCount: number;
+  /** Triggers the proxies can evaluate (everything except notes). */
+  enforceableTriggersCount: number;
+  humanReviewEnforcement: string;
 
   purpose: string | null;
   inScopeActions: string[];
@@ -233,8 +237,30 @@ export function getAgentApprovalBlockers(input: AgentGovernanceInput): AgentAppr
       category: "human_review",
       title: "Declare human-review triggers",
       message:
-        "Human review is required but no triggers are declared. State which conditions force a human step (amount thresholds, data classes, new counterparties).",
-      href: editHref,
+        "Human review is required but no triggers are declared. State which tool calls or argument thresholds force a human step so the proxy can hold them.",
+      href: `${editHref}#human-review`,
+      soft: true,
+    });
+  } else if (input.humanReviewRequired && input.enforceableTriggersCount === 0) {
+    blockers.push({
+      category: "human_review",
+      title: "Make the review triggers enforceable",
+      message:
+        "The human-review triggers are notes only. Rewrite them as tool or argument triggers so the proxy can evaluate them against real tool calls.",
+      href: `${editHref}#human-review`,
+      soft: true,
+    });
+  } else if (
+    humanLoop &&
+    input.enforceableTriggersCount > 0 &&
+    input.humanReviewEnforcement !== "enforce"
+  ) {
+    blockers.push({
+      category: "human_review",
+      title: "Enforce the review triggers",
+      message:
+        "Review triggers are declared but only monitored: matching tool calls are recorded and alerted, not held. Switch human-review enforcement to Enforce so the proxy withholds them.",
+      href: `${editHref}#human-review`,
       soft: true,
     });
   }

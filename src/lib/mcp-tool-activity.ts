@@ -20,6 +20,21 @@ import {
   type ObservedToolUse,
 } from "./mcp-tool-governance";
 import { agentBlockedDenialReason, type AgentBlockedVerdict } from "./agent-runtime-gate";
+import {
+  HUMAN_REVIEW_ALERT_SOURCE,
+  evaluateHumanReviewTriggers,
+  hasSensitiveDataTriggers,
+  humanReviewDenialReasons,
+  isEnforceableTrigger,
+  matchedToolLabels,
+  normalizeHumanReviewTriggers,
+  normalizeReviewEnforcement,
+  summarizeMatches,
+  type HumanReviewEnforcement,
+  type HumanReviewMatch,
+  type HumanReviewTrigger,
+} from "./human-review-triggers";
+import { analyzeText } from "./prompt-risk";
 
 export const MCP_ALERT_SOURCE = "mcp_tool_governance";
 export const MCP_SERVER_DENIAL_RULE = "mcp_server_not_allowed";
@@ -32,7 +47,16 @@ export type AgentGovernance = {
   status: string;
   suspendedAt: Date | null;
   config: McpGovernanceConfig;
+  /** Human-review triggers and how a match is handled; see human-review-triggers.ts. */
+  review: { triggers: HumanReviewTrigger[]; enforcement: HumanReviewEnforcement };
 };
+
+/** True when a matched trigger must withhold the response (buffer streams, 403). */
+export function agentEnforcesReview(agent: AgentGovernance | null): agent is AgentGovernance {
+  return (
+    !!agent && agent.review.enforcement === "enforce" && agent.review.triggers.some(isEnforceableTrigger)
+  );
+}
 
 export async function loadAgentGovernance(agentId: string | null): Promise<AgentGovernance | null> {
   if (!agentId) return null;
@@ -48,6 +72,8 @@ export async function loadAgentGovernance(agentId: string | null): Promise<Agent
         mcpEnforcement: true,
         status: true,
         suspendedAt: true,
+        humanReviewTriggers: true,
+        humanReviewEnforcement: true,
       },
     });
     if (!agent) return null;
@@ -61,6 +87,10 @@ export async function loadAgentGovernance(agentId: string | null): Promise<Agent
         serverAllowlist: agent.mcpServerAllowlist,
         toolAllowlist: agent.mcpToolAllowlist,
         enforcement: normalizeEnforcement(agent.mcpEnforcement),
+      },
+      review: {
+        triggers: normalizeHumanReviewTriggers(agent.humanReviewTriggers),
+        enforcement: normalizeReviewEnforcement(agent.humanReviewEnforcement),
       },
     };
   } catch (err) {
@@ -137,6 +167,101 @@ export async function logAgentBlockedDenial(input: {
   }
 }
 
+/**
+ * Evaluate an agent's human-review triggers against the tool calls a response
+ * contained. `sensitive_data` triggers run the proxy's response-DLP detector
+ * over each call's arguments; everything else is pure.
+ */
+export async function evaluateAgentReviewTriggers(
+  agent: AgentGovernance | null,
+  uses: ObservedToolUse[]
+): Promise<HumanReviewMatch[]> {
+  if (!agent || uses.length === 0) return [];
+  const triggers = agent.review.triggers.filter(isEnforceableTrigger);
+  if (triggers.length === 0) return [];
+  let sensitiveCategories: Array<string[] | null> | undefined;
+  if (hasSensitiveDataTriggers(triggers)) {
+    sensitiveCategories = await Promise.all(
+      uses.map(async (use) => {
+        if (use.input === undefined) return null;
+        try {
+          const analysis = await analyzeText(
+            typeof use.input === "string" ? use.input : JSON.stringify(use.input),
+            { excludeIntentRules: true }
+          );
+          return analysis.flagged ? analysis.categories : [];
+        } catch {
+          return null;
+        }
+      })
+    );
+  }
+  return evaluateHumanReviewTriggers(triggers, uses, { sensitiveCategories });
+}
+
+/**
+ * Persist the outcome of matched human-review triggers: an enforced (response
+ * withheld) or dry-run (monitor mode) PolicyDenial, plus one HIGH alert per
+ * agent + trigger, deduped for 24 hours.
+ */
+export async function recordHumanReviewMatches(input: {
+  agent: AgentGovernance;
+  matches: HumanReviewMatch[];
+  blocked: boolean;
+  provider: string;
+  model: string;
+  aiSystemId: string | null;
+  userEmail: string | null;
+  department: string | null;
+  requestId?: string | null;
+  isStreaming: boolean;
+}) {
+  if (input.matches.length === 0) return;
+  const aiSystemId = input.aiSystemId ?? input.agent.aiSystemId ?? null;
+  try {
+    await prisma.policyDenial.create({
+      data: {
+        provider: input.provider,
+        model: input.model,
+        aiSystemId,
+        userEmail: input.userEmail,
+        department: input.department,
+        mode: input.blocked ? "enforced" : "dryrun",
+        policyIds: [],
+        reasons: humanReviewDenialReasons(input.agent, input.matches),
+        promptExcerpt: null,
+        requestMetadata: {
+          agentId: input.agent.id,
+          isStreaming: input.isStreaming,
+          blocked: input.blocked,
+          requestId: input.requestId ?? null,
+          matches: summarizeMatches(input.matches),
+        },
+      },
+    });
+  } catch (err) {
+    console.error("recordHumanReviewMatches (denial) failed:", err);
+  }
+  try {
+    const byTrigger = new Map<string, HumanReviewMatch[]>();
+    for (const m of input.matches) byTrigger.set(m.triggerLabel, [...(byTrigger.get(m.triggerLabel) ?? []), m]);
+    for (const [label, group] of byTrigger) {
+      const tools = [...new Set(group.map((m) => m.tool))].join(", ");
+      await upsertAlert({
+        source: HUMAN_REVIEW_ALERT_SOURCE,
+        title: `Human review required: ${input.agent.name} — ${label}`,
+        description: `${input.blocked ? "Response withheld (enforce mode)." : "Observed in monitor mode; the call was forwarded."} Agent "${input.agent.name}" called ${tools} via ${input.provider}/${input.model}: ${group
+          .map((m) => m.detail)
+          .join("; ")}. Review the agent's Human Review card and decide whether to resume, adjust the trigger, or suspend the agent.`,
+        severity: "HIGH",
+        aiSystemId,
+      });
+    }
+  } catch (err) {
+    console.error("recordHumanReviewMatches (alert) failed:", err);
+  }
+}
+
 const ALERT_DEDUPE_MS = 24 * 60 * 60 * 1000;
 
 async function upsertAlert(input: {
@@ -144,10 +269,12 @@ async function upsertAlert(input: {
   description: string;
   severity: "HIGH" | "MEDIUM";
   aiSystemId: string | null;
+  source?: string;
 }) {
+  const source = input.source ?? MCP_ALERT_SOURCE;
   const recent = await prisma.alert.findFirst({
     where: {
-      source: MCP_ALERT_SOURCE,
+      source,
       title: input.title,
       status: { in: ["OPEN", "ACKNOWLEDGED"] },
       createdAt: { gte: new Date(Date.now() - ALERT_DEDUPE_MS) },
@@ -166,7 +293,7 @@ async function upsertAlert(input: {
       title: input.title,
       description: input.description,
       severity: input.severity,
-      source: MCP_ALERT_SOURCE,
+      source,
       aiSystemId: input.aiSystemId,
     },
   });
@@ -186,6 +313,8 @@ export async function recordToolActivity(input: {
   department: string | null;
   declaredServers: DeclaredMcpServer[];
   toolUses: ObservedToolUse[];
+  /** Human-review trigger matches for this response; flags the matching rows. */
+  reviewMatches?: HumanReviewMatch[];
 }) {
   if (input.declaredServers.length === 0 && input.toolUses.length === 0) return;
   try {
@@ -195,6 +324,7 @@ export async function recordToolActivity(input: {
     const config = input.agent?.config ?? null;
     const uses = dedupeToolUses(input.toolUses);
     const verdicts = config ? evaluateToolUses(uses, config) : uses.map((use) => ({ use, allowed: true }));
+    const reviewTools = matchedToolLabels(input.reviewMatches ?? []);
     const now = new Date();
 
     if (verdicts.length > 0) {
@@ -208,6 +338,7 @@ export async function recordToolActivity(input: {
           serverName: use.serverName,
           toolName: use.toolName,
           approved: allowed,
+          reviewRequired: reviewTools.has(toolLabel(use)),
           requestId: input.requestId ?? null,
           userEmail: input.userEmail,
           department: input.department,

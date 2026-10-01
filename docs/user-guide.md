@@ -292,7 +292,38 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 
 ### Human Review Triggers
 
-Agents can declare triggers (JSON list) that force a human step — e.g. "dollar amount > $1 000", "contains PII", "new vendor". These feed the risk review and are shown on the agent detail page.
+The playbook's central demand is that an agent's authority limits are enforced technically, not just written down. Human-review triggers are those limits: both proxies evaluate them against the **arguments** of every tool call the model makes, and can hold the call.
+
+**Declaring triggers** (agent form → *Human Review Triggers*):
+
+| Kind | Fields | Example |
+|---|---|---|
+| Argument condition | tool pattern, argument path, operator, value | `payments/*` · `amount` · greater than · `1000` |
+| Any call of a tool | tool pattern | `delete_*` |
+| Sensitive data in arguments | tool pattern, optional categories | `*` · `pii, credentials` |
+| Note | text | "Escalate anything involving a regulator" (not evaluated) |
+
+Tool patterns accept `tool` (any server), `server/tool`, `server/*` and `*` wildcards. Argument paths are dot paths into the call's JSON arguments (`payment.total`, `items.0.sku`). Operators: greater than, at least, less than, at most, equals, does not equal, contains, matches regex, is present. Numeric strings including currency formatting are coerced. Triggers written as plain text before this release were preserved as notes.
+
+**Enforcement** (same card):
+
+| Mode | On a match |
+|---|---|
+| Monitor | Dry-run denial under **Compliance → Denials** (rule `human_review_required`), HIGH alert (source `human_review_trigger`, deduped 24 h per agent + trigger). Response forwarded. |
+| Enforce | Response **withheld**: the client receives `403 human_review_required` with `violations[] = { trigger, tool, detail }`. Enforced denial + HIGH alert recorded. The agent loop halts until a person acts. |
+
+```json
+HTTP 403
+{ "error": { "type": "human_review_required",
+             "message": "Response withheld: agent \"Refund bot\" attempted payments/issue_refund that requires human review (Refund over $1,000). A reviewer must act before the agent may continue.",
+             "violations": [ { "rule": "human_review_required", "trigger": "Refund over $1,000", "tool": "payments/issue_refund", "detail": "amount = 5000" } ] } }
+```
+
+**Streaming.** A tool call's arguments only exist once the model has finished, so in Enforce mode the proxy buffers the whole stream, evaluates, and either withholds it or replays it to the client unchanged. Clients see the full response only after generation completes. In Monitor mode streams are forwarded live as before.
+
+**Coverage.** Anthropic Messages, OpenAI Chat Completions and Responses, and Azure OpenAI, on both the Azure and the Vercel proxy, streaming and non-streaming. Tool calls whose arguments the proxy cannot see (Gemini, Bedrock) are not evaluated yet. Traffic without `x-agent-id` is never evaluated — that is what agent discovery is for.
+
+**Where to look.** The agent's *Human Review Triggers* card lists the triggers, the enforcement mode and the most recent matches (withheld or observed). Matched tool-call rows are flagged under **Oversight → MCP Activity**. The approval gate recommends enforcing triggers for human-in-the-loop and human-on-the-loop agents that only monitor.
 
 ### Charter and Approval Gate
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeHumanReviewTriggers } from "@/lib/human-review-triggers";
 
 export const createAgentSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
@@ -15,7 +16,13 @@ export const createAgentSchema = z.object({
   ]).default("HUMAN_IN_THE_LOOP"),
   connectedSystems: z.array(z.string()).default([]),
   humanReviewRequired: z.boolean().default(true),
-  humanReviewTriggers: z.any().optional(),
+  // Any shape is accepted (legacy free text included) and normalised into the
+  // structured trigger list both proxies evaluate. See human-review-triggers.ts.
+  humanReviewTriggers: z
+    .any()
+    .optional()
+    .transform((value) => (value === undefined ? undefined : normalizeHumanReviewTriggers(value))),
+  humanReviewEnforcement: z.enum(["monitor", "enforce"]).default("monitor"),
   riskLevel: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"]).default("MEDIUM"),
   status: z.enum(["DRAFT", "UNDER_REVIEW", "APPROVED", "DEPLOYED", "DEPRECATED", "RETIRED"]).default("DRAFT"),
   department: z.string().optional(),

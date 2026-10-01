@@ -36,7 +36,23 @@ Moving an agent to **APPROVED** or **DEPLOYED** on the edit form also requires a
 
 ## Human review triggers
 
-JSON list of conditions that force a human step — e.g. "dollar amount > $1000", "contains PII", "new vendor". Feeds the AI risk review and shows on the agent detail page.
+The conditions under which an agent's tool call must stop for a person. Both proxies evaluate them against the **arguments** of every tool call the model makes (`tool_use.input`, OpenAI `function.arguments`, `mcp_call.arguments`), in streaming and non-streaming responses, on the Anthropic, OpenAI and Azure OpenAI paths.
+
+Trigger kinds (agent form → **Human Review Triggers**):
+
+- **Argument condition** — a tool pattern, an argument path (`amount`, `payment.total`, `items.0.sku`) and a comparison: greater than, at least, less than, at most, equals, does not equal, contains, matches regex, is present. Numbers are coerced, so `"$1,200.50"` compares as 1200.5.
+- **Any call of a tool** — the tool pattern alone: `issue_refund`, every tool on the `payments` server, or a name prefix such as `delete_`.
+- **Sensitive data in arguments** — the proxy's sensitive-data detector runs over the call's arguments; optionally restrict to categories such as `pii` or `credentials`.
+- **Note** — free text for reviewers; never evaluated. Triggers written before this release as plain text were kept as notes.
+
+Tool patterns accept a bare tool name (any server), `server/tool`, or a glob with a wildcard for a whole server or a name prefix.
+
+**Enforcement** decides what a match does:
+
+- **Monitor** records a dry-run denial under **Compliance → Denials** (rule `human_review_required`) and raises a **HIGH** alert (source `human_review_trigger`, deduped 24 h per agent and trigger). The response is forwarded.
+- **Enforce** withholds the model's response and returns `403 human_review_required` with the matched trigger, tool and detail in `violations`. The agent loop stops until a person acts. Streaming responses are buffered until the model finishes so the arguments can be checked, so the client waits for the full generation before seeing anything.
+
+Matches are flagged on the tool-call rows (**Oversight → MCP Activity**) and listed on the agent's **Human Review Triggers** card. Gemini and Bedrock traffic is not evaluated yet.
 
 ## MCP tool governance
 

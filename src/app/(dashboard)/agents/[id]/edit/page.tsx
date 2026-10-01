@@ -50,6 +50,8 @@ export default async function EditAgentPage({
           requireLegalApproval: agent.requireLegalApproval,
           requireComplianceApproval: agent.requireComplianceApproval,
           reviewIntervalDays: agent.reviewIntervalDays,
+          humanReviewTriggers: agent.humanReviewTriggers,
+          humanReviewEnforcement: agent.humanReviewEnforcement,
         }}
         systems={systems}
       />

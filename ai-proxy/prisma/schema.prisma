@@ -77,7 +77,7 @@ model Policy {
   id      String  @id @default(cuid())
   name    String
   rules   Json?
-  status  String  @default("DRAFT")
+  status  PolicyStatus @default(DRAFT)
 
   assignments PolicyAssignment[]
 }
@@ -102,6 +102,21 @@ model AppSetting {
 // -- MCP tool governance (proxy reads AIAgent allowlists, writes calls +
 // profiles; main app owns migrations). Mirrors of the main app's models.
 
+enum AISystemStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  DEPLOYED
+  DEPRECATED
+  RETIRED
+}
+
+enum PolicyStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
 model AIAgent {
   id                 String   @id @default(cuid())
   name               String
@@ -109,8 +124,12 @@ model AIAgent {
   mcpServerAllowlist String[] @default([])
   mcpToolAllowlist   String[] @default([])
   mcpEnforcement     String   @default("monitor")
-  status             String   @default("DRAFT")
+  // Postgres enum in the main schema. Prisma refuses to read an enum column
+  // through a String field (P2032), so the enum must be mirrored here.
+  status             AISystemStatus @default(DRAFT)
   suspendedAt        DateTime?
+  humanReviewTriggers    Json?
+  humanReviewEnforcement String @default("monitor")
 
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
@@ -127,6 +146,7 @@ model AgentToolCall {
   serverName String?
   toolName   String
   approved   Boolean  @default(true)
+  reviewRequired Boolean @default(false)
   requestId  String?
   userEmail  String?
   department String?

@@ -81,21 +81,32 @@ shared instead, via an `endpoint` prop on the two reviewer cards):
 
 Deferred to item 4: evidence artifacts for agents and the notifications feed.
 
-## 3. ☐ Structured human-review triggers enforced at the proxy (authority)
+## 3. ☑ Structured human-review triggers enforced at the proxy (PR: `feat/agent-review-triggers`)
 
 The article's central claim: "authority limits enforced technically".
 `humanReviewTriggers` is free-text JSON that feeds the AI review and the
 detail page; nothing evaluates it at runtime.
 
-Proposed:
+Shipped:
 
-- Structured trigger grammar: `{ tool, argumentPath, op, value }`,
-  `{ dataClass }`, `{ connectedSystem }`, evaluated against `tool_use` /
-  `mcp_call` input arguments in both proxies, reusing the monitor/enforce
-  pattern and the `PolicyDenial` sink from `mcp-tool-governance.ts`.
-- Enforce mode for a matched trigger returns 403 with a `human_review_required`
-  violation and raises a HIGH alert; monitor mode records a dry-run denial.
-- Migrate existing free-text triggers to a `{ note }` entry so nothing is lost.
+- Grammar in `src/lib/human-review-triggers.ts` (mirrored): `tool`,
+  `tool_argument` (dot path + op + value, numeric coercion), `sensitive_data`
+  (proxy detector over the arguments, optional categories), `note`. Legacy
+  free text is normalised into notes on read and on save.
+- `ObservedToolUse.input` on every path: non-streaming extractors plus
+  streaming accumulators for Anthropic (`input_json_delta`) and OpenAI (chat
+  `tool_calls` fragments, Responses `output_item.done`).
+- Monitor: dry-run `PolicyDenial` (`human_review_required`) + HIGH alert
+  (`human_review_trigger`), `AgentToolCall.reviewRequired` flagged. Enforce:
+  response withheld with 403 `human_review_required`; streams are buffered
+  and either withheld or replayed. Both proxies, Anthropic + OpenAI/Azure
+  OpenAI, streaming and non-streaming. Gemini/Bedrock not yet.
+- Form editor and a Human Review card on the agent page with recent matches;
+  approval gate recommends Enforce for HITL/HOTL agents that only monitor.
+
+Not done: a "pending review" queue where a reviewer approves a withheld call
+and the agent resumes. Today the reviewer acts via the alert (adjust the
+trigger, resume/suspend the agent, re-run). Candidate for item 4.
 
 ## 4. ☐ Ownership, escalation, incidents and retirement
 

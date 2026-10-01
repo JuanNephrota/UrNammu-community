@@ -18,7 +18,9 @@ export const HELP_HINTS = {
   autonomy_level:
     "FULL_AUTONOMY (no human) → SUPERVISED (human monitors) → HUMAN_IN_THE_LOOP (human approves each action) → HUMAN_ON_THE_LOOP (human can override) → MANUAL (human-driven, agent assists).",
   human_review_triggers:
-    "JSON list of conditions that force a human step (e.g. 'amount > 1000', 'contains PII'). Feeds the AI risk review.",
+    "Conditions that force a human step, evaluated by both proxies against the arguments of every tool call the model makes: any call of a tool, an argument compared to a value (amount > 1000), or arguments containing sensitive data. Notes are informational only.",
+  human_review_enforcement:
+    "Monitor records a dry-run denial and raises a HIGH alert when a trigger matches, but forwards the response. Enforce holds the whole response (streams are buffered) and returns 403 human_review_required, halting the agent until a person acts.",
   connected_systems:
     "Which AI systems this agent acts on top of. Used for risk inheritance and telemetry attribution.",
 

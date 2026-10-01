@@ -12,8 +12,10 @@
  *  - Models the proxy only READS may declare a subset of the main schema's
  *    columns, but every declared column must match.
  *  - Enums present in both schemas must list the same values in order.
- *  - The proxy may read a Postgres enum column as a plain String (it does
- *    this for Policy.status) — that is treated as compatible.
+ *  - An enum column must be declared with the mirrored enum on both sides.
+ *    Declaring it as String does NOT work: Prisma rejects the read at runtime
+ *    (P2032 "expected non-nullable type String, found incompatible value"),
+ *    which took the Azure proxy's agent loader down in Sept 2026.
  *
  * Run: node scripts/check-schema-drift.mjs   (also wired into CI)
  */
@@ -78,16 +80,8 @@ function scalarFields(body, schema) {
   return fields;
 }
 
-function typesCompatible(mainType, proxyType, mainEnums) {
-  if (mainType === proxyType) return true;
-  // The proxy may read a Postgres enum column as a plain String.
-  const optional = (t) => t.endsWith("?");
-  const base = (t) => t.replace(/[[\]?]/g, "");
-  return (
-    base(proxyType) === "String" &&
-    mainEnums.has(base(mainType)) &&
-    optional(mainType) === optional(proxyType)
-  );
+function typesCompatible(mainType, proxyType) {
+  return mainType === proxyType;
 }
 
 const main = parse(mainSrc);
@@ -111,7 +105,7 @@ for (const name of [...WRITE_MODELS, ...READ_MODELS]) {
       errors.push(
         `${name}.${field}: declared in ai-proxy schema but not in main schema`
       );
-    } else if (!typesCompatible(mainFields.get(field), type, main.enums)) {
+    } else if (!typesCompatible(mainFields.get(field), type)) {
       errors.push(
         `${name}.${field}: type mismatch (main: ${mainFields.get(field)}, ai-proxy: ${type})`
       );

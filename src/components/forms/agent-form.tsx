@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AutonomyHelpTooltip } from "@/components/ui/autonomy-tooltip";
 import { HelpHint } from "@/components/help/help-hint";
+import { HumanReviewTriggersEditor } from "@/components/agents/human-review-triggers-editor";
+import { normalizeHumanReviewTriggers, type HumanReviewTrigger } from "@/lib/human-review-triggers";
 
 interface AgentFormProps {
   initialData?: {
@@ -37,6 +39,8 @@ interface AgentFormProps {
     requireLegalApproval?: boolean;
     requireComplianceApproval?: boolean;
     reviewIntervalDays?: number;
+    humanReviewTriggers?: unknown;
+    humanReviewEnforcement?: string;
   };
   systems: { id: string; name: string }[];
 }
@@ -61,6 +65,12 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
   const [outOfScope, setOutOfScope] = useState<string[]>(initialData?.outOfScopeActions ?? []);
   const [inScopeInput, setInScopeInput] = useState("");
   const [outOfScopeInput, setOutOfScopeInput] = useState("");
+  const [reviewTriggers, setReviewTriggers] = useState<HumanReviewTrigger[]>(() =>
+    normalizeHumanReviewTriggers(initialData?.humanReviewTriggers)
+  );
+  const [reviewEnforcement, setReviewEnforcement] = useState<"monitor" | "enforce">(
+    initialData?.humanReviewEnforcement === "enforce" ? "enforce" : "monitor"
+  );
 
   const isEditing = !!initialData?.id;
 
@@ -96,6 +106,8 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
       requireLegalApproval: formData.get("requireLegalApproval") === "on",
       requireComplianceApproval: formData.get("requireComplianceApproval") === "on",
       reviewIntervalDays: Number(formData.get("reviewIntervalDays") || 365),
+      humanReviewTriggers: reviewTriggers,
+      humanReviewEnforcement: reviewEnforcement,
     };
 
     try {
@@ -219,6 +231,29 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
               <option value="false">No</option>
             </select>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card id="human-review" className="scroll-mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            Human Review Triggers
+            <HelpHint hint="human_review_triggers" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-[var(--text-muted)]">
+            Both proxies check every tool call the model makes against these triggers, using the call&apos;s
+            arguments. Tool patterns accept <code className="rounded bg-[var(--bg-elevated)] px-1 py-0.5 text-[var(--accent)]">tool</code>,{" "}
+            <code className="rounded bg-[var(--bg-elevated)] px-1 py-0.5 text-[var(--accent)]">server/tool</code>,{" "}
+            <code className="rounded bg-[var(--bg-elevated)] px-1 py-0.5 text-[var(--accent)]">server/*</code> and wildcards.
+          </p>
+          <HumanReviewTriggersEditor
+            value={reviewTriggers}
+            onChange={setReviewTriggers}
+            enforcement={reviewEnforcement}
+            onEnforcementChange={setReviewEnforcement}
+          />
         </CardContent>
       </Card>
 

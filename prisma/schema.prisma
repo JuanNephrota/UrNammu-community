@@ -324,7 +324,12 @@ model AIAgent {
   autonomyLevel       AutonomyLevel  @default(HUMAN_IN_THE_LOOP)
   connectedSystems    Json           @default("[]")
   humanReviewRequired Boolean        @default(true)
-  humanReviewTriggers Json?
+  // Structured triggers (src/lib/human-review-triggers.ts). Both proxies
+  // evaluate them against the arguments of every tool call the model makes.
+  // "monitor" records a dry-run denial + alert; "enforce" withholds the
+  // response (403 human_review_required) when a trigger matches.
+  humanReviewTriggers    Json?
+  humanReviewEnforcement String @default("monitor")
   riskLevel           RiskLevel      @default(MEDIUM)
   status              AISystemStatus @default(DRAFT)
   department          String?
@@ -1289,6 +1294,8 @@ model AgentToolCall {
   toolName   String
   /// Allowlist verdict at call time; true when no allowlist is configured.
   approved   Boolean  @default(true)
+  /// A human-review trigger matched this call (see AIAgent.humanReviewTriggers).
+  reviewRequired Boolean @default(false)
   requestId  String?
   userEmail  String?
   department String?
