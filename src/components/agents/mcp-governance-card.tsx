@@ -35,6 +35,8 @@ export function McpGovernanceCard({
     connectedSystems: string[];
     capabilities: string[];
     aiSystem: { id: string; name: string } | null;
+    /** Servers allowed via the org catalog (not in the agent's own list). */
+    inheritedServers?: string[];
   };
   profiles: ToolProfileRow[];
   stats: { calls30d: number; unapproved30d: number; lastCallAt: Date | string | null };
@@ -43,7 +45,8 @@ export function McpGovernanceCard({
   const servers = profiles.filter((p) => p.kind === "mcp_server");
   const tools = profiles.filter((p) => p.kind !== "mcp_server");
   const unapprovedProfiles = tools.filter((p) => !p.approved);
-  const configured = agent.mcpServerAllowlist.length > 0 || agent.mcpToolAllowlist.length > 0;
+  const inherited = agent.inheritedServers ?? [];
+  const configured = agent.mcpServerAllowlist.length > 0 || agent.mcpToolAllowlist.length > 0 || inherited.length > 0;
 
   const blastRadius = [
     { label: "Access level", value: agent.accessLevel },
@@ -105,7 +108,7 @@ export function McpGovernanceCard({
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               Allowed MCP servers
             </p>
-            {agent.mcpServerAllowlist.length === 0 ? (
+            {agent.mcpServerAllowlist.length === 0 && inherited.length === 0 ? (
               <p className="text-xs text-[var(--text-muted)]">
                 Not configured — every declared server is accepted and recorded.
               </p>
@@ -114,6 +117,15 @@ export function McpGovernanceCard({
                 {agent.mcpServerAllowlist.map((s) => (
                   <span key={s} className="rounded-full bg-[var(--success-dim)] px-2.5 py-0.5 font-mono text-[11px] text-[var(--success-strong)]">
                     {s}
+                  </span>
+                ))}
+                {inherited.map((s) => (
+                  <span
+                    key={`catalog-${s}`}
+                    title="Inherited from the org-approved MCP catalog"
+                    className="rounded-full border border-dashed border-[var(--accent-border)] bg-[var(--accent-faint)] px-2.5 py-0.5 font-mono text-[11px] text-[var(--accent)]"
+                  >
+                    {s} · catalog
                   </span>
                 ))}
               </div>

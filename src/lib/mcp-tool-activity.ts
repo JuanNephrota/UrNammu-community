@@ -12,6 +12,7 @@ import {
   dedupeToolUses,
   evaluateToolUses,
   isServerAllowed,
+  mergeCatalogIntoConfig,
   normalizeEnforcement,
   scopeKeyFor,
   toolLabel,
@@ -58,6 +59,11 @@ export function agentEnforcesReview(agent: AgentGovernance | null): agent is Age
   );
 }
 
+/** Active org-approved MCP catalog entries (server + tool patterns). */
+export async function loadActiveCatalog(): Promise<Array<{ server: string; tools: string[] }>> {
+  return prisma.mcpCatalogEntry.findMany({ where: { active: true }, select: { server: true, tools: true } });
+}
+
 export async function loadAgentGovernance(agentId: string | null): Promise<AgentGovernance | null> {
   if (!agentId) return null;
   try {
@@ -74,20 +80,23 @@ export async function loadAgentGovernance(agentId: string | null): Promise<Agent
         suspendedAt: true,
         humanReviewTriggers: true,
         humanReviewEnforcement: true,
+        inheritMcpCatalog: true,
       },
     });
     if (!agent) return null;
+    const own = {
+      serverAllowlist: agent.mcpServerAllowlist,
+      toolAllowlist: agent.mcpToolAllowlist,
+      enforcement: normalizeEnforcement(agent.mcpEnforcement),
+    };
+    const config = agent.inheritMcpCatalog ? mergeCatalogIntoConfig(own, await loadActiveCatalog()) : own;
     return {
       id: agent.id,
       name: agent.name,
       aiSystemId: agent.aiSystemId,
       status: agent.status,
       suspendedAt: agent.suspendedAt,
-      config: {
-        serverAllowlist: agent.mcpServerAllowlist,
-        toolAllowlist: agent.mcpToolAllowlist,
-        enforcement: normalizeEnforcement(agent.mcpEnforcement),
-      },
+      config,
       review: {
         triggers: normalizeHumanReviewTriggers(agent.humanReviewTriggers),
         enforcement: normalizeReviewEnforcement(agent.humanReviewEnforcement),

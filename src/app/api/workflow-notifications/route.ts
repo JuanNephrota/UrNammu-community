@@ -47,7 +47,7 @@ export async function GET() {
         include: { aiSystem: { select: { name: true } } },
       }),
       prisma.alert.findMany({
-        where: { source: "system_drift", status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+        where: { source: { in: ["system_drift", "agent_behavior_drift"] }, status: { in: ["OPEN", "ACKNOWLEDGED"] } },
         orderBy: { createdAt: "desc" },
         take: 5,
       }),

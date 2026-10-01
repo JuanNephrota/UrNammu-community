@@ -59,6 +59,7 @@ export default async function EditAgentPage({
           technicalOwnerId: agent.technicalOwnerId,
           riskOwnerId: agent.riskOwnerId,
           escalationContact: agent.escalationContact,
+          inheritMcpCatalog: agent.inheritMcpCatalog,
         }}
         systems={systems}
         users={users}

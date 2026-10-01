@@ -9,7 +9,12 @@
  */
 
 import { prisma } from "./db";
-import { normalizeEnforcement, type McpGovernanceConfig } from "./mcp-tool-governance";
+import {
+  mergeCatalogIntoConfig,
+  normalizeEnforcement,
+  type McpCatalogEntryLike,
+  type McpGovernanceConfig,
+} from "./mcp-tool-governance";
 import {
   normalizeHumanReviewTriggers,
   normalizeReviewEnforcement,
@@ -34,6 +39,26 @@ type CacheEntry = { value: LoadedAgent | null; expiresAt: number };
 const AGENT_TTL_MS = 30_000;
 const agentCache = new Map<string, CacheEntry>();
 
+const CATALOG_TTL_MS = 60_000;
+let catalogCache: { value: McpCatalogEntryLike[]; expiresAt: number } | null = null;
+
+/** Active org-approved MCP catalog, cached; same fail-closed contract as the agent. */
+async function loadCatalog(): Promise<McpCatalogEntryLike[]> {
+  const now = Date.now();
+  if (catalogCache && catalogCache.expiresAt > now) return catalogCache.value;
+  try {
+    const rows = await prisma.mcpCatalogEntry.findMany({ where: { active: true }, select: { server: true, tools: true } });
+    catalogCache = { value: rows, expiresAt: now + CATALOG_TTL_MS };
+    return rows;
+  } catch (err) {
+    if (catalogCache) {
+      console.error("loadCatalog: DB error, serving stale cached catalog:", err);
+      return catalogCache.value;
+    }
+    throw err;
+  }
+}
+
 export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
   const now = Date.now();
   const cached = agentCache.get(agentId);
@@ -54,6 +79,7 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
         suspendedAt: true,
         humanReviewTriggers: true,
         humanReviewEnforcement: true,
+        inheritMcpCatalog: true,
       },
     });
   } catch (err) {
@@ -64,18 +90,26 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
     throw err;
   }
 
-  const value: LoadedAgent | null = row
+  const ownConfig: McpGovernanceConfig | null = row
+    ? {
+        serverAllowlist: row.mcpServerAllowlist,
+        toolAllowlist: row.mcpToolAllowlist,
+        enforcement: normalizeEnforcement(row.mcpEnforcement),
+      }
+    : null;
+  // Org catalog: merged when the agent inherits it. Loaded only then, and
+  // failing closed like the agent row itself.
+  const config =
+    row && ownConfig && row.inheritMcpCatalog ? mergeCatalogIntoConfig(ownConfig, await loadCatalog()) : ownConfig;
+
+  const value: LoadedAgent | null = row && config
     ? {
         id: row.id,
         name: row.name,
         aiSystemId: row.aiSystemId,
         status: row.status,
         suspendedAt: row.suspendedAt,
-        config: {
-          serverAllowlist: row.mcpServerAllowlist,
-          toolAllowlist: row.mcpToolAllowlist,
-          enforcement: normalizeEnforcement(row.mcpEnforcement),
-        },
+        config,
         review: {
           triggers: normalizeHumanReviewTriggers(row.humanReviewTriggers),
           enforcement: normalizeReviewEnforcement(row.humanReviewEnforcement),
@@ -89,4 +123,5 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
 
 export function __clearAgentCache() {
   agentCache.clear();
+  catalogCache = null;
 }

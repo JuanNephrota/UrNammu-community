@@ -246,6 +246,7 @@ model User {
   technicalOwnedAgents   AIAgent[] @relation("AgentTechnicalOwner")
   riskOwnedAgents        AIAgent[] @relation("AgentRiskOwner")
   retiredAgents          AIAgent[] @relation("AgentRetiredBy")
+  mcpCatalogApprovals    McpCatalogEntry[] @relation("McpCatalogApprovedBy")
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
   syncRuns     ProviderSyncRun[]
@@ -380,6 +381,11 @@ model AIAgent {
   mcpServerAllowlist String[] @default([])
   mcpToolAllowlist   String[] @default([])
   mcpEnforcement     String   @default("monitor")
+  // When true the org-wide approved catalog (McpCatalogEntry) is merged into
+  // this agent's allowlists at the proxy. Existing agents default to false so
+  // adding the first catalog entry never changes their behaviour; new agents
+  // inherit by default (validation schema).
+  inheritMcpCatalog  Boolean  @default(false)
 
   // Kill switch. While `suspendedAt` is set both proxies refuse requests that
   // carry this agent's x-agent-id (403, recorded as an enforced PolicyDenial).
@@ -394,12 +400,52 @@ model AIAgent {
   approvals         AgentApproval[]
   governanceReviews AgentGovernanceReview[]
   incidents         GovernanceIncident[]
+  behaviorBaseline  AgentBehaviorBaseline?
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
   discoveries  DiscoveredAgent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Org-wide approved MCP servers (and optionally tools) that agents with
+// `inheritMcpCatalog` pick up at the proxy. Same pattern grammar as the
+// per-agent allowlists; see mergeCatalogIntoConfig() in mcp-tool-governance.ts.
+model McpCatalogEntry {
+  id           String   @id @default(cuid())
+  /// Server name, host, URL or wildcard pattern.
+  server       String   @unique
+  /// Tool names allowed on this server; empty = every tool.
+  tools        String[] @default([])
+  label        String?
+  notes        String?  @db.Text
+  active       Boolean  @default(true)
+  approvedBy   User?    @relation("McpCatalogApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([active])
+}
+
+// Per-agent behavioural baseline over a trailing window, plus the drift
+// findings from the latest evaluation. Computed by /api/cron/agent-baselines
+// (daily) and on demand; see src/lib/agent-baseline.ts.
+model AgentBehaviorBaseline {
+  id              String   @id @default(cuid())
+  agent           AIAgent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId         String   @unique
+  windowDays      Int      @default(28)
+  activeDays      Int      @default(0)
+  computedAt      DateTime
+  /// AgentBaselineStats
+  stats           Json
+  lastEvaluatedAt DateTime?
+  /// DriftFinding[] from the latest evaluation
+  lastFindings    Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 // Agent-scoped twins of SystemApproval / GovernanceReview. Kept separate rather

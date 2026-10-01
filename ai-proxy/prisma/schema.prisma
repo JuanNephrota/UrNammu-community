@@ -130,9 +130,21 @@ model AIAgent {
   suspendedAt        DateTime?
   humanReviewTriggers    Json?
   humanReviewEnforcement String @default("monitor")
+  inheritMcpCatalog      Boolean @default(false)
 
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
+}
+
+// Read-only mirror; the main app owns writes. Merged into an agent's
+// allowlists when `inheritMcpCatalog` is set.
+model McpCatalogEntry {
+  id     String   @id @default(cuid())
+  server String   @unique
+  tools  String[] @default([])
+  active Boolean  @default(true)
+
+  @@index([active])
 }
 
 model AgentToolCall {

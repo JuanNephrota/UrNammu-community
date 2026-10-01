@@ -135,18 +135,28 @@ Shipped:
 Not done (still open): agent evidence artifacts, and a "pending review"
 queue for calls withheld by a review trigger.
 
-## 5. ☐ Behavioural baselines and a shared approved-tool catalog
+## 5. ☑ Behavioural baselines and a shared approved-tool catalog (PR: `feat/agent-baselines-catalog`)
 
 The article: "abnormal pattern identification"; "find and reuse … approved
 agents and tools".
 
-Proposed:
+Shipped:
 
-- Per-agent baseline from `AgentToolCall` and `APIUsageLog` (volume, model
-  set, hours of activity, denial rate) with drift alerts; new-tool alerts
-  already exist.
-- Org-level approved MCP server/tool catalog in `mcp-server-registry.ts` that
-  agents inherit, with per-agent narrowing.
+- `AgentBehaviorBaseline` per agent: 28-day stats (requests and tool calls
+  per day, denial/review rate, models, tools, callers, active UTC hours) from
+  `APIUsageLog` (`promptMetadata.agentId`) and `AgentToolCall`; daily cron +
+  on-demand recompute; drift findings (volume/tool-call spike, denial-rate
+  jump = HIGH; new model, new caller, off-hours = MEDIUM) once 7 active days
+  exist; `agent_behavior_drift` alerts feed the notifications bell; Behaviour
+  Baseline card on the agent page.
+- `McpCatalogEntry` org catalog managed on Oversight → MCP Activity, applied
+  at both proxies for agents with `inheritMcpCatalog` (default off for
+  existing agents, on for new ones). Lives in the DB rather than
+  `mcp-server-registry.ts`, which stays the static "recognised servers" list
+  for discovery scoring. Tool lists narrow only agents with their own tool
+  allowlist (reason in the user guide).
+
+Not done: a per-agent "approve for all agents" shortcut from the MCP card.
 
 ## 6. ☐ Agent governance posture card
 

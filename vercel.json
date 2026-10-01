@@ -1,35 +1,132 @@
 {
   "crons": [
-    { "path": "/api/cron/provider-sync/anthropic", "schedule": "0 * * * *" },
-    { "path": "/api/cron/provider-sync/claude_code", "schedule": "3 * * * *" },
-    { "path": "/api/cron/provider-sync/cursor", "schedule": "6 * * * *" },
-    { "path": "/api/cron/provider-sync/gemini", "schedule": "9 * * * *" },
-    { "path": "/api/cron/provider-sync/openai", "schedule": "12 * * * *" },
-    { "path": "/api/cron/provider-sync/openrouter", "schedule": "15 * * * *" },
-    { "path": "/api/cron/provider-sync/helicone", "schedule": "18 * * * *" },
-    { "path": "/api/cron/provider-sync/portkey", "schedule": "21 * * * *" },
-    { "path": "/api/cron/provider-sync/litellm", "schedule": "24 * * * *" },
-    { "path": "/api/cron/provider-sync/chatgpt_enterprise", "schedule": "27 * * * *" },
-    { "path": "/api/cron/provider-sync/github_copilot", "schedule": "33 * * * *" },
-    { "path": "/api/cron/provider-sync/anthropic_compliance", "schedule": "36 * * * *" },
-    { "path": "/api/cron/provider-sync/claude_enterprise", "schedule": "57 * * * *" },
-    { "path": "/api/cron/discovery-scan/google_workspace", "schedule": "30 * * * *" },
-    { "path": "/api/cron/discovery-scan/microsoft_365", "schedule": "35 * * * *" },
-    { "path": "/api/cron/discovery-scan/hexnode", "schedule": "40 * * * *" },
-    { "path": "/api/cron/discovery-scan/crowdstrike", "schedule": "45 * * * *" },
-    { "path": "/api/cron/discovery-scan/agent_platforms", "schedule": "42 * * * *" },
-    { "path": "/api/cron/governance-automation", "schedule": "50 * * * *" },
-    { "path": "/api/cron/agent-discovery", "schedule": "52 * * * *" },
-    { "path": "/api/cron/key-usage-rules", "schedule": "55 * * * *" },
-    { "path": "/api/cron/endpoint-agent-sweep", "schedule": "58 * * * *" },
-    { "path": "/api/cron/directory-sync/google_workspace", "schedule": "10 4 * * *" },
-    { "path": "/api/cron/directory-sync/microsoft_365", "schedule": "20 4 * * *" },
-    { "path": "/api/cron/prune-claude-code-metrics", "schedule": "23 3 * * *" },
-    { "path": "/api/cron/prune-cursor-metrics", "schedule": "31 3 * * *" },
-    { "path": "/api/cron/prune-collection", "schedule": "45 3 * * *" },
-    { "path": "/api/cron/run-report-schedules", "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/sensitive-scan", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/provider-security-scan", "schedule": "0 7 * * *" },
-    { "path": "/api/cron/proxy-health", "schedule": "*/15 * * * *" }
+    {
+      "path": "/api/cron/provider-sync/anthropic",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/claude_code",
+      "schedule": "3 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/cursor",
+      "schedule": "6 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/gemini",
+      "schedule": "9 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/openai",
+      "schedule": "12 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/openrouter",
+      "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/helicone",
+      "schedule": "18 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/portkey",
+      "schedule": "21 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/litellm",
+      "schedule": "24 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/chatgpt_enterprise",
+      "schedule": "27 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/github_copilot",
+      "schedule": "33 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/anthropic_compliance",
+      "schedule": "36 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-sync/claude_enterprise",
+      "schedule": "57 * * * *"
+    },
+    {
+      "path": "/api/cron/discovery-scan/google_workspace",
+      "schedule": "30 * * * *"
+    },
+    {
+      "path": "/api/cron/discovery-scan/microsoft_365",
+      "schedule": "35 * * * *"
+    },
+    {
+      "path": "/api/cron/discovery-scan/hexnode",
+      "schedule": "40 * * * *"
+    },
+    {
+      "path": "/api/cron/discovery-scan/crowdstrike",
+      "schedule": "45 * * * *"
+    },
+    {
+      "path": "/api/cron/discovery-scan/agent_platforms",
+      "schedule": "42 * * * *"
+    },
+    {
+      "path": "/api/cron/governance-automation",
+      "schedule": "50 * * * *"
+    },
+    {
+      "path": "/api/cron/agent-discovery",
+      "schedule": "52 * * * *"
+    },
+    {
+      "path": "/api/cron/key-usage-rules",
+      "schedule": "55 * * * *"
+    },
+    {
+      "path": "/api/cron/endpoint-agent-sweep",
+      "schedule": "58 * * * *"
+    },
+    {
+      "path": "/api/cron/directory-sync/google_workspace",
+      "schedule": "10 4 * * *"
+    },
+    {
+      "path": "/api/cron/directory-sync/microsoft_365",
+      "schedule": "20 4 * * *"
+    },
+    {
+      "path": "/api/cron/prune-claude-code-metrics",
+      "schedule": "23 3 * * *"
+    },
+    {
+      "path": "/api/cron/prune-cursor-metrics",
+      "schedule": "31 3 * * *"
+    },
+    {
+      "path": "/api/cron/prune-collection",
+      "schedule": "45 3 * * *"
+    },
+    {
+      "path": "/api/cron/run-report-schedules",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/sensitive-scan",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/provider-security-scan",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/proxy-health",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/agent-baselines",
+      "schedule": "15 5 * * *"
+    }
   ]
 }

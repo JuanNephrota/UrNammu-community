@@ -535,6 +535,51 @@ export function isToolAllowed(use: ObservedToolUse, config: McpGovernanceConfig)
   });
 }
 
+// ─── Org catalog ───────────────────────────────────────────────────────────
+
+export type McpCatalogEntryLike = {
+  /** Server name, host, URL or wildcard pattern (allowlist grammar). */
+  server: string;
+  /** Tool names allowed on that server; empty = every tool. */
+  tools: string[];
+};
+
+/**
+ * Merge the org-wide approved catalog into an agent's own allowlists.
+ *
+ * Servers are additive: every catalog server is allowed for the agent. When
+ * the agent has no server allowlist of its own, the catalog BECOMES its
+ * allowlist (that is the point of inheriting: unlisted servers are then
+ * unapproved).
+ *
+ * Tool restrictions from the catalog apply only when the agent already keeps
+ * a tool allowlist, where `server/tool` entries are purely additive. An agent
+ * with no tool allowlist keeps "any tool on an allowed server": turning the
+ * catalog's tool lists into a restriction there would also have to spell out
+ * `server/*` for the agent's own servers, which cannot be done for host or
+ * URL patterns, so such agents would start denying tools on their own
+ * servers. Predictable beats clever here.
+ */
+export function mergeCatalogIntoConfig(
+  own: McpGovernanceConfig,
+  catalog: McpCatalogEntryLike[]
+): McpGovernanceConfig {
+  const entries = catalog.filter((e) => e.server.trim());
+  if (entries.length === 0) return own;
+  const servers = new Set(own.serverAllowlist.map((s) => s.trim()).filter(Boolean));
+  for (const e of entries) servers.add(e.server.trim());
+
+  const tools = new Set(own.toolAllowlist.map((t) => t.trim()).filter(Boolean));
+  if (tools.size > 0) {
+    for (const e of entries) {
+      const server = e.server.trim();
+      if (e.tools.length === 0) tools.add(`${server}/*`);
+      else for (const t of e.tools) if (t.trim()) tools.add(`${server}/${t.trim()}`);
+    }
+  }
+  return { serverAllowlist: [...servers], toolAllowlist: [...tools], enforcement: own.enforcement };
+}
+
 export function evaluateServers(servers: DeclaredMcpServer[], config: McpGovernanceConfig): ServerVerdict[] {
   return servers.map((server) => ({ server, allowed: isServerAllowed(server, config.serverAllowlist) }));
 }

@@ -34,6 +34,10 @@ export const HELP_HINTS = {
     "Purpose, the actions the agent may and may not take, the limits it must stay within, and how success is measured. Required before approval; reviewers and the AI risk review read it.",
   agent_approval_stages:
     "Which stakeholders must sign off before this agent can be approved. Owner, Security and Compliance are on by default; Legal is off. Approval restarts the review interval.",
+  mcp_catalog:
+    "Org-wide approved MCP servers (Oversight → MCP Activity). Agents that inherit the catalog get every server here on their allowlist; tool lists narrow only agents that keep their own tool allowlist. Both proxies apply it within a minute.",
+  agent_baseline:
+    "What normal looks like for this agent over the last 28 days of attributed proxy traffic: requests and tool calls per day, denial rate, models, callers and active hours. Recomputed daily; the last 24 hours are compared against it and departures raise agent_behavior_drift alerts once there are 7 active days of history.",
   agent_accountability:
     "Business owner (outcomes), technical owner (runs it), risk owner (signs off risk, decides on incidents) and the escalation contact paged when a review trigger fires or an incident opens. Risk owner is recommended for HIGH/CRITICAL agents; escalation contact for agents acting without a human in the loop.",
   agent_retirement:

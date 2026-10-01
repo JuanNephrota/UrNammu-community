@@ -86,6 +86,14 @@ Four roles per agent: the **business owner** (whoever registered it; accountable
 - The Azure proxy caches agent state for 30 seconds, so a suspension takes effect within that window; the Vercel proxy checks every request.
 - A **Traffic blocked at the proxy** banner shows on the detail page while either condition holds, and a **SUSPENDED** badge on the registry card.
 
+## Behaviour baseline
+
+The **Behaviour Baseline** card shows what normal looks like for the agent over the last 28 days of attributed proxy traffic: requests and tool calls per day, denial and review rates, the models, callers and tools seen, and the hours it is active. A daily job recomputes every agent's baseline and compares the last 24 hours against it; once an agent has 7 active days of history, departures raise `agent_behavior_drift` alerts: request or tool-call volume spikes and denial-rate jumps are HIGH; a new model, a new caller or activity outside the usual hours are MEDIUM. **Recompute** rebuilds the baseline now, for example after a deliberate change in how the agent runs.
+
+## Org-approved MCP catalog
+
+**Oversight → MCP Activity → Approved MCP catalog** lists servers (and optionally tools) approved once for every agent that has **Inherit the org-approved MCP catalog** ticked on its form. Inherited servers show on the agent's MCP card with a dashed "catalog" chip, and both proxies apply the catalog within a minute. Tool lists in the catalog narrow only agents that keep their own tool allowlist; agents without one get every tool on a catalog server. Existing agents do not inherit until the box is ticked; new agents inherit by default.
+
 ## Discovered agents
 
 **Agents → Discovered** lists AI agents UrNammu has seen that nobody registered, with the signals that flagged each one and the tools, MCP servers, models and users observed.

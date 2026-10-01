@@ -76,7 +76,7 @@ export function buildWorkflowNotifications(input: {
     ...input.driftAlerts.map((alert) => ({
       id: `drift-${alert.id}`,
       title: alert.title,
-      detail: "A deployed or approved system changed in a way that should be reviewed.",
+      detail: "A system's governance posture or an agent's behaviour changed in a way that should be reviewed.",
       href: "/alerts",
       category: "drift" as const,
       createdAt: alert.createdAt,

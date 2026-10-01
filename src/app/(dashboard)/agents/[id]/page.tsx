@@ -17,6 +17,8 @@ import { HumanReviewCard, type HumanReviewMatchRow } from "@/components/agents/h
 import { AgentAccountabilityCard } from "@/components/agents/agent-accountability-card";
 import { AgentRetireDialog } from "@/components/agents/agent-retire-dialog";
 import { GovernanceIncidentsCard } from "@/components/registry/governance-incidents-card";
+import { AgentBaselineCard } from "@/components/agents/agent-baseline-card";
+import type { AgentBaselineStats, DriftFinding } from "@/lib/agent-baseline";
 import {
   HUMAN_REVIEW_RULE,
   normalizeHumanReviewTriggers,
@@ -82,6 +84,16 @@ export default async function AgentDetailPage({
   const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
   const requiredStages = getAgentRequiredStages(governance.input);
   const retirementChecklist = getAgentRetirementChecklist(governance.retirement);
+  const baselineRow = governance.agent.behaviorBaseline;
+  const baseline = baselineRow
+    ? {
+        stats: baselineRow.stats as unknown as AgentBaselineStats,
+        activeDays: baselineRow.activeDays,
+        computedAt: baselineRow.computedAt,
+        lastEvaluatedAt: baselineRow.lastEvaluatedAt,
+        findings: (Array.isArray(baselineRow.lastFindings) ? baselineRow.lastFindings : []) as unknown as DriftFinding[],
+      }
+    : null;
   const showRetirement = agent.status === "RETIRED" || agent.status === "DEPRECATED" || Boolean(agent.retiredAt);
   const incidents = await prisma.governanceIncident.findMany({
     where: { agentId: agent.id },
@@ -334,6 +346,9 @@ export default async function AgentDetailPage({
             </div>
           </CardContent>
         </Card>
+        <div className="lg:col-span-2">
+          <AgentBaselineCard agentId={agent.id} baseline={baseline} canOperate={canOperate} />
+        </div>
         <div id="mcp" className="scroll-mt-6 lg:col-span-2">
         <McpGovernanceCard
           agent={{
@@ -346,6 +361,7 @@ export default async function AgentDetailPage({
             connectedSystems: agent.connectedSystems as string[],
             capabilities: agent.capabilities as string[],
             aiSystem: agent.aiSystem ? { id: agent.aiSystem.id, name: agent.aiSystem.name } : null,
+            inheritedServers: governance.inheritedServers,
           }}
           profiles={toolProfiles}
           stats={{ calls30d, unapproved30d, lastCallAt: lastCall?.createdAt ?? null }}

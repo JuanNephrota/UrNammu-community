@@ -7,6 +7,8 @@
 import { prisma } from "./prisma";
 import { type AgentGovernanceInput, type AgentRetirementInput } from "./agent-governance";
 import { isEnforceableTrigger, normalizeHumanReviewTriggers } from "./human-review-triggers";
+import { mergeCatalogIntoConfig, normalizeEnforcement } from "./mcp-tool-governance";
+import { loadActiveCatalog } from "./mcp-tool-activity";
 
 const decidedBy = { select: { name: true, email: true } } as const;
 
@@ -17,6 +19,7 @@ export async function loadAgentGovernance(agentId: string) {
       approvals: { orderBy: { createdAt: "desc" }, include: { decidedByUser: decidedBy } },
       governanceReviews: { orderBy: { createdAt: "desc" }, include: { decidedByUser: decidedBy } },
       aiSystem: { select: { id: true, name: true, _count: { select: { riskAssessments: true } } } },
+      behaviorBaseline: true,
       _count: {
         select: {
           riskReviews: true,
@@ -28,13 +31,24 @@ export async function loadAgentGovernance(agentId: string) {
   if (!agent) return null;
   const triggers = normalizeHumanReviewTriggers(agent.humanReviewTriggers);
 
-  const [unapprovedToolProfiles, observedProfiles, recentCallsCount] = await Promise.all([
+  const [unapprovedToolProfiles, observedProfiles, recentCallsCount, catalog] = await Promise.all([
     prisma.agentToolProfile.count({ where: { agentId, approved: false } }),
     prisma.agentToolProfile.count({ where: { agentId } }),
     prisma.agentToolCall.count({
       where: { agentId, createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
     }),
+    agent.inheritMcpCatalog ? loadActiveCatalog() : Promise.resolve([]),
   ]);
+  // What the proxies actually enforce: the agent's own allowlists plus the
+  // org catalog when inherited.
+  const effective = mergeCatalogIntoConfig(
+    {
+      serverAllowlist: agent.mcpServerAllowlist,
+      toolAllowlist: agent.mcpToolAllowlist,
+      enforcement: normalizeEnforcement(agent.mcpEnforcement),
+    },
+    catalog
+  );
 
   const input: AgentGovernanceInput = {
     id: agent.id,
@@ -55,8 +69,8 @@ export async function loadAgentGovernance(agentId: string) {
     parentRiskAssessmentsCount: agent.aiSystem?._count.riskAssessments ?? 0,
     riskReviewsCount: agent._count.riskReviews,
     mcpEnforcement: agent.mcpEnforcement,
-    mcpServerAllowlist: agent.mcpServerAllowlist,
-    mcpToolAllowlist: agent.mcpToolAllowlist,
+    mcpServerAllowlist: effective.serverAllowlist,
+    mcpToolAllowlist: effective.toolAllowlist,
     unapprovedToolProfiles,
     observedActivity: observedProfiles > 0,
     suspendedAt: agent.suspendedAt,
@@ -84,7 +98,9 @@ export async function loadAgentGovernance(agentId: string) {
     recentCallsCount,
   };
 
-  return { agent, input, retirement };
+  const inheritedServers = catalog.map((c) => c.server).filter((s) => !agent.mcpServerAllowlist.includes(s));
+
+  return { agent, input, retirement, inheritedServers };
 }
 
 export type LoadedAgentGovernance = NonNullable<Awaited<ReturnType<typeof loadAgentGovernance>>>;

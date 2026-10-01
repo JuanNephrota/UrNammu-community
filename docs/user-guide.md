@@ -19,6 +19,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [MCP Tool Governance](#mcp-tool-governance)
    - [Kill Switch](#kill-switch)
    - [Accountability, Incidents and Retirement](#accountability-incidents-and-retirement)
+   - [Behaviour Baselines and the Approved MCP Catalog](#behaviour-baselines-and-the-approved-mcp-catalog)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
    - [Framework Control Catalog & Crosswalk](#framework-control-catalog--crosswalk)
@@ -430,6 +431,27 @@ The playbook asks who owns an agent's outcomes, who is called when it misbehaves
 6. Record the retirement.
 
 **Notifications.** The bell now also carries agent approval decisions, overdue agent reviews, open agent incidents and open human-review trigger alerts, each linking to the agent page.
+
+### Behaviour Baselines and the Approved MCP Catalog
+
+The playbook's monitoring phase asks for "abnormal pattern identification" and a governed catalog of approved tools.
+
+**Behaviour baselines.** A daily job (`/api/cron/agent-baselines`, 05:15 UTC) builds a 28-day baseline for every agent with attributed proxy traffic and judges the last 24 hours against it. Only active days count, so a weekday-only agent is not compared with its own weekends. Drift is reported once the baseline has **7 active days**.
+
+| Signal | Rule | Severity |
+|---|---|---|
+| Request volume spike | > mean + 3σ and ≥ 2× mean (floor 10) | HIGH |
+| Tool-call volume spike | same rule on tool calls | HIGH |
+| Allowlist denial rate | ≥ 5 denials and rate > baseline + 20 points | HIGH |
+| New model | a model never seen in the baseline | MEDIUM |
+| New caller | a user identity never seen in the baseline | MEDIUM |
+| Off-hours activity | activity in an hour the baseline never showed (skipped for agents active ≥ 19 hours/day) | MEDIUM |
+
+Findings raise `agent_behavior_drift` alerts (deduped 24 h per agent and finding), appear in the notifications bell under *drift*, and are listed on the agent's **Behaviour Baseline** card with the baseline itself. **Recompute** rebuilds the baseline on demand; use it after a deliberate change so the next comparison is against the new normal.
+
+**Approved MCP catalog** (Oversight → MCP Activity → *Approved MCP catalog*). Approve a server once, with the same grammar as the per-agent allowlists (`jira`, `mcp.example.com`, `*.internal.example.com`), optionally listing the tools allowed on it. Every agent with **Inherit the org-approved MCP catalog** ticked gets those servers on its allowlist at both proxies within a minute, shown on its MCP card as dashed "catalog" chips.
+
+Two deliberate rules: existing agents do **not** inherit until the box is ticked (so adding the first catalog entry never changes a running agent), and catalog **tool** lists narrow only agents that keep their own tool allowlist. An agent with no tool allowlist gets every tool on a catalog server, because the alternative would have to spell out `server/*` for the agent's own host- or URL-pattern servers, which the tool grammar cannot express. Withdrawing a server keeps the row for the audit trail and stops it being merged.
 
 ### Discovered Agents
 

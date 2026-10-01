@@ -44,6 +44,7 @@ interface AgentFormProps {
     technicalOwnerId?: string | null;
     riskOwnerId?: string | null;
     escalationContact?: string | null;
+    inheritMcpCatalog?: boolean;
   };
   systems: { id: string; name: string }[];
   users?: { id: string; name: string | null; email: string }[];
@@ -99,6 +100,7 @@ export function AgentForm({ initialData, systems, users = [] }: AgentFormProps) 
       mcpServerAllowlist: mcpServers,
       mcpToolAllowlist: mcpTools,
       mcpEnforcement: (formData.get("mcpEnforcement") as string) || "monitor",
+      inheritMcpCatalog: formData.get("inheritMcpCatalog") === "on",
       // Charter. Empty strings are sent as-is; the API normalises them to null.
       purpose: formData.get("purpose") as string,
       inScopeActions: inScope,
@@ -461,6 +463,18 @@ export function AgentForm({ initialData, systems, users = [] }: AgentFormProps) 
               <option value="enforce">Enforce — block unlisted servers, narrow allowed_tools</option>
             </select>
           </div>
+          <label className="flex items-start gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2 text-sm">
+            <input type="checkbox" name="inheritMcpCatalog" defaultChecked={initialData?.inheritMcpCatalog ?? true} className="mt-0.5 h-4 w-4 accent-[var(--accent)]" />
+            <span>
+              <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
+                Inherit the org-approved MCP catalog
+                <HelpHint hint="mcp_catalog" />
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                Servers approved under Oversight → MCP Activity are allowed for this agent in addition to the lists below.
+              </span>
+            </span>
+          </label>
           <div className="space-y-2">
             <Label className="flex items-center gap-1.5">
               Allowed MCP servers

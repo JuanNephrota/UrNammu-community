@@ -48,6 +48,8 @@ export const createAgentSchema = z.object({
   mcpServerAllowlist: z.array(z.string().trim().min(1).max(200)).max(200).default([]),
   mcpToolAllowlist: z.array(z.string().trim().min(1).max(200)).max(500).default([]),
   mcpEnforcement: z.enum(["monitor", "enforce"]).default("monitor"),
+  // New agents inherit the org catalog; existing rows keep their stored value.
+  inheritMcpCatalog: z.boolean().default(true),
 });
 
 export const updateAgentSchema = createAgentSchema.partial();

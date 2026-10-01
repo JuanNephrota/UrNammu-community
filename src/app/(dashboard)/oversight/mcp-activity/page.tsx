@@ -6,6 +6,9 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
+import { getSession } from "@/lib/auth-guard";
+import { canRunWorkflows } from "@/lib/workflow";
+import { McpCatalogCard } from "@/components/oversight/mcp-catalog-card";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +65,16 @@ export default async function McpActivityPage() {
     : [];
   const systemName = new Map(systems.map((s) => [s.id, s.name]));
 
+  const [session, catalogEntries, inheritingAgents] = await Promise.all([
+    getSession(),
+    prisma.mcpCatalogEntry.findMany({
+      where: { active: true },
+      orderBy: { server: "asc" },
+      include: { approvedBy: { select: { name: true, email: true } } },
+    }),
+    prisma.aIAgent.count({ where: { inheritMcpCatalog: true, status: { not: "RETIRED" } } }),
+  ]);
+  const canEdit = canRunWorkflows(session?.user.role);
   const activeAgents = agents.filter((a) => a._count.toolCalls > 0);
   const unapprovedProfiles = profiles.filter((p) => !p.approved);
 
@@ -83,6 +96,8 @@ export default async function McpActivityPage() {
         <StatCard title="Distinct tools (7d)" value={distinctTools.length} iconName="Activity" variant="default" />
         <StatCard title="Agents active (7d)" value={activeAgents.length} iconName="Bot" variant="default" />
       </div>
+
+      <McpCatalogCard entries={catalogEntries} inheritingAgents={inheritingAgents} canEdit={canEdit} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
