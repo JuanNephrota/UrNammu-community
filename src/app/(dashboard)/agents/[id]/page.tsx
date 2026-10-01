@@ -14,6 +14,9 @@ import { McpGovernanceCard } from "@/components/agents/mcp-governance-card";
 import { AgentKillSwitch } from "@/components/agents/agent-kill-switch";
 import { AgentCharterCard } from "@/components/agents/agent-charter-card";
 import { HumanReviewCard, type HumanReviewMatchRow } from "@/components/agents/human-review-card";
+import { AgentAccountabilityCard } from "@/components/agents/agent-accountability-card";
+import { AgentRetireDialog } from "@/components/agents/agent-retire-dialog";
+import { GovernanceIncidentsCard } from "@/components/registry/governance-incidents-card";
 import {
   HUMAN_REVIEW_RULE,
   normalizeHumanReviewTriggers,
@@ -28,6 +31,7 @@ import {
   getAgentApprovalBlockers,
   getAgentChecklist,
   getAgentRequiredStages,
+  getAgentRetirementChecklist,
   getAgentWorkflowSummary,
 } from "@/lib/agent-governance";
 
@@ -48,6 +52,9 @@ export default async function AgentDetailPage({
     include: {
       owner: { select: { name: true, email: true } },
       suspendedBy: { select: { name: true, email: true } },
+      technicalOwner: { select: { name: true, email: true } },
+      riskOwner: { select: { name: true, email: true } },
+      retiredBy: { select: { name: true, email: true } },
       aiSystem: {
         select: {
           id: true,
@@ -74,6 +81,14 @@ export default async function AgentDetailPage({
   const checklist = getAgentChecklist(governance.input, blockers);
   const governanceReady = workflow.readiness === "ready" || workflow.readiness === "monitored";
   const requiredStages = getAgentRequiredStages(governance.input);
+  const retirementChecklist = getAgentRetirementChecklist(governance.retirement);
+  const showRetirement = agent.status === "RETIRED" || agent.status === "DEPRECATED" || Boolean(agent.retiredAt);
+  const incidents = await prisma.governanceIncident.findMany({
+    where: { agentId: agent.id },
+    orderBy: { openedAt: "desc" },
+    take: 20,
+    include: { openedByUser: { select: { name: true, email: true } } },
+  });
   const reviewTriggers = normalizeHumanReviewTriggers(agent.humanReviewTriggers);
   const reviewEnforcement = normalizeReviewEnforcement(agent.humanReviewEnforcement);
   const reviewDenials = await prisma.policyDenial.findMany({
@@ -119,6 +134,14 @@ export default async function AgentDetailPage({
         {canOperate && (
           <AgentKillSwitch agentId={agent.id} agentName={agent.name} suspended={!!agent.suspendedAt} />
         )}
+        {canOperate && (
+          <AgentRetireDialog
+            agentId={agent.id}
+            agentName={agent.name}
+            retired={agent.status === "RETIRED"}
+            attested={agent.retirementAttested}
+          />
+        )}
         <Link href={`/agents/${agent.id}/edit`}>
           <Button variant="outline">
             <Pencil className="mr-2 h-4 w-4" /> Edit
@@ -160,6 +183,9 @@ export default async function AgentDetailPage({
                 </>
               ) : (
                 <>
+                  {agent.retiredAt
+                    ? `Retired ${formatDateTime(agent.retiredAt)}${agent.retiredBy ? ` by ${agent.retiredBy.name ?? agent.retiredBy.email}` : ""}${agent.retirementAttested ? "; disposal attested" : "; disposal not yet attested"}. `
+                    : ""}
                   Retired agents cannot send traffic through the proxy. Every request carrying{" "}
                   <code className="text-xs">x-agent-id: {agent.id}</code> is refused with 403 and recorded under{" "}
                   <Link href="/compliance/denials" className="text-[var(--accent)] hover:underline">
@@ -182,6 +208,17 @@ export default async function AgentDetailPage({
         twoColumn
       />
 
+      {showRetirement && (
+        <ChecklistCard
+          title="Retirement checklist"
+          description="Controlled shutdown: stop the traffic, prove it stopped, close what is open, revoke the approval, attest disposal, record it."
+          items={retirementChecklist}
+          readOnly={!canOperate}
+          completeMessage="This agent is fully retired: traffic refused, approval revoked, disposal attested and recorded."
+          twoColumn
+        />
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <WorkflowSummaryCard workflow={workflow} status={agent.status} className="lg:col-span-2" />
         <div className="lg:col-span-2">
@@ -194,6 +231,25 @@ export default async function AgentDetailPage({
             enforcement={reviewEnforcement}
             recentMatches={recentReviewMatches}
             canEdit={canOperate}
+          />
+        </div>
+        <AgentAccountabilityCard
+          agent={{
+            id: agent.id,
+            owner: agent.owner,
+            technicalOwner: agent.technicalOwner,
+            riskOwner: agent.riskOwner,
+            escalationContact: agent.escalationContact,
+            riskLevel: agent.riskLevel,
+          }}
+          canEdit={canOperate}
+        />
+        <div id="incidents" className="scroll-mt-6 [&>*]:h-full">
+          <GovernanceIncidentsCard
+            systemId={agent.id}
+            endpoint={`/api/agents/${agent.id}/incidents`}
+            subjectNoun="agent"
+            incidents={incidents}
           />
         </div>
         <div id="approval" className="scroll-mt-6 [&>*]:h-full">

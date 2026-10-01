@@ -5,7 +5,7 @@
  * approval API so both see the same blockers.
  */
 import { prisma } from "./prisma";
-import { type AgentGovernanceInput } from "./agent-governance";
+import { type AgentGovernanceInput, type AgentRetirementInput } from "./agent-governance";
 import { isEnforceableTrigger, normalizeHumanReviewTriggers } from "./human-review-triggers";
 
 const decidedBy = { select: { name: true, email: true } } as const;
@@ -17,15 +17,23 @@ export async function loadAgentGovernance(agentId: string) {
       approvals: { orderBy: { createdAt: "desc" }, include: { decidedByUser: decidedBy } },
       governanceReviews: { orderBy: { createdAt: "desc" }, include: { decidedByUser: decidedBy } },
       aiSystem: { select: { id: true, name: true, _count: { select: { riskAssessments: true } } } },
-      _count: { select: { riskReviews: true } },
+      _count: {
+        select: {
+          riskReviews: true,
+          incidents: { where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } },
+        },
+      },
     },
   });
   if (!agent) return null;
   const triggers = normalizeHumanReviewTriggers(agent.humanReviewTriggers);
 
-  const [unapprovedToolProfiles, observedProfiles] = await Promise.all([
+  const [unapprovedToolProfiles, observedProfiles, recentCallsCount] = await Promise.all([
     prisma.agentToolProfile.count({ where: { agentId, approved: false } }),
     prisma.agentToolProfile.count({ where: { agentId } }),
+    prisma.agentToolCall.count({
+      where: { agentId, createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+    }),
   ]);
 
   const input: AgentGovernanceInput = {
@@ -52,6 +60,10 @@ export async function loadAgentGovernance(agentId: string) {
     unapprovedToolProfiles,
     observedActivity: observedProfiles > 0,
     suspendedAt: agent.suspendedAt,
+    technicalOwnerId: agent.technicalOwnerId,
+    riskOwnerId: agent.riskOwnerId,
+    escalationContact: agent.escalationContact,
+    openIncidentsCount: agent._count.incidents,
     requireOwnerApproval: agent.requireOwnerApproval,
     requireSecurityApproval: agent.requireSecurityApproval,
     requireLegalApproval: agent.requireLegalApproval,
@@ -61,7 +73,18 @@ export async function loadAgentGovernance(agentId: string) {
     nextReviewDate: agent.nextReviewDate,
   };
 
-  return { agent, input };
+  const retirement: AgentRetirementInput = {
+    id: agent.id,
+    status: agent.status,
+    suspendedAt: agent.suspendedAt,
+    retiredAt: agent.retiredAt,
+    retirementAttested: agent.retirementAttested,
+    latestApprovalDecision: input.latestApprovalDecision,
+    openIncidentsCount: agent._count.incidents,
+    recentCallsCount,
+  };
+
+  return { agent, input, retirement };
 }
 
 export type LoadedAgentGovernance = NonNullable<Awaited<ReturnType<typeof loadAgentGovernance>>>;

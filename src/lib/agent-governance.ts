@@ -65,6 +65,13 @@ export type AgentGovernanceInput = {
 
   suspendedAt: Date | string | null;
 
+  /** Accountability (playbook: business / technology / risk roles + escalation). */
+  technicalOwnerId: string | null;
+  riskOwnerId: string | null;
+  escalationContact: string | null;
+  /** OPEN or ACKNOWLEDGED governance incidents referencing this agent. */
+  openIncidentsCount: number;
+
   requireOwnerApproval: boolean;
   requireSecurityApproval: boolean;
   requireLegalApproval: boolean;
@@ -93,7 +100,9 @@ export type AgentBlockerCategory =
   | "parent_system"
   | "stage_review"
   | "review_date"
-  | "mcp_unapproved";
+  | "mcp_unapproved"
+  | "accountability"
+  | "incident";
 
 export type AgentApprovalBlocker = {
   category: AgentBlockerCategory;
@@ -296,6 +305,38 @@ export function getAgentApprovalBlockers(input: AgentGovernanceInput): AgentAppr
     });
   }
 
+  if (input.openIncidentsCount > 0) {
+    blockers.push({
+      category: "incident",
+      title: "Close open incidents",
+      message: `${input.openIncidentsCount} governance incident${input.openIncidentsCount === 1 ? " is" : "s are"} open against this agent. Resolve or dismiss them before approving; suspend the agent if the behaviour must stop now.`,
+      href: `${detailHref}#incidents`,
+      soft: false,
+    });
+  }
+
+  const high = HIGH_TIERS.has(input.riskLevel);
+  const autonomous = input.autonomyLevel === "FULL_AUTONOMY" || input.autonomyLevel === "SUPERVISED";
+  if (high && !input.riskOwnerId) {
+    blockers.push({
+      category: "accountability",
+      title: "Assign a risk owner",
+      message: `${input.riskLevel} risk agent with no risk owner. Name who signs off the risk basis and decides on incidents.`,
+      href: `${editHref}#accountability`,
+      soft: true,
+    });
+  }
+  if (autonomous && !input.escalationContact) {
+    blockers.push({
+      category: "accountability",
+      title: "Set an escalation contact",
+      message:
+        "The agent acts without a human in the loop, but nobody is named to page when a review trigger fires or an incident opens.",
+      href: `${editHref}#accountability`,
+      soft: true,
+    });
+  }
+
   const required = getAgentRequiredStages(input);
   const approved = getAgentApprovedStages(input.governanceReviews);
   const missingStages = required.filter((stage) => !approved.has(stage));
@@ -356,7 +397,11 @@ export function getAgentWorkflowSummary(
   const toAction = (b: AgentApprovalBlocker): GovernanceAction => ({
     label: b.title,
     href: b.href ?? detailHref,
-    tone: b.soft ? "info" : b.category === "suspended" || b.category === "review_date" ? "critical" : "warning",
+    tone: b.soft
+      ? "info"
+      : b.category === "suspended" || b.category === "review_date" || b.category === "incident"
+        ? "critical"
+        : "warning",
   });
   const actions: GovernanceAction[] = [...hard.map(toAction), ...soft.map(toAction)];
   const approved = input.latestApprovalDecision === "APPROVED";
@@ -461,6 +506,20 @@ export function getAgentChecklist(
       optional: true,
     },
     {
+      id: "accountability",
+      label: "Name the accountable people",
+      detail:
+        input.riskOwnerId && input.escalationContact
+          ? "Risk owner and escalation contact are set."
+          : !input.riskOwnerId && !input.escalationContact
+            ? "Assign a risk owner and an escalation contact."
+            : !input.riskOwnerId
+              ? "Assign a risk owner."
+              : "Set an escalation contact.",
+      done: Boolean(input.riskOwnerId && input.escalationContact),
+      href: `${editHref}#accountability`,
+    },
+    {
       id: "controls",
       label: "Match controls to the autonomy level",
       detail: has("autonomy_controls", true)
@@ -514,6 +573,91 @@ export function getAgentChecklist(
       done: input.observedActivity,
       href: `${detailHref}#mcp`,
       optional: true,
+    },
+  ];
+}
+
+// ─── Retirement ────────────────────────────────────────────────────────────
+
+export type AgentRetirementInput = {
+  id: string;
+  status: AISystemStatus;
+  suspendedAt: Date | string | null;
+  retiredAt: Date | string | null;
+  retirementAttested: boolean;
+  latestApprovalDecision: ApprovalDecision | null;
+  openIncidentsCount: number;
+  /** Tool calls attributed to the agent in the last seven days. */
+  recentCallsCount: number;
+};
+
+/**
+ * Controlled shutdown (playbook phase 6): stop it, prove it stopped, close
+ * what is open, revoke the approval, attest disposal, record who and when.
+ */
+export function getAgentRetirementChecklist(input: AgentRetirementInput): ChecklistItem[] {
+  const detailHref = `/agents/${input.id}`;
+  const retired = input.status === "RETIRED";
+  const stopped = retired || Boolean(input.suspendedAt);
+  return [
+    {
+      id: "stop",
+      label: "Stop the agent's traffic at the proxy",
+      detail: retired
+        ? "Retired: both proxies refuse its x-agent-id."
+        : input.suspendedAt
+          ? "Suspended: traffic is refused. Retire to make it permanent."
+          : "Suspend the agent now, or retire it to stop traffic permanently.",
+      done: stopped,
+      href: detailHref,
+    },
+    {
+      id: "quiet",
+      label: "Confirm the traffic has actually stopped",
+      detail:
+        input.recentCallsCount === 0
+          ? "No tool calls attributed to the agent in the last 7 days."
+          : `${input.recentCallsCount} tool call${input.recentCallsCount === 1 ? "" : "s"} in the last 7 days: callers still send its x-agent-id. Find and repoint them.`,
+      done: input.recentCallsCount === 0,
+      href: `${detailHref}#mcp`,
+    },
+    {
+      id: "incidents",
+      label: "Close open incidents",
+      detail:
+        input.openIncidentsCount === 0
+          ? "No open incidents."
+          : `${input.openIncidentsCount} open incident${input.openIncidentsCount === 1 ? "" : "s"} to resolve or dismiss.`,
+      done: input.openIncidentsCount === 0,
+      href: `${detailHref}#incidents`,
+    },
+    {
+      id: "approval",
+      label: "Revoke the standing approval",
+      detail:
+        input.latestApprovalDecision === "APPROVED"
+          ? "Still approved. Retiring revokes it automatically; reactivation must go back through the gate."
+          : "No standing approval.",
+      done: input.latestApprovalDecision !== "APPROVED",
+      href: `${detailHref}#approval`,
+    },
+    {
+      id: "attest",
+      label: "Attest disposal of credentials, data and artifacts",
+      detail: input.retirementAttested
+        ? "Attested in the retirement record."
+        : "Revoke its keys, delete or archive prompts, stored data and model artifacts per policy, then tick the attestation in Retire.",
+      done: input.retirementAttested,
+      href: detailHref,
+    },
+    {
+      id: "record",
+      label: "Record the retirement",
+      detail: input.retiredAt
+        ? "Retired and recorded in the audit trail."
+        : "Use Retire on this page: it sets RETIRED, revokes the approval and records who and when.",
+      done: retired && Boolean(input.retiredAt),
+      href: detailHref,
     },
   ];
 }

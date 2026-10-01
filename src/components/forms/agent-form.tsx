@@ -41,11 +41,15 @@ interface AgentFormProps {
     reviewIntervalDays?: number;
     humanReviewTriggers?: unknown;
     humanReviewEnforcement?: string;
+    technicalOwnerId?: string | null;
+    riskOwnerId?: string | null;
+    escalationContact?: string | null;
   };
   systems: { id: string; name: string }[];
+  users?: { id: string; name: string | null; email: string }[];
 }
 
-export function AgentForm({ initialData, systems }: AgentFormProps) {
+export function AgentForm({ initialData, systems, users = [] }: AgentFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +112,10 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
       reviewIntervalDays: Number(formData.get("reviewIntervalDays") || 365),
       humanReviewTriggers: reviewTriggers,
       humanReviewEnforcement: reviewEnforcement,
+      // Accountability. Empty strings are normalised to null by the API.
+      technicalOwnerId: formData.get("technicalOwnerId") as string,
+      riskOwnerId: formData.get("riskOwnerId") as string,
+      escalationContact: formData.get("escalationContact") as string,
     };
 
     try {
@@ -230,6 +238,46 @@ export function AgentForm({ initialData, systems }: AgentFormProps) {
               <option value="true">Yes</option>
               <option value="false">No</option>
             </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card id="accountability" className="scroll-mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            Accountability
+            <HelpHint hint="agent_accountability" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-[var(--text-muted)]">
+            The business owner is whoever registered the agent. Name who runs it, who owns its risk, and where to
+            escalate when a review trigger fires or an incident opens.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Technical owner</Label>
+              <select name="technicalOwnerId" defaultValue={initialData?.technicalOwnerId ?? ""} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                <option value="">Unassigned</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Risk owner</Label>
+              <select name="riskOwnerId" defaultValue={initialData?.riskOwnerId ?? ""} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                <option value="">Unassigned</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="escalationContact">Escalation contact</Label>
+            <Input id="escalationContact" name="escalationContact" defaultValue={initialData?.escalationContact ?? ""}
+              placeholder="e.g. #payments-oncall, fraud-desk@example.com, PagerDuty: Refunds" maxLength={300} />
           </div>
         </CardContent>
       </Card>

@@ -108,22 +108,32 @@ Not done: a "pending review" queue where a reviewer approves a withheld call
 and the agent resumes. Today the reviewer acts via the alert (adjust the
 trigger, resume/suspend the agent, re-run). Candidate for item 4.
 
-## 4. ☐ Ownership, escalation, incidents and retirement
+## 4. ☑ Ownership, escalation, incidents and retirement (PR: `feat/agent-incidents-retirement`)
 
 The article: responsibility split across business, technology and risk roles;
 "well-defined incident response protocols"; "controlled agent and
 infrastructure shutdown … secure disposal … documentation".
 
-Proposed:
+Shipped:
 
-- `technicalOwnerId`, `riskOwnerId`, `escalationContact` on `AIAgent`.
-- `GovernanceIncident.agentId` so an incident can reference an agent and
-  offer the Suspend action from item 1 in one click.
-- Extend `workflow-notifications.ts` (system-only today) to agent approvals,
-  overdue reviews and incidents.
-- Retirement checklist (reusing `ChecklistItem`): proxy gate confirmed
-  (item 1), API key profiles revoked, removed from other agents' allowlists,
-  tool profiles archived, data disposal attested, final audit export.
+- `technicalOwnerId`, `riskOwnerId` (User relations), `escalationContact` on
+  `AIAgent`; Accountability form section + card; soft blockers (risk owner for
+  HIGH/CRITICAL, escalation contact for FULL_AUTONOMY/SUPERVISED); checklist
+  item "Name the accountable people".
+- `GovernanceIncident` made polymorphic (`aiSystemId?` + `agentId?`, CHECK at
+  least one). Agent incident routes + the shared card on the agent page.
+  Open incidents hard-block approval; the alert text points at Suspend.
+- Notifications: agent approvals, overdue agent reviews, agent incidents
+  (linking to the agent) and open human-review trigger alerts.
+- Retirement: `POST /api/agents/[id]/retire` (RETIRED + revoke approval +
+  who/when/notes/attestation), Retire dialog, and a Retirement checklist
+  (stop, confirm quiet for 7 days, close incidents, revoke approval, attest
+  disposal, record). API-key revocation and cross-agent allowlist cleanup
+  were dropped: keys are not modelled per agent and allowlists name MCP
+  servers, not agents. The "final audit export" is the audit trail itself.
+
+Not done (still open): agent evidence artifacts, and a "pending review"
+queue for calls withheld by a review trigger.
 
 ## 5. ☐ Behavioural baselines and a shared approved-tool catalog
 

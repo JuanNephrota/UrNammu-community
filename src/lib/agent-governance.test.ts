@@ -6,6 +6,7 @@ import {
   getAgentApprovedStages,
   getAgentChecklist,
   getAgentRequiredStages,
+  getAgentRetirementChecklist,
   getAgentWorkflowSummary,
   getCharterStatus,
   isHardAgentBlocker,
@@ -42,6 +43,10 @@ function governed(overrides: Partial<AgentGovernanceInput> = {}): AgentGovernanc
     unapprovedToolProfiles: 0,
     observedActivity: true,
     suspendedAt: null,
+    technicalOwnerId: "u_tech",
+    riskOwnerId: "u_risk",
+    escalationContact: "#refunds-oncall",
+    openIncidentsCount: 0,
     requireOwnerApproval: true,
     requireSecurityApproval: true,
     requireLegalApproval: false,
@@ -194,6 +199,58 @@ test("unapproved observed tools are a soft nudge", () => {
   assert.match(blockers[0].message, /3 observed MCP servers or tools are/);
 });
 
+test("open incidents hard-block; missing risk owner / escalation contact are soft and autonomy-aware", () => {
+  const incident = getAgentApprovalBlockers(governed({ openIncidentsCount: 2 }));
+  assert.deepEqual(incident.map((b) => [b.category, b.soft]), [["incident", false]]);
+  assert.match(incident[0].message, /2 governance incidents are open/);
+
+  const noRiskOwnerMedium = getAgentApprovalBlockers(governed({ riskOwnerId: null }));
+  assert.deepEqual(noRiskOwnerMedium, []);
+  const noRiskOwnerHigh = getAgentApprovalBlockers(governed({ riskOwnerId: null, riskLevel: "HIGH" }));
+  assert.deepEqual(noRiskOwnerHigh.map((b) => [b.category, b.soft, b.title]), [["accountability", true, "Assign a risk owner"]]);
+
+  const hitlNoContact = getAgentApprovalBlockers(governed({ escalationContact: null }));
+  assert.deepEqual(hitlNoContact, []);
+  const autonomousNoContact = getAgentApprovalBlockers(
+    governed({ escalationContact: null, autonomyLevel: "FULL_AUTONOMY", humanReviewRequired: false, mcpEnforcement: "enforce", mcpServerAllowlist: ["x"] })
+  );
+  assert.deepEqual(autonomousNoContact.map((b) => b.title), ["Set an escalation contact"]);
+});
+
+test("retirement checklist tracks stop, quiet, incidents, approval, attestation, record", () => {
+  const live = getAgentRetirementChecklist({
+    id: "agent_1",
+    status: "DEPLOYED",
+    suspendedAt: null,
+    retiredAt: null,
+    retirementAttested: false,
+    latestApprovalDecision: "APPROVED",
+    openIncidentsCount: 1,
+    recentCallsCount: 12,
+  });
+  assert.deepEqual(live.map((i) => [i.id, i.done]), [
+    ["stop", false], ["quiet", false], ["incidents", false], ["approval", false], ["attest", false], ["record", false],
+  ]);
+  assert.match(live[1].detail ?? "", /12 tool calls/);
+
+  const retiredInput = {
+    id: "agent_1",
+    status: "RETIRED" as const,
+    suspendedAt: null,
+    retiredAt: new Date(),
+    retirementAttested: true,
+    latestApprovalDecision: "REVOKED" as const,
+    openIncidentsCount: 0,
+    recentCallsCount: 0,
+  };
+  const done = getAgentRetirementChecklist(retiredInput);
+  assert.equal(checklistProgress(done).complete, true);
+
+  const suspendedOnly = getAgentRetirementChecklist({ ...retiredInput, status: "DEPLOYED", suspendedAt: new Date(), retiredAt: null });
+  assert.equal(suspendedOnly[0].done, true);
+  assert.equal(suspendedOnly[5].done, false);
+});
+
 // ── workflow summary ────────────────────────────────────────────────
 
 test("workflow: ready → record approval; approved+deployed → monitored", () => {
@@ -235,8 +292,8 @@ test("checklist reflects blockers and approval; optional items don't count", () 
   assert.equal(byId.stages.done, true);
   assert.equal(byId.approval.done, false);
   const progress = checklistProgress(items);
-  assert.equal(progress.total, 5);
-  assert.equal(progress.done, 4);
+  assert.equal(progress.total, 6);
+  assert.equal(progress.done, 5);
   assert.equal(progress.next?.id, "approval");
 
   const done = getAgentChecklist(governed({ latestApprovalDecision: "APPROVED", status: "APPROVED" }));

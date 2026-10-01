@@ -34,6 +34,10 @@ export const createAgentSchema = z.object({
   outOfScopeActions: z.array(z.string().trim().min(1).max(300)).max(100).default([]),
   decisionBoundaries: z.string().max(5000).nullish(),
   successCriteria: z.string().max(5000).nullish(),
+  // Accountability
+  technicalOwnerId: z.string().max(100).nullish(),
+  riskOwnerId: z.string().max(100).nullish(),
+  escalationContact: z.string().max(300).nullish(),
   // Approval gate
   requireOwnerApproval: z.boolean().default(true),
   requireSecurityApproval: z.boolean().default(true),
@@ -48,7 +52,15 @@ export const createAgentSchema = z.object({
 
 export const updateAgentSchema = createAgentSchema.partial();
 
-const CHARTER_TEXT_FIELDS = ["purpose", "decisionBoundaries", "successCriteria", "description"] as const;
+const CHARTER_TEXT_FIELDS = [
+  "purpose",
+  "decisionBoundaries",
+  "successCriteria",
+  "description",
+  "escalationContact",
+  "technicalOwnerId",
+  "riskOwnerId",
+] as const;
 
 /** Empty strings from form fields become null so "cleared" is distinguishable from "unchanged". */
 export function normalizeAgentText<T extends Partial<Record<(typeof CHARTER_TEXT_FIELDS)[number], string | null | undefined>>>(

@@ -243,6 +243,9 @@ model User {
   suspendedAgents AIAgent[]  @relation("AgentSuspendedBy")
   agentApprovals         AgentApproval[]
   agentGovernanceReviews AgentGovernanceReview[]
+  technicalOwnedAgents   AIAgent[] @relation("AgentTechnicalOwner")
+  riskOwnedAgents        AIAgent[] @relation("AgentRiskOwner")
+  retiredAgents          AIAgent[] @relation("AgentRetiredBy")
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
   syncRuns     ProviderSyncRun[]
@@ -350,6 +353,25 @@ model AIAgent {
   reviewIntervalDays        Int      @default(365)
   nextReviewDate            DateTime?
 
+  // Accountability (playbook: responsibility split across business,
+  // technology and risk roles, plus an escalation path). `owner` is the
+  // business owner.
+  technicalOwner    User?   @relation("AgentTechnicalOwner", fields: [technicalOwnerId], references: [id], onDelete: SetNull)
+  technicalOwnerId  String?
+  riskOwner         User?   @relation("AgentRiskOwner", fields: [riskOwnerId], references: [id], onDelete: SetNull)
+  riskOwnerId       String?
+  /// Who to page when a review trigger fires or an incident opens (email, Slack channel, pager).
+  escalationContact String?
+
+  // Retirement — controlled shutdown. Set by POST /api/agents/[id]/retire,
+  // which also revokes the approval; the proxy refuses RETIRED agents.
+  retiredAt          DateTime?
+  retiredBy          User?     @relation("AgentRetiredBy", fields: [retiredById], references: [id], onDelete: SetNull)
+  retiredById        String?
+  retirementNotes    String?   @db.Text
+  /// Operator attests that data, credentials and model artifacts were disposed of.
+  retirementAttested Boolean   @default(false)
+
   // MCP tool governance. Empty allowlists mean "observe only". Entries:
   // servers match the declared name or URL host (wildcards allowed); tools are
   // "tool", "server/tool" or "server/*". `mcpEnforcement` is "monitor"
@@ -371,6 +393,7 @@ model AIAgent {
   riskReviews  AgentRiskReview[]
   approvals         AgentApproval[]
   governanceReviews AgentGovernanceReview[]
+  incidents         GovernanceIncident[]
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
   discoveries  DiscoveredAgent[]
@@ -1560,10 +1583,14 @@ model EvidenceArtifact {
   @@index([uploadedByUserId, createdAt])
 }
 
+// An incident belongs to a system, an agent, or both (CHECK constraint in
+// migration 20260930210000_agent_incidents_retirement enforces at least one).
 model GovernanceIncident {
   id              String        @id @default(cuid())
-  aiSystem        AISystem      @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
-  aiSystemId      String
+  aiSystem        AISystem?     @relation(fields: [aiSystemId], references: [id], onDelete: Cascade)
+  aiSystemId      String?
+  agent           AIAgent?      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId         String?
   openedByUser    User          @relation(fields: [openedByUserId], references: [id], onDelete: Cascade)
   openedByUserId  String
   title           String
@@ -1578,6 +1605,7 @@ model GovernanceIncident {
   updatedAt       DateTime      @updatedAt
 
   @@index([aiSystemId, status, openedAt])
+  @@index([agentId, status, openedAt])
   @@index([openedByUserId, createdAt])
 }
 

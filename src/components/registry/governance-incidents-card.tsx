@@ -27,10 +27,16 @@ type Incident = {
 export function GovernanceIncidentsCard({
   systemId,
   incidents,
+  endpoint,
+  subjectNoun = "system",
 }: {
   systemId: string;
   incidents: Incident[];
+  /** Collection endpoint; defaults to the AI-system route. Agents pass their own. */
+  endpoint?: string;
+  subjectNoun?: string;
 }) {
+  const base = endpoint ?? `/api/ai-systems/${systemId}/incidents`;
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -43,7 +49,7 @@ export function GovernanceIncidentsCard({
     setUpdatingId(incidentId);
     setError(null);
     try {
-      const res = await fetch(`/api/ai-systems/${systemId}/incidents/${incidentId}`, {
+      const res = await fetch(`${base}/${incidentId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -62,7 +68,7 @@ export function GovernanceIncidentsCard({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/ai-systems/${systemId}/incidents`, {
+      const res = await fetch(base, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, summary, severity }),
@@ -87,7 +93,7 @@ export function GovernanceIncidentsCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-[var(--text-secondary)]">
-          Link misuse, policy breaches, or other governance events directly to the system record.
+          Link misuse, policy breaches, or other governance events directly to the {subjectNoun} record.
         </p>
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2">

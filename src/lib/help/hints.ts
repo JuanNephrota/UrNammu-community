@@ -34,6 +34,10 @@ export const HELP_HINTS = {
     "Purpose, the actions the agent may and may not take, the limits it must stay within, and how success is measured. Required before approval; reviewers and the AI risk review read it.",
   agent_approval_stages:
     "Which stakeholders must sign off before this agent can be approved. Owner, Security and Compliance are on by default; Legal is off. Approval restarts the review interval.",
+  agent_accountability:
+    "Business owner (outcomes), technical owner (runs it), risk owner (signs off risk, decides on incidents) and the escalation contact paged when a review trigger fires or an incident opens. Risk owner is recommended for HIGH/CRITICAL agents; escalation contact for agents acting without a human in the loop.",
+  agent_retirement:
+    "Controlled shutdown: Retire sets RETIRED (both proxies refuse the agent's traffic), revokes a standing approval so reactivation goes back through the gate, and records who, when and whether disposal of credentials, data and artifacts was attested.",
   agent_kill_switch:
     "Suspend makes both proxies refuse every request carrying this agent's x-agent-id (403, recorded as a denial) until Resume. RETIRED agents are refused the same way. Applies regardless of MCP enforcement mode.",
 

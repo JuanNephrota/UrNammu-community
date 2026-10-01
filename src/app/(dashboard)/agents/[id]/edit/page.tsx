@@ -12,10 +12,14 @@ export default async function EditAgentPage({
   const agent = await prisma.aIAgent.findUnique({ where: { id } });
   if (!agent) notFound();
 
-  const systems = await prisma.aISystem.findMany({
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
+  const [systems, users] = await Promise.all([
+    prisma.aISystem.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.user.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -52,8 +56,12 @@ export default async function EditAgentPage({
           reviewIntervalDays: agent.reviewIntervalDays,
           humanReviewTriggers: agent.humanReviewTriggers,
           humanReviewEnforcement: agent.humanReviewEnforcement,
+          technicalOwnerId: agent.technicalOwnerId,
+          riskOwnerId: agent.riskOwnerId,
+          escalationContact: agent.escalationContact,
         }}
         systems={systems}
+        users={users}
       />
     </div>
   );

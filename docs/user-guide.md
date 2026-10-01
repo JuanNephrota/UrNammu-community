@@ -18,6 +18,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [Charter and Approval Gate](#charter-and-approval-gate)
    - [MCP Tool Governance](#mcp-tool-governance)
    - [Kill Switch](#kill-switch)
+   - [Accountability, Incidents and Retirement](#accountability-incidents-and-retirement)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
    - [Framework Control Catalog & Crosswalk](#framework-control-catalog--crosswalk)
@@ -402,7 +403,33 @@ Each refusal is recorded as an **enforced** denial under **Compliance → Denial
 - Requests that carry no `x-agent-id` are unaffected; that is what agent discovery is for.
 - The Azure proxy caches agent state for 30 seconds, so a suspension takes effect within that window. The Vercel fallback proxy checks every request.
 
-The detail page shows a **Traffic blocked at the proxy** banner (who suspended it, when, and why) while either condition holds; registry cards carry a **SUSPENDED** badge. `docs/plans/agentic-governance-playbook.md` lists the follow-on lifecycle work (agent charter and approval gate, enforced human-review triggers, incidents and retirement checklist).
+The detail page shows a **Traffic blocked at the proxy** banner (who suspended it, when, and why) while either condition holds; registry cards carry a **SUSPENDED** badge.
+
+### Accountability, Incidents and Retirement
+
+The playbook asks who owns an agent's outcomes, who is called when it misbehaves, and how it is shut down.
+
+**Accountability** (agent form → *Accountability*; *Accountability* card on the detail page):
+
+| Role | Meaning | Gate |
+|---|---|---|
+| Business owner | Whoever registered the agent; accountable for outcomes. | Always set. |
+| Technical owner | Runs it: prompts, tools, deploys, fixes. | Checklist. |
+| Risk owner | Signs off the risk basis; decides on incidents. | Recommended for HIGH/CRITICAL (soft blocker); checklist. |
+| Escalation contact | Email, Slack channel or pager paged when a review trigger fires or an incident opens. | Recommended for FULL_AUTONOMY / SUPERVISED (soft blocker); checklist. |
+
+**Incidents.** *Governance Incidents* on the agent page opens incidents against the agent itself (`GovernanceIncident.agentId`; the parent system is recorded too when there is one). Opening one raises an alert, **hard-blocks the agent's approval** until it is resolved or dismissed, and appears in the workflow notifications bell with a link back to the agent. Suspend the agent from the header if the behaviour must stop now.
+
+**Retirement.** *Retire* in the header is the controlled shutdown: the agent becomes `RETIRED` (both proxies refuse its `x-agent-id`), a standing approval is **revoked** so reactivation must pass the approval gate again, and the record captures who, when, notes, and whether disposal of credentials, data and artifacts was attested. Audit action `RETIRE`. A **Retirement checklist** appears for DEPRECATED and RETIRED agents:
+
+1. Stop the traffic at the proxy (suspend or retire).
+2. Confirm it has actually stopped: no tool calls attributed in the last 7 days.
+3. Close open incidents.
+4. Revoke the standing approval (Retire does this).
+5. Attest disposal of credentials, data and artifacts (tick in the Retire dialog).
+6. Record the retirement.
+
+**Notifications.** The bell now also carries agent approval decisions, overdue agent reviews, open agent incidents and open human-review trigger alerts, each linking to the agent page.
 
 ### Discovered Agents
 

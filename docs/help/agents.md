@@ -65,6 +65,18 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 
 **Approve** on an unapproved row adds it to the allowlist. **Oversight → MCP Activity** shows the same data across all agents.
 
+## Accountability
+
+Four roles per agent: the **business owner** (whoever registered it; accountable for outcomes), a **technical owner** (runs it), a **risk owner** (signs off the risk basis and decides on incidents) and an **escalation contact** (email, Slack channel or pager to page when a review trigger fires or an incident opens). Set them on the agent form under **Accountability**. The approval gate recommends a risk owner for HIGH/CRITICAL agents and an escalation contact for agents that act without a human in the loop; the governance checklist expects both.
+
+## Incidents
+
+**Governance Incidents** on the agent page logs misuse, policy breaches or other governance events against the agent itself (not only its parent system). Opening one raises an alert, hard-blocks the agent's approval until it is resolved or dismissed, and shows in the workflow notifications bell. If the behaviour must stop now, use **Suspend** in the page header; the incident record stays.
+
+## Retirement
+
+**Retire** in the page header is the controlled shutdown. It sets the agent to RETIRED (both proxies refuse its `x-agent-id`), revokes a standing approval so reactivating it means going back through the approval gate, and records who retired it, when, optional notes and whether disposal of credentials, data and artifacts was attested. A **Retirement checklist** appears for DEPRECATED and RETIRED agents: stop the traffic, confirm it has actually stopped (no tool calls in 7 days), close open incidents, revoke the approval, attest disposal, record the retirement.
+
 ## Kill switch (Suspend / Resume)
 
 **Suspend** on the agent detail page stops the agent at the proxy: both proxies refuse every request that carries its `x-agent-id` with `403` and record each refusal as an enforced denial under **Compliance → Denials** (rule `agent_suspended`). Traffic that does not carry the header is unaffected, and the agent's status, allowlists and history are untouched. **Resume** clears it. Both actions are audit-logged with the optional reason.

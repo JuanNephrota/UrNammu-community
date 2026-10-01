@@ -31,6 +31,9 @@ export async function GET() {
       openIncidents,
       overdueReviews,
       investigations,
+      agentApprovals,
+      agentOverdueReviews,
+      reviewAlerts,
     ] = await Promise.all([
       prisma.systemApproval.findMany({
         orderBy: { createdAt: "desc" },
@@ -52,7 +55,7 @@ export async function GET() {
         where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } },
         orderBy: { openedAt: "desc" },
         take: 5,
-        include: { aiSystem: { select: { name: true } } },
+        include: { aiSystem: { select: { name: true } }, agent: { select: { id: true, name: true } } },
       }),
       prisma.aISystem.findMany({
         where: { nextReviewDate: { lt: now } },
@@ -64,6 +67,23 @@ export async function GET() {
         where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
         orderBy: { updatedAt: "desc" },
         take: 5,
+      }),
+      prisma.agentApproval.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { agent: { select: { id: true, name: true } } },
+      }),
+      prisma.aIAgent.findMany({
+        where: { nextReviewDate: { lt: now }, status: { notIn: ["RETIRED", "DEPRECATED"] } },
+        orderBy: { nextReviewDate: "asc" },
+        take: 5,
+        select: { id: true, name: true, nextReviewDate: true },
+      }),
+      prisma.alert.findMany({
+        where: { source: "human_review_trigger", status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { id: true, title: true, createdAt: true },
       }),
     ]);
 
@@ -101,13 +121,31 @@ export async function GET() {
         id: string;
         title: string;
         openedAt: Date;
-        aiSystem: { name: string };
+        aiSystem: { name: string } | null;
+        agent: { id: string; name: string } | null;
       }) => ({
         id: incident.id,
-        systemName: incident.aiSystem.name,
+        // An agent incident is about the agent even when its parent system is recorded too.
+        systemName: incident.agent
+          ? `${incident.agent.name} (agent)`
+          : incident.aiSystem?.name ?? "Unassigned",
         title: incident.title,
         openedAt: incident.openedAt,
+        href: incident.agent ? `/agents/${incident.agent.id}#incidents` : undefined,
       })),
+      agentApprovals: agentApprovals.map((approval) => ({
+        id: approval.id,
+        agentId: approval.agent.id,
+        agentName: approval.agent.name,
+        decision: approval.decision,
+        createdAt: approval.createdAt,
+      })),
+      agentOverdueReviews: agentOverdueReviews.map((agent) => ({
+        id: agent.id,
+        agentName: agent.name,
+        nextReviewDate: agent.nextReviewDate ?? now,
+      })),
+      reviewAlerts,
       overdueReviews: overdueReviews.map((system: {
         id: string;
         name: string;
