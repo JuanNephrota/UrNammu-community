@@ -15,6 +15,9 @@ export type LoadedAgent = {
   id: string;
   name: string;
   aiSystemId: string | null;
+  /** Lifecycle status (AISystemStatus) and kill-switch timestamp; see agent-runtime-gate.ts. */
+  status: string;
+  suspendedAt: Date | null;
   config: McpGovernanceConfig;
 };
 
@@ -39,6 +42,8 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
         mcpServerAllowlist: true,
         mcpToolAllowlist: true,
         mcpEnforcement: true,
+        status: true,
+        suspendedAt: true,
       },
     });
   } catch (err) {
@@ -54,6 +59,8 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
         id: row.id,
         name: row.name,
         aiSystemId: row.aiSystemId,
+        status: row.status,
+        suspendedAt: row.suspendedAt,
         config: {
           serverAllowlist: row.mcpServerAllowlist,
           toolAllowlist: row.mcpToolAllowlist,

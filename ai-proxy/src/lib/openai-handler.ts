@@ -197,7 +197,7 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
     }
     const targetUrl = `${targetBase}${path}${search}`;
 
-    const { attribution, response: attributionError } = await resolveAttribution(req);
+    const { attribution, response: attributionError } = await resolveAttribution(req, provider);
     if (attributionError) return attributionError;
     const { department, userEmail, aiSystemId, agent, client } = attribution;
 

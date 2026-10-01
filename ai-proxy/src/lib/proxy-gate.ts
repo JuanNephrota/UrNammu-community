@@ -21,6 +21,11 @@ import { logPolicyDenial } from "./db";
 import { sanitizeText } from "./sensitive-detect";
 import { MCP_SERVER_DENIAL_RULE } from "./tool-activity";
 import {
+  agentBlockedDenialReason,
+  agentBlockedResponseBody,
+  evaluateAgentRuntime,
+} from "./agent-runtime-gate";
+import {
   evaluateServers,
   restrictAllowedTools,
   type DeclaredMcpServer,
@@ -50,10 +55,14 @@ export type Attribution = {
 /**
  * Read the attribution headers. `x-agent-id` loads the agent's MCP
  * allowlists; if agent state cannot be loaded (DB outage, cold cache) the
- * request is refused rather than forwarded unenforced.
+ * request is refused rather than forwarded unenforced. A suspended or
+ * retired agent is refused outright (403, recorded as an enforced denial
+ * under `provider`) — the kill switch. Agent state is cached for up to
+ * AGENT_TTL_MS, so a suspension takes effect within that window.
  */
 export async function resolveAttribution(
-  req: HttpRequest
+  req: HttpRequest,
+  provider = "unknown"
 ): Promise<{ attribution: Attribution; response: HttpResponseInit | null }> {
   const department = req.headers.get("x-department") ?? null;
   const userEmail = req.headers.get("x-user-email") ?? null;
@@ -81,7 +90,27 @@ export async function resolveAttribution(
     }
   }
   const aiSystemId = req.headers.get("x-ai-system-id") ?? agent?.aiSystemId ?? null;
-  return { attribution: { department, userEmail, aiSystemId, agent, client }, response: null };
+  const attribution: Attribution = { department, userEmail, aiSystemId, agent, client };
+
+  const verdict = evaluateAgentRuntime(agent);
+  if (agent && verdict.blocked) {
+    void logPolicyDenial({
+      provider,
+      model: "unknown",
+      aiSystemId,
+      userEmail,
+      department,
+      mode: "enforced",
+      policyIds: [],
+      reasons: [agentBlockedDenialReason(agent, verdict)],
+      promptExcerpt: null,
+      requestMetadata: { agentId: agent.id, agentStatus: agent.status, client },
+    }).catch((err) => {
+      console.error("logPolicyDenial (agent kill switch) failed:", err);
+    });
+    return { attribution, response: { status: 403, jsonBody: agentBlockedResponseBody(verdict) } };
+  }
+  return { attribution, response: null };
 }
 
 /** The proxy route parameter (`{*path}`) as a leading-slash path. */

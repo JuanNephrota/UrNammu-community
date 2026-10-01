@@ -33,6 +33,7 @@ import {
   authenticateProxyRequest,
   logProxyUsage,
   resolveProxyAttribution,
+  runAgentRuntimeGate,
   type PromptRiskResult,
   type ProxyFlagCategory,
 } from "./proxy-common";
@@ -82,6 +83,8 @@ export async function handleGeminiProxy(req: NextRequest, subpath: string): Prom
   const targetUrl = `${GEMINI_BASE}${parsed.path}${search}`;
   const model = parsed.model ?? "unknown";
   const { department, userEmail, aiSystemId, agent, client } = await resolveProxyAttribution(req);
+  const agentBlocked = await runAgentRuntimeGate({ agent, provider: PROVIDER, aiSystemId, userEmail, department });
+  if (agentBlocked) return agentBlocked;
 
   let bodyText: string | null = null;
   let bodyJson: Record<string, unknown> | null = null;

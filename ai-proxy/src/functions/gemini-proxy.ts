@@ -71,7 +71,7 @@ async function geminiProxy(req: HttpRequest): Promise<HttpResponseInit> {
   const targetUrl = `${GEMINI_BASE}${parsed.path}${search}`;
   const model = parsed.model ?? "unknown";
 
-  const { attribution, response: attributionError } = await resolveAttribution(req);
+  const { attribution, response: attributionError } = await resolveAttribution(req, PROVIDER);
   if (attributionError) return attributionError;
   const { department, userEmail, aiSystemId, agent, client } = attribution;
 

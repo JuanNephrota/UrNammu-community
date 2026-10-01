@@ -16,6 +16,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [EU AI Act Classification](#eu-ai-act-classification)
 5. [AI Agents](#5-ai-agents)
    - [MCP Tool Governance](#mcp-tool-governance)
+   - [Kill Switch](#kill-switch)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
    - [Framework Control Catalog & Crosswalk](#framework-control-catalog--crosswalk)
@@ -317,6 +318,26 @@ An empty list means "not configured" and allows everything for that dimension wh
 **Alerts** (source `mcp_tool_governance`): HIGH when an agent invokes an MCP tool outside its allowlist, MEDIUM the first time a new server or tool is seen for an agent. Both dedupe for 24 hours per agent and tool.
 
 **Where to look.** The agent detail page carries a **MCP Tool Governance** card with a blast-radius strip (access level, parent system, connected systems, capabilities, servers and tools seen), the allowlists, and every observed server and tool with an **Approve** button for unapproved rows. **Oversight → MCP Activity** shows the same across all agents plus the last hundred tool calls. Session traces annotate proxy spans with the number of tool calls observed.
+
+### Kill Switch
+
+**Suspend** (agent detail page, ADMIN or COMPLIANCE_OFFICER) stops an agent at the proxy without touching its status, allowlists or history. While suspended, both proxies refuse every request carrying the agent's `x-agent-id`:
+
+```json
+HTTP 403
+{ "error": { "type": "agent_blocked",
+             "message": "Agent \"Refund bot\" is suspended; its traffic is refused until an administrator resumes it.",
+             "violations": [ { "rule": "agent_suspended", "message": "…", "policy": "Agent kill switch: Refund bot" } ] } }
+```
+
+Each refusal is recorded as an **enforced** denial under **Compliance → Denials**, so a suspended agent that keeps calling is visible there. **Resume** clears the switch. Both actions are written to the audit trail (`SUSPEND` / `RESUME`) with the optional reason.
+
+- The gate applies regardless of the MCP enforcement mode.
+- Agents whose status is **RETIRED** are refused the same way (rule `agent_retired`). DRAFT agents are *not* blocked — agents registered from the discovery queue start as drafts and need to send `x-agent-id` so their traffic is governed — and neither are DEPRECATED agents, which are still running while being phased out.
+- Requests that carry no `x-agent-id` are unaffected; that is what agent discovery is for.
+- The Azure proxy caches agent state for 30 seconds, so a suspension takes effect within that window. The Vercel fallback proxy checks every request.
+
+The detail page shows a **Traffic blocked at the proxy** banner (who suspended it, when, and why) while either condition holds; registry cards carry a **SUSPENDED** badge. `docs/plans/agentic-governance-playbook.md` lists the follow-on lifecycle work (agent charter and approval gate, enforced human-review triggers, incidents and retirement checklist).
 
 ### Discovered Agents
 

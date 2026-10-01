@@ -240,6 +240,7 @@ model User {
   sessions     Session[]
   ownedSystems AISystem[]    @relation("SystemOwner")
   ownedAgents  AIAgent[]     @relation("AgentOwner")
+  suspendedAgents AIAgent[]  @relation("AgentSuspendedBy")
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
   syncRuns     ProviderSyncRun[]
@@ -334,6 +335,14 @@ model AIAgent {
   mcpServerAllowlist String[] @default([])
   mcpToolAllowlist   String[] @default([])
   mcpEnforcement     String   @default("monitor")
+
+  // Kill switch. While `suspendedAt` is set both proxies refuse requests that
+  // carry this agent's x-agent-id (403, recorded as an enforced PolicyDenial).
+  // RETIRED agents are refused the same way. See src/lib/agent-runtime-gate.ts.
+  suspendedAt     DateTime?
+  suspendedBy     User?     @relation("AgentSuspendedBy", fields: [suspendedById], references: [id], onDelete: SetNull)
+  suspendedById   String?
+  suspendedReason String?   @db.Text
 
   auditLogs    AuditLog[]        @relation("AgentAuditLogs")
   riskReviews  AgentRiskReview[]

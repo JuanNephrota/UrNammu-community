@@ -197,6 +197,15 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 
 **Approve** on an unapproved row adds it to the allowlist. **Oversight → MCP Activity** shows the same data across all agents.
 
+## Kill switch (Suspend / Resume)
+
+**Suspend** on the agent detail page stops the agent at the proxy: both proxies refuse every request that carries its \`x-agent-id\` with \`403\` and record each refusal as an enforced denial under **Compliance → Denials** (rule \`agent_suspended\`). Traffic that does not carry the header is unaffected, and the agent's status, allowlists and history are untouched. **Resume** clears it. Both actions are audit-logged with the optional reason.
+
+- Applies regardless of the MCP enforcement mode. A kill switch that only recorded would not be one.
+- Agents with status **RETIRED** are refused the same way (rule \`agent_retired\`); change the status to allow traffic again. DRAFT and DEPRECATED agents are not blocked.
+- The Azure proxy caches agent state for 30 seconds, so a suspension takes effect within that window; the Vercel proxy checks every request.
+- A **Traffic blocked at the proxy** banner shows on the detail page while either condition holds, and a **SUSPENDED** badge on the registry card.
+
 ## Discovered agents
 
 **Agents → Discovered** lists AI agents UrNammu has seen that nobody registered, with the signals that flagged each one and the tools, MCP servers, models and users observed.

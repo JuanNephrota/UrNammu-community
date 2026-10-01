@@ -18,7 +18,7 @@ The app is organized around a few core governance surfaces:
 - `Registry`
   Tracks governed AI systems, approval state, risk history, policy assignments, evidence, incidents, linked shadow AI findings, and the EU AI Act classification (wizard, tier, applicable articles).
 - `Agents`
-  Tracks AI agents, autonomy, human review requirements, connected systems, AI-assisted agent risk review, and MCP tool governance (server/tool allowlists, observed tool activity from the proxy).
+  Tracks AI agents, autonomy, human review requirements, connected systems, AI-assisted agent risk review, MCP tool governance (server/tool allowlists, observed tool activity from the proxy), and the kill switch (`suspendedAt` / `suspendedById` / `suspendedReason`).
 - `Shadow AI`
   Ingests and normalizes discoveries from Google Workspace, Microsoft 365, Hexnode UEM, CrowdStrike Falcon, DNS/proxy/Netskope imports, and the endpoint agent. Also owns the two enforcement layers for blocked tools.
 - `Endpoints`
@@ -79,6 +79,8 @@ The most important Prisma models are:
   One row per system: risk tier and role under the EU AI Act, obligation flags, applicable article codes (matching `FrameworkControl.code`), the raw wizard answers, and rationale. Classification logic is pure in `src/lib/eu-ai-act.ts`; `src/lib/eu-ai-act-data.ts` derives the approval-blocker / recommendation input. Saving pre-creates `ComplianceMapping` rows for applicable articles and raises `eu_ai_act` alerts.
 - `AgentToolCall` and `AgentToolProfile`
   MCP tool governance telemetry written by both proxies: one row per distinct tool the model invoked in a response, and a first/last-seen profile per (scope, server, tool). `AIAgent.mcpServerAllowlist` / `mcpToolAllowlist` / `mcpEnforcement` hold the policy. Pure extraction and allowlist logic lives in `src/lib/mcp-tool-governance.ts` (mirrored byte-for-byte in `ai-proxy/src/lib/`); IO in `src/lib/mcp-tool-activity.ts` and `ai-proxy/src/lib/tool-activity.ts`.
+
+  **Agent kill switch.** `src/lib/agent-runtime-gate.ts` (mirrored) turns an agent's `status` + `suspendedAt` into a verdict: suspended → `agent_suspended`, `RETIRED` → `agent_retired`, anything else forwards. Both proxies evaluate it immediately after attribution on every provider path — the Azure side inside `resolveAttribution(req, provider)` in `proxy-gate.ts` (the agent loader now selects `status` and `suspendedAt`; 30 s TTL cache), the Vercel side via `runAgentRuntimeGate()` in `proxy-common.ts` called by each `handle*Proxy`. A blocked request returns `403 { error: { type: "agent_blocked", violations[] } }` and writes an enforced `PolicyDenial` (`model: "unknown"`, `requestMetadata.agentId`). `POST`/`DELETE /api/agents/[id]/suspend` flip the switch and audit `SUSPEND` / `RESUME`. Follow-on lifecycle work is planned in `docs/plans/agentic-governance-playbook.md`.
 - `GovernanceReview`, `GovernanceException`, `GovernanceIncident`
   Support staged signoff, exception handling, and oversight workflows.
 - `VendorProfile`

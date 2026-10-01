@@ -29,6 +29,11 @@ const MIRRORS = [
     // The proxy copy opens with a two-line "MIRROR of ..." banner.
     proxyHeaderLines: 2,
   },
+  {
+    app: "src/lib/agent-runtime-gate.ts",
+    proxy: "ai-proxy/src/lib/agent-runtime-gate.ts",
+    proxyHeaderLines: 2,
+  },
 ];
 
 const errors = [];

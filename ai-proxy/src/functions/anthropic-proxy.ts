@@ -59,7 +59,7 @@ async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit> {
   // the registry; x-agent-id attributes the call to a registered agent whose
   // MCP allowlists govern the request (fails closed when the agent record
   // cannot be loaded). Shared with the other provider functions.
-  const { attribution, response: attributionError } = await resolveAttribution(req);
+  const { attribution, response: attributionError } = await resolveAttribution(req, "claude");
   if (attributionError) return attributionError;
   const { department, userEmail, aiSystemId, agent, client } = attribution;
 

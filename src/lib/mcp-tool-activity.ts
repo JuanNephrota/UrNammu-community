@@ -19,6 +19,7 @@ import {
   type McpGovernanceConfig,
   type ObservedToolUse,
 } from "./mcp-tool-governance";
+import { agentBlockedDenialReason, type AgentBlockedVerdict } from "./agent-runtime-gate";
 
 export const MCP_ALERT_SOURCE = "mcp_tool_governance";
 export const MCP_SERVER_DENIAL_RULE = "mcp_server_not_allowed";
@@ -27,6 +28,9 @@ export type AgentGovernance = {
   id: string;
   name: string;
   aiSystemId: string | null;
+  /** Lifecycle status and kill-switch timestamp; see agent-runtime-gate.ts. */
+  status: string;
+  suspendedAt: Date | null;
   config: McpGovernanceConfig;
 };
 
@@ -42,6 +46,8 @@ export async function loadAgentGovernance(agentId: string | null): Promise<Agent
         mcpServerAllowlist: true,
         mcpToolAllowlist: true,
         mcpEnforcement: true,
+        status: true,
+        suspendedAt: true,
       },
     });
     if (!agent) return null;
@@ -49,6 +55,8 @@ export async function loadAgentGovernance(agentId: string | null): Promise<Agent
       id: agent.id,
       name: agent.name,
       aiSystemId: agent.aiSystemId,
+      status: agent.status,
+      suspendedAt: agent.suspendedAt,
       config: {
         serverAllowlist: agent.mcpServerAllowlist,
         toolAllowlist: agent.mcpToolAllowlist,
@@ -97,6 +105,35 @@ export async function logMcpServerDenial(input: {
     });
   } catch (err) {
     console.error("logMcpServerDenial failed:", err);
+  }
+}
+
+/** Records a request refused by the agent kill switch (suspended or retired agent). */
+export async function logAgentBlockedDenial(input: {
+  provider: string;
+  agent: AgentGovernance;
+  verdict: AgentBlockedVerdict;
+  aiSystemId: string | null;
+  userEmail: string | null;
+  department: string | null;
+}) {
+  try {
+    await prisma.policyDenial.create({
+      data: {
+        provider: input.provider,
+        model: "unknown",
+        aiSystemId: input.aiSystemId,
+        userEmail: input.userEmail,
+        department: input.department,
+        mode: "enforced",
+        policyIds: [],
+        reasons: [agentBlockedDenialReason(input.agent, input.verdict)],
+        promptExcerpt: null,
+        requestMetadata: { agentId: input.agent.id, agentStatus: input.agent.status },
+      },
+    });
+  } catch (err) {
+    console.error("logAgentBlockedDenial failed:", err);
   }
 }
 

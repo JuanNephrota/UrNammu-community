@@ -12,7 +12,12 @@ import { getSetting } from "./settings";
 import { secretsMatch } from "./secret-compare";
 import { writeProxyUsageBucket } from "./proxy-bucket-writer";
 import { bucketProviderFor } from "./proxy-providers";
-import { loadAgentGovernance, type AgentGovernance } from "./mcp-tool-activity";
+import {
+  loadAgentGovernance,
+  logAgentBlockedDenial,
+  type AgentGovernance,
+} from "./mcp-tool-activity";
+import { agentBlockedResponseBody, evaluateAgentRuntime } from "./agent-runtime-gate";
 import { loadPromptHashSalt, type analyzePromptRisk } from "./prompt-risk";
 import { fingerprintCaller, type ClientFingerprint } from "./caller-fingerprint";
 
@@ -87,6 +92,31 @@ export async function resolveProxyAttribution(req: NextRequest): Promise<ProxyAt
     agent,
     client: fingerprintCaller({ headers: req.headers, url: req.url, salt }),
   };
+}
+
+/**
+ * The agent kill switch. A suspended or RETIRED agent's requests are refused
+ * with 403 and recorded as an enforced denial, whatever its MCP enforcement
+ * mode. Returns null when the request may proceed.
+ */
+export async function runAgentRuntimeGate(input: {
+  agent: AgentGovernance | null;
+  provider: string;
+  aiSystemId: string | null;
+  userEmail: string | null;
+  department: string | null;
+}): Promise<NextResponse | null> {
+  const verdict = evaluateAgentRuntime(input.agent);
+  if (!input.agent || !verdict.blocked) return null;
+  await logAgentBlockedDenial({
+    provider: input.provider,
+    agent: input.agent,
+    verdict,
+    aiSystemId: input.aiSystemId,
+    userEmail: input.userEmail,
+    department: input.department,
+  });
+  return NextResponse.json(agentBlockedResponseBody(verdict), { status: 403 });
 }
 
 export type LogProxyUsageParams = {

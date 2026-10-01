@@ -12,6 +12,7 @@ import {
   authenticateProxyRequest,
   logProxyUsage as logUsage,
   resolveProxyAttribution,
+  runAgentRuntimeGate,
   runMcpServerGate,
 } from "./proxy-common";
 import { runPolicyGate } from "./proxy-policy-gate";
@@ -101,6 +102,14 @@ export async function handleAnthropicProxy(
   // the agent's MCP allowlists govern which servers/tools the call may use.
   const { department, userEmail, aiSystemId: attributedSystemId, agent, client } =
     await resolveProxyAttribution(req);
+  const agentBlocked = await runAgentRuntimeGate({
+    agent,
+    provider: "claude",
+    aiSystemId: attributedSystemId,
+    userEmail,
+    department,
+  });
+  if (agentBlocked) return agentBlocked;
 
   // Build the target URL
   const targetUrl = `${ANTHROPIC_BASE}${subpath}`;

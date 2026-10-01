@@ -109,6 +109,8 @@ model AIAgent {
   mcpServerAllowlist String[] @default([])
   mcpToolAllowlist   String[] @default([])
   mcpEnforcement     String   @default("monitor")
+  status             String   @default("DRAFT")
+  suspendedAt        DateTime?
 
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]

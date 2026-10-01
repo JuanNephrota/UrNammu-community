@@ -48,6 +48,7 @@ import {
   authenticateProxyRequest,
   logProxyUsage,
   resolveProxyAttribution,
+  runAgentRuntimeGate,
   runMcpServerGate,
   type PromptRiskResult,
   type ProxyFlagCategory,
@@ -276,6 +277,8 @@ export async function handleOpenAIProxy(
   const targetUrl = `${targetBase}${path}${search}`;
 
   const { department, userEmail, aiSystemId, agent, client } = await resolveProxyAttribution(req);
+  const agentBlocked = await runAgentRuntimeGate({ agent, provider, aiSystemId, userEmail, department });
+  if (agentBlocked) return agentBlocked;
 
   // ── Body ──
   let bodyText: string | null = null;

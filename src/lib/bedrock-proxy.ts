@@ -42,6 +42,7 @@ import {
   authenticateProxyRequest,
   logProxyUsage,
   resolveProxyAttribution,
+  runAgentRuntimeGate,
   type PromptRiskResult,
   type ProxyFlagCategory,
 } from "./proxy-common";
@@ -109,6 +110,8 @@ export async function handleBedrockProxy(req: NextRequest, subpath: string): Pro
   const rawModelId = parsed.modelId;
   const model = rawModelId ? normalizeModelId(rawModelId) : "unknown";
   const { department, userEmail, aiSystemId, agent, client } = await resolveProxyAttribution(req);
+  const agentBlocked = await runAgentRuntimeGate({ agent, provider: PROVIDER, aiSystemId, userEmail, department });
+  if (agentBlocked) return agentBlocked;
 
   // The body must reach Bedrock byte-for-byte (SigV4 covers its hash), so it
   // is never re-serialised; governance reads a parsed copy.

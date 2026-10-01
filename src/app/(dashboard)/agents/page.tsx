@@ -138,6 +138,7 @@ export default async function AgentsPage({
                     <Badge variant={statusBadgeVariant(agent.status)}>
                       {agent.status.replace("_", " ")}
                     </Badge>
+                    {agent.suspendedAt && <Badge variant="critical">SUSPENDED</Badge>}
                     <AutonomyBadge level={agent.autonomyLevel} />
                     {agent.humanReviewRequired && (
                       <Badge variant="info">HITL</Badge>

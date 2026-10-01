@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Pencil } from "lucide-react";
+import { OctagonX, Pencil } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth-guard";
+import { formatDateTime } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/badge";
@@ -9,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
 import { AgentAIRiskCard } from "@/components/agents/agent-ai-risk-card";
 import { McpGovernanceCard } from "@/components/agents/mcp-governance-card";
+import { AgentKillSwitch } from "@/components/agents/agent-kill-switch";
 
 function daysAgo(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -20,10 +23,13 @@ export default async function AgentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await getSession();
+  const canOperate = session?.user.role === "ADMIN" || session?.user.role === "COMPLIANCE_OFFICER";
   const agent = await prisma.aIAgent.findUnique({
     where: { id },
     include: {
       owner: { select: { name: true, email: true } },
+      suspendedBy: { select: { name: true, email: true } },
       aiSystem: {
         select: {
           id: true,
@@ -62,6 +68,9 @@ export default async function AgentDetailPage({
   return (
     <div className="space-y-6">
       <PageHeader title={agent.name} description={agent.description ?? undefined}>
+        {canOperate && (
+          <AgentKillSwitch agentId={agent.id} agentName={agent.name} suspended={!!agent.suspendedAt} />
+        )}
         <Link href={`/agents/${agent.id}/edit`}>
           <Button variant="outline">
             <Pencil className="mr-2 h-4 w-4" /> Edit
@@ -72,9 +81,49 @@ export default async function AgentDetailPage({
       <div className="flex flex-wrap gap-2">
         <Badge variant={riskBadgeVariant(agent.riskLevel)}>Risk: {agent.riskLevel}</Badge>
         <Badge variant={statusBadgeVariant(agent.status)}>{agent.status.replace("_", " ")}</Badge>
+        {agent.suspendedAt && <Badge variant="critical">SUSPENDED</Badge>}
         <AutonomyBadge level={agent.autonomyLevel} />
         {agent.humanReviewRequired && <Badge variant="info">HITL Required</Badge>}
       </div>
+
+      {(agent.suspendedAt || agent.status === "RETIRED") && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-lg border border-[var(--critical-border)] bg-[var(--critical-dim)] px-4 py-3 text-sm"
+        >
+          <OctagonX className="mt-0.5 h-4 w-4 shrink-0 text-[var(--critical)]" />
+          <div className="space-y-1">
+            <p className="font-medium text-[var(--critical-strong)]">
+              Traffic blocked at the proxy
+              {agent.suspendedAt ? " — agent suspended" : " — agent retired"}
+            </p>
+            <p className="text-[var(--text-secondary)]">
+              {agent.suspendedAt ? (
+                <>
+                  Suspended {formatDateTime(agent.suspendedAt)}
+                  {agent.suspendedBy ? ` by ${agent.suspendedBy.name ?? agent.suspendedBy.email}` : ""}.{" "}
+                  {agent.suspendedReason ? <>Reason: {agent.suspendedReason} </> : null}
+                  Every request carrying <code className="text-xs">x-agent-id: {agent.id}</code> is refused with 403 and
+                  recorded under{" "}
+                  <Link href="/compliance/denials" className="text-[var(--accent)] hover:underline">
+                    Compliance → Denials
+                  </Link>
+                  . Use <strong>Resume</strong> to allow traffic again.
+                </>
+              ) : (
+                <>
+                  Retired agents cannot send traffic through the proxy. Every request carrying{" "}
+                  <code className="text-xs">x-agent-id: {agent.id}</code> is refused with 403 and recorded under{" "}
+                  <Link href="/compliance/denials" className="text-[var(--accent)] hover:underline">
+                    Compliance → Denials
+                  </Link>
+                  . Change the status on the edit page to allow requests again.
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
