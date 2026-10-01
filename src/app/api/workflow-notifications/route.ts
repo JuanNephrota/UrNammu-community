@@ -34,6 +34,7 @@ export async function GET() {
       agentApprovals,
       agentOverdueReviews,
       reviewAlerts,
+      pendingReviews,
     ] = await Promise.all([
       prisma.systemApproval.findMany({
         orderBy: { createdAt: "desc" },
@@ -84,6 +85,12 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
         take: 5,
         select: { id: true, title: true, createdAt: true },
+      }),
+      prisma.humanReviewRequest.findMany({
+        where: { status: "PENDING" },
+        orderBy: { lastSeenAt: "desc" },
+        take: 5,
+        select: { id: true, lastSeenAt: true, calls: true, agent: { select: { name: true } } },
       }),
     ]);
 
@@ -146,6 +153,15 @@ export async function GET() {
         nextReviewDate: agent.nextReviewDate ?? now,
       })),
       reviewAlerts,
+      pendingReviews: pendingReviews.map((r) => ({
+        id: r.id,
+        agentName: r.agent.name,
+        tool:
+          Array.isArray(r.calls) && r.calls[0] && typeof r.calls[0] === "object"
+            ? String((r.calls[0] as { tool?: string }).tool ?? "a tool call")
+            : "a tool call",
+        lastSeenAt: r.lastSeenAt,
+      })),
       overdueReviews: overdueReviews.map((system: {
         id: string;
         name: string;

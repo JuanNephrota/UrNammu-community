@@ -29,6 +29,7 @@ import {
   Plug,
   Users,
   Laptop,
+  Hand,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -67,6 +68,7 @@ const navItems = [
       { name: "Cursor", href: "/oversight/cursor", icon: MousePointer2 },
       { name: "GitHub Copilot", href: "/oversight/github-copilot", icon: GitBranch },
       { name: "MCP Activity", href: "/oversight/mcp-activity", icon: Plug },
+      { name: "Human Review", href: "/oversight/human-review", icon: Hand },
       { name: "Compliance", href: "/compliance", icon: FileCheck },
     ],
   },

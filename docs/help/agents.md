@@ -67,6 +67,18 @@ Tool patterns accept a bare tool name (any server), `server/tool`, or a glob wit
 
 Matches are flagged on the tool-call rows (**Oversight → MCP Activity**) and listed on the agent's **Human Review Triggers** card. Gemini and Bedrock traffic is not evaluated yet.
 
+## Pending review queue
+
+In Enforce mode a withheld call also becomes a **pending review** under **Oversight → Human Review**: the agent, the tool, the trigger that matched, and the call's arguments. The `403` the agent received carries the request id. Identical re-runs collapse onto the same request and count up.
+
+A reviewer can **Approve** or **Reject**:
+
+- **Approve this exact call** — a waiver for the same tool and arguments, once, within 24 hours.
+- **Approve any matching call** — a waiver for any call matching the same trigger, up to 10 times in the next hour.
+- **Reject** — the call stays blocked; the agent will be withheld again if it retries.
+
+Nothing is replayed. After an approval the agent (or whoever runs it) re-issues the request; the proxy recognises the waiver, lets the matching call through, and consumes one use. Waivers expire on their own; pending requests expire after 7 days. Both proxies apply waivers, so a decision in the console takes effect at the next call.
+
 ## MCP tool governance
 
 The **MCP Tool Governance** card on the agent detail page shows which MCP servers the agent has declared and which tools its model actually invoked, as seen by the proxy. Traffic is attributed with the `x-agent-id` request header (the agent's id is shown on the card); `x-ai-system-id` still links usage to the parent system.

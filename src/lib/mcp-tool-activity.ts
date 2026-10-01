@@ -21,6 +21,7 @@ import {
   type ObservedToolUse,
 } from "./mcp-tool-governance";
 import { agentBlockedDenialReason, type AgentBlockedVerdict } from "./agent-runtime-gate";
+import { describeWithheldCalls, reviewFingerprint, waiverCovers } from "./review-fingerprint";
 import {
   HUMAN_REVIEW_ALERT_SOURCE,
   evaluateHumanReviewTriggers,
@@ -224,6 +225,8 @@ export async function recordHumanReviewMatches(input: {
   department: string | null;
   requestId?: string | null;
   isStreaming: boolean;
+  /** Pending review request the withheld calls were recorded under (enforce mode). */
+  reviewRequestId?: string | null;
 }) {
   if (input.matches.length === 0) return;
   const aiSystemId = input.aiSystemId ?? input.agent.aiSystemId ?? null;
@@ -244,6 +247,7 @@ export async function recordHumanReviewMatches(input: {
           isStreaming: input.isStreaming,
           blocked: input.blocked,
           requestId: input.requestId ?? null,
+          reviewRequestId: input.reviewRequestId ?? null,
           matches: summarizeMatches(input.matches),
         },
       },
@@ -261,7 +265,11 @@ export async function recordHumanReviewMatches(input: {
         title: `Human review required: ${input.agent.name} — ${label}`,
         description: `${input.blocked ? "Response withheld (enforce mode)." : "Observed in monitor mode; the call was forwarded."} Agent "${input.agent.name}" called ${tools} via ${input.provider}/${input.model}: ${group
           .map((m) => m.detail)
-          .join("; ")}. Review the agent's Human Review card and decide whether to resume, adjust the trigger, or suspend the agent.`,
+          .join("; ")}. ${
+          input.reviewRequestId
+            ? `Pending review ${input.reviewRequestId}: approve or reject it under Oversight → Human Review; approving lets the agent through when it re-runs the call.`
+            : "Review the agent's Human Review card and decide whether to adjust the trigger or suspend the agent."
+        }`,
         severity: "HIGH",
         aiSystemId,
       });
@@ -454,5 +462,109 @@ export async function recordToolActivity(input: {
     }
   } catch (err) {
     console.error("recordToolActivity failed:", err);
+  }
+}
+
+// ─── Pending review queue ──────────────────────────────────────────────────
+
+export type ReviewAdjudication = {
+  /** Matches with no waiver: the response is withheld. */
+  withheld: HumanReviewMatch[];
+  /** Matches an approved waiver covered; each use consumed one waiver use. */
+  waived: HumanReviewMatch[];
+  /** The pending request the withheld matches were recorded under. */
+  request: { id: string; url: string | null } | null;
+};
+
+export function humanReviewUrl(id: string): string | null {
+  const base = (process.env.NEXTAUTH_URL ?? process.env.URNAMMU_APP_URL ?? "").replace(/\/$/, "");
+  return base ? `${base}/oversight/human-review?request=${id}` : null;
+}
+
+/**
+ * Decide what to do with matched triggers in enforce mode: consume approved
+ * waivers for the matches they cover, and record the rest as one pending
+ * review request (identical re-runs collapse onto the same request). Fails
+ * closed: on a DB error everything is withheld and no request id is returned.
+ */
+export async function adjudicateHumanReview(input: {
+  agent: AgentGovernance;
+  matches: HumanReviewMatch[];
+  provider: string;
+  model: string;
+  requestId?: string | null;
+  userEmail: string | null;
+  department: string | null;
+}): Promise<ReviewAdjudication> {
+  const now = new Date();
+  try {
+    const setFingerprint = reviewFingerprint(input.matches);
+    const waivers = await prisma.humanReviewRequest.findMany({
+      where: { agentId: input.agent.id, status: "APPROVED", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+      select: { id: true, waiverScope: true, fingerprint: true, triggers: true, expiresAt: true, usesRemaining: true },
+    });
+    const consumed = new Map<string, number>();
+    const waived: HumanReviewMatch[] = [];
+    const withheld: HumanReviewMatch[] = [];
+    for (const match of input.matches) {
+      const waiver = waivers.find(
+        (w) =>
+          (w.usesRemaining === null || w.usesRemaining - (consumed.get(w.id) ?? 0) > 0) &&
+          waiverCovers(w, match, setFingerprint, now)
+      );
+      if (waiver) {
+        waived.push(match);
+        consumed.set(waiver.id, (consumed.get(waiver.id) ?? 0) + 1);
+      } else {
+        withheld.push(match);
+      }
+    }
+    for (const [id, uses] of consumed) {
+      const waiver = waivers.find((w) => w.id === id)!;
+      const remaining = waiver.usesRemaining === null ? null : waiver.usesRemaining - uses;
+      await prisma.humanReviewRequest.update({
+        where: { id },
+        data: {
+          usesRemaining: remaining,
+          lastWaivedAt: now,
+          status: remaining !== null && remaining <= 0 ? "CONSUMED" : "APPROVED",
+        },
+      });
+    }
+    if (withheld.length === 0) return { withheld, waived, request: null };
+
+    const fingerprint = reviewFingerprint(withheld);
+    const existing = await prisma.humanReviewRequest.findFirst({
+      where: { agentId: input.agent.id, fingerprint, status: "PENDING" },
+      select: { id: true },
+    });
+    let id: string;
+    if (existing) {
+      await prisma.humanReviewRequest.update({
+        where: { id: existing.id },
+        data: { occurrences: { increment: 1 }, lastSeenAt: now, requestId: input.requestId ?? undefined },
+      });
+      id = existing.id;
+    } else {
+      const created = await prisma.humanReviewRequest.create({
+        data: {
+          agentId: input.agent.id,
+          provider: input.provider,
+          model: input.model,
+          fingerprint,
+          triggers: [...new Set(withheld.map((m) => m.triggerLabel))],
+          calls: describeWithheldCalls(withheld),
+          requestId: input.requestId ?? null,
+          userEmail: input.userEmail,
+          department: input.department,
+        },
+        select: { id: true },
+      });
+      id = created.id;
+    }
+    return { withheld, waived, request: { id, url: humanReviewUrl(id) } };
+  } catch (err) {
+    console.error("adjudicateHumanReview failed; withholding everything:", err);
+    return { withheld: input.matches, waived: [], request: null };
   }
 }

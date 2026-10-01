@@ -328,6 +328,23 @@ HTTP 403
 
 **Where to look.** The agent's *Human Review Triggers* card lists the triggers, the enforcement mode and the most recent matches (withheld or observed). Matched tool-call rows are flagged under **Oversight → MCP Activity**. The approval gate recommends enforcing triggers for human-in-the-loop and human-on-the-loop agents that only monitor.
 
+**Pending review queue** (Oversight → *Human Review*). In Enforce mode every withheld call also becomes a pending review request: agent, tool, matching trigger, and the call's arguments (canonical JSON, truncated at 4 000 characters) so a reviewer can judge it. Identical re-runs collapse onto the same request (`occurrences`). The `403` the agent received carries the request id:
+
+```json
+{ "error": { "type": "human_review_required",
+             "message": "Response withheld: … Pending review hr_123 (https://…/oversight/human-review?request=hr_123): once a reviewer approves it, re-run the call and the proxy will let it through.",
+             "review": { "id": "hr_123", "url": "…", "status": "PENDING" },
+             "violations": [ … ] } }
+```
+
+| Decision | Effect |
+|---|---|
+| Approve this exact call | Waiver for the same tool **and** arguments: once, within 24 h. |
+| Approve any matching call | Waiver for any call matching the same trigger: up to 10 uses, within 1 h. |
+| Reject | Stays blocked; a retry is withheld again (same request, occurrences +1). |
+
+Nothing is replayed: the agent, or whoever runs it, re-issues the request. Both proxies check approved waivers before withholding, let covered calls through, and consume a use (the waiver becomes `CONSUMED` at zero). Waivers expire on their own; pending requests expire after 7 days (daily housekeeping with the baseline job). Decisions are audited (`APPROVE_REVIEW` / `REJECT_REVIEW`), pending requests appear in the notifications bell, and the agent's *Human Review Triggers* card shows an "awaiting review" count.
+
 ### Charter and Approval Gate
 
 Agents go through the same approve-before-deploy gate as systems, with agent-specific blockers.

@@ -38,12 +38,15 @@ export function HumanReviewCard({
   enforcement,
   recentMatches,
   canEdit,
+  pendingReviews,
 }: {
   agent: { id: string; humanReviewRequired: boolean; autonomyLevel: string };
   triggers: HumanReviewTrigger[];
   enforcement: HumanReviewEnforcement;
   recentMatches: HumanReviewMatchRow[];
   canEdit: boolean;
+  /** Withheld calls waiting for a reviewer. */
+  pendingReviews?: number;
 }) {
   const enforceable = triggers.filter(isEnforceableTrigger);
   const notes = triggers.filter((t) => t.kind === "note");
@@ -60,6 +63,11 @@ export function HumanReviewCard({
           </span>
           <span className="flex items-center gap-2">
             <Badge variant={enforce ? "success" : "warning"}>{enforce ? "ENFORCE" : "MONITOR"}</Badge>
+            {(pendingReviews ?? 0) > 0 && (
+              <Link href={`/oversight/human-review?agentId=${agent.id}`} className="inline-flex">
+                <Badge variant="critical">{pendingReviews} awaiting review</Badge>
+              </Link>
+            )}
             <Badge variant="outline">
               {enforceable.length} enforceable{notes.length ? ` · ${notes.length} note${notes.length === 1 ? "" : "s"}` : ""}
             </Badge>
@@ -76,9 +84,17 @@ export function HumanReviewCard({
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p className="text-xs text-[var(--text-muted)]">
-          {enforce
-            ? "A matching tool call withholds the model's response at the proxy (403 human_review_required) and raises a HIGH alert. Streams are buffered until the model finishes."
-            : "A matching tool call is recorded as a dry-run denial and raises a HIGH alert; the response is forwarded. Switch to Enforce to hold it."}
+          {enforce ? (
+            <>
+              A matching tool call withholds the model&apos;s response at the proxy (403 human_review_required), queues it under{" "}
+              <Link href={`/oversight/human-review?agentId=${agent.id}`} className="text-[var(--accent)] hover:underline">
+                Human Review
+              </Link>{" "}
+              and raises a HIGH alert. Approving there lets the agent through when it re-runs the call. Streams are buffered until the model finishes.
+            </>
+          ) : (
+            "A matching tool call is recorded as a dry-run denial and raises a HIGH alert; the response is forwarded. Switch to Enforce to hold it."
+          )}
         </p>
 
         {triggers.length === 0 ? (

@@ -143,6 +143,14 @@ enum GovernanceExceptionStatus {
   REVOKED
 }
 
+enum HumanReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CONSUMED
+}
+
 enum VendorContractStatus {
   UNKNOWN
   IN_REVIEW
@@ -247,6 +255,7 @@ model User {
   riskOwnedAgents        AIAgent[] @relation("AgentRiskOwner")
   retiredAgents          AIAgent[] @relation("AgentRetiredBy")
   mcpCatalogApprovals    McpCatalogEntry[] @relation("McpCatalogApprovedBy")
+  humanReviewDecisions   HumanReviewRequest[] @relation("HumanReviewDecidedBy")
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
   syncRuns     ProviderSyncRun[]
@@ -401,6 +410,7 @@ model AIAgent {
   governanceReviews AgentGovernanceReview[]
   incidents         GovernanceIncident[]
   behaviorBaseline  AgentBehaviorBaseline?
+  humanReviewRequests HumanReviewRequest[]
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
   discoveries  DiscoveredAgent[]
@@ -446,6 +456,46 @@ model AgentBehaviorBaseline {
   lastFindings    Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+// A tool call withheld by a human-review trigger (enforce mode), waiting for
+// a reviewer. Approving records a waiver (exact call, or any call matching
+// the trigger) that both proxies honour when the agent re-runs the call.
+// See src/lib/human-review-queue.ts. Mirrored in ai-proxy (WRITE model).
+model HumanReviewRequest {
+  id            String            @id @default(cuid())
+  agent         AIAgent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId       String
+  status        HumanReviewStatus @default(PENDING)
+  provider      String
+  model         String?
+  /// sha256 over the withheld calls (tool + canonical arguments); identical re-runs collapse.
+  fingerprint   String
+  /// Trigger labels that matched, for scope "trigger" waivers.
+  triggers      String[]          @default([])
+  /// [{ tool, kind, trigger, detail, input }] — input is canonical JSON, truncated.
+  calls         Json
+  occurrences   Int               @default(1)
+  firstSeenAt   DateTime          @default(now())
+  lastSeenAt    DateTime          @default(now())
+  requestId     String?
+  userEmail     String?
+  department    String?
+  decidedBy     User?             @relation("HumanReviewDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?           @db.Text
+  /// "exact" (same tool + arguments) | "trigger" (any call matching the same trigger)
+  waiverScope   String?
+  expiresAt     DateTime?
+  usesRemaining Int?
+  lastWaivedAt  DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([agentId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([agentId, fingerprint, status])
 }
 
 // Agent-scoped twins of SystemApproval / GovernanceReview. Kept separate rather

@@ -39,6 +39,7 @@ const WRITE_MODELS = [
   "CostBucket",
   "AgentToolCall",
   "AgentToolProfile",
+  "HumanReviewRequest",
 ];
 // Models the proxy only reads — the proxy may declare a subset.
 const READ_MODELS = ["User", "Policy", "PolicyAssignment", "AppSetting", "AIAgent", "McpCatalogEntry"];

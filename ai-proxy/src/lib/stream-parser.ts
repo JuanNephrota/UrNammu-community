@@ -29,7 +29,16 @@ import {
   splitEventStreamFrames,
   type OpenAIEndpoint,
 } from "./proxy-providers";
-import { evaluateAgentReviewTriggers, recordHumanReviewMatches, recordToolActivity } from "./tool-activity";
+import {
+  agentEnforcesReview,
+  evaluateAgentReviewTriggers,
+  recordHumanReviewMatches,
+  recordToolActivity,
+} from "./tool-activity";
+import type { HumanReviewMatch } from "./human-review-triggers";
+
+/** What the handler decided about review-trigger matches on a buffered stream, for finalizeStream to record. */
+export type StreamReviewDecision = { blocked: boolean; reviewRequestId: string | null; withheld: HumanReviewMatch[] };
 import type { LoadedAgent } from "./agent-loader";
 
 export interface StreamContext {
@@ -64,8 +73,8 @@ export interface StreamContext {
    * Claude Code / Cursor telemetry that carried the same prompt.
    */
   promptHash?: string | null;
-  /** Set when the handler already withheld this response over a human-review trigger. */
-  reviewDecision?: "blocked";
+  /** The handler's adjudication of review-trigger matches on a buffered (enforce-mode) stream. */
+  reviewDecision?: StreamReviewDecision;
 }
 
 /** Shared tail: response DLP, the usage row (when tokens were charged) and tool activity. */
@@ -140,18 +149,25 @@ async function finalizeStream(
     reviewMatches,
   });
   if (ctx.agent && reviewMatches.length > 0) {
-    await recordHumanReviewMatches({
-      agent: ctx.agent,
-      matches: reviewMatches,
-      blocked: ctx.reviewDecision === "blocked",
-      provider: ctx.provider,
-      model: ctx.model,
-      aiSystemId: ctx.aiSystemId,
-      userEmail: ctx.userEmail,
-      department: ctx.department,
-      requestId: ctx.requestId,
-      isStreaming: true,
-    });
+    // Monitor mode: every match is a dry run. Enforce mode: the handler
+    // already adjudicated; record only what it withheld.
+    const enforcing = agentEnforcesReview(ctx.agent);
+    const toRecord = !enforcing ? reviewMatches : ctx.reviewDecision?.blocked ? ctx.reviewDecision.withheld : [];
+    if (toRecord.length > 0) {
+      await recordHumanReviewMatches({
+        agent: ctx.agent,
+        matches: toRecord,
+        blocked: enforcing,
+        reviewRequestId: ctx.reviewDecision?.reviewRequestId ?? null,
+        provider: ctx.provider,
+        model: ctx.model,
+        aiSystemId: ctx.aiSystemId,
+        userEmail: ctx.userEmail,
+        department: ctx.department,
+        requestId: ctx.requestId,
+        isStreaming: true,
+      });
+    }
   }
 }
 

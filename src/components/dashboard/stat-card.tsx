@@ -19,6 +19,9 @@ import {
   GitPullRequest,
   Percent,
   type LucideIcon,
+  Hand,
+  History,
+  ShieldCheck,
 } from "lucide-react";
 
 const iconMap: Record<string, LucideIcon> = {
@@ -37,6 +40,9 @@ const iconMap: Record<string, LucideIcon> = {
   GitBranch,
   GitPullRequest,
   Percent,
+  Hand,
+  History,
+  ShieldCheck,
 };
 
 interface StatCardProps {

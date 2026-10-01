@@ -134,6 +134,48 @@ model AIAgent {
 
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
+  humanReviewRequests HumanReviewRequest[]
+}
+
+enum HumanReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CONSUMED
+}
+
+// WRITE model: the proxy creates pending requests and consumes waivers.
+// Scalar columns must match the main schema exactly (check-schema-drift).
+model HumanReviewRequest {
+  id            String            @id @default(cuid())
+  agent         AIAgent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId       String
+  status        HumanReviewStatus @default(PENDING)
+  provider      String
+  model         String?
+  fingerprint   String
+  triggers      String[]          @default([])
+  calls         Json
+  occurrences   Int               @default(1)
+  firstSeenAt   DateTime          @default(now())
+  lastSeenAt    DateTime          @default(now())
+  requestId     String?
+  userEmail     String?
+  department    String?
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?           @db.Text
+  waiverScope   String?
+  expiresAt     DateTime?
+  usesRemaining Int?
+  lastWaivedAt  DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([agentId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([agentId, fingerprint, status])
 }
 
 // Read-only mirror; the main app owns writes. Merged into an agent's

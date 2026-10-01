@@ -396,12 +396,20 @@ export function summarizeMatches(matches: HumanReviewMatch[]) {
  * The 403 body both proxies return in enforce mode. Same shape as the other
  * proxy refusals so clients that parse `violations` need no new handling.
  */
-export function humanReviewBlockedBody(agent: { id: string; name: string }, matches: HumanReviewMatch[]) {
+export function humanReviewBlockedBody(
+  agent: { id: string; name: string },
+  matches: HumanReviewMatch[],
+  review?: { id: string; url: string | null } | null
+) {
   const first = matches[0];
+  const next = review
+    ? ` Pending review ${review.id}${review.url ? ` (${review.url})` : ""}: once a reviewer approves it, re-run the call and the proxy will let it through.`
+    : " A reviewer must act before the agent may continue.";
   return {
     error: {
       type: HUMAN_REVIEW_RULE,
-      message: `Response withheld: agent "${agent.name}" attempted ${first?.tool ?? "a tool call"} that requires human review (${first?.triggerLabel ?? "trigger"}). A reviewer must act before the agent may continue.`,
+      message: `Response withheld: agent "${agent.name}" attempted ${first?.tool ?? "a tool call"} that requires human review (${first?.triggerLabel ?? "trigger"}).${next}`,
+      ...(review ? { review: { id: review.id, url: review.url, status: "PENDING" } } : {}),
       violations: matches.map((m) => ({
         rule: HUMAN_REVIEW_RULE,
         trigger: m.triggerLabel,

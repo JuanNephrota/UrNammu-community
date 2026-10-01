@@ -22,8 +22,19 @@ export function buildWorkflowNotifications(input: {
   agentOverdueReviews?: Array<{ id: string; agentName: string; nextReviewDate: Date }>;
   /** Open human-review trigger alerts (a tool call matched a trigger). */
   reviewAlerts?: Array<{ id: string; title: string; createdAt: Date }>;
+  /** Withheld calls waiting for a reviewer. */
+  pendingReviews?: Array<{ id: string; agentName: string; tool: string; lastSeenAt: Date }>;
 }) {
   const items: WorkflowNotification[] = [
+    ...(input.pendingReviews ?? []).map((review) => ({
+      id: `pending-review-${review.id}`,
+      title: `${review.agentName} is waiting for a human decision`,
+      detail: `${review.tool} was withheld by a review trigger. Approve or reject it to unblock the agent.`,
+      href: `/oversight/human-review?request=${review.id}`,
+      category: "approval" as const,
+      createdAt: review.lastSeenAt,
+      tone: "critical" as const,
+    })),
     ...(input.agentApprovals ?? []).map((approval) => ({
       id: `agent-approval-${approval.id}`,
       title: `${approval.agentName} agent approval updated`,

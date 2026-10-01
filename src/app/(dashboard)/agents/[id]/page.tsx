@@ -104,6 +104,7 @@ export default async function AgentDetailPage({
   });
   const reviewTriggers = normalizeHumanReviewTriggers(agent.humanReviewTriggers);
   const reviewEnforcement = normalizeReviewEnforcement(agent.humanReviewEnforcement);
+  const pendingReviews = await prisma.humanReviewRequest.count({ where: { agentId: agent.id, status: "PENDING" } });
   const reviewDenials = await prisma.policyDenial.findMany({
     where: {
       requestMetadata: { path: ["agentId"], equals: agent.id },
@@ -245,6 +246,7 @@ export default async function AgentDetailPage({
             enforcement={reviewEnforcement}
             recentMatches={recentReviewMatches}
             canEdit={canOperate}
+            pendingReviews={pendingReviews}
           />
         </div>
         <AgentAccountabilityCard

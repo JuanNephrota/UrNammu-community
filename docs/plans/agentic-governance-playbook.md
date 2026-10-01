@@ -170,10 +170,16 @@ on the Executive page. Descriptive only; the approval gate stays the gate.
 ## Status
 
 All six items shipped between 2026-09-30 and 2026-10-01 (PRs #156, #159,
-#160 hotfix, #161, #162, #163 and the posture PR). Still open from the
-individual items: agent evidence artifacts; a "pending review" queue for
-calls withheld by a review trigger; an "approve for all agents" shortcut on
-the agent MCP card; Gemini/Bedrock argument extraction for review triggers.
+#160 hotfix, #161, #162, #163, #164).
+
+Follow-ups:
+- ☑ Pending review queue (`feat/human-review-queue`): withheld calls become
+  `HumanReviewRequest` rows; reviewers approve (exact-call or trigger-wide
+  waiver) or reject under Oversight → Human Review; both proxies honour
+  waivers when the agent re-runs the call.
+- ☐ Agent evidence artifacts.
+- ☐ "Approve for all agents" shortcut on the agent MCP card.
+- ☐ Gemini/Bedrock argument extraction for review triggers.
 
 ## Testing and validation (not building)
 

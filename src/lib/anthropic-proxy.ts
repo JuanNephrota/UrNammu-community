@@ -41,13 +41,18 @@ import {
   type ObservedToolUse,
 } from "./mcp-tool-governance";
 import {
+  adjudicateHumanReview,
   agentEnforcesReview,
   evaluateAgentReviewTriggers,
   recordHumanReviewMatches,
   recordToolActivity,
   type AgentGovernance,
 } from "./mcp-tool-activity";
-import { humanReviewBlockedBody } from "./human-review-triggers";
+import { humanReviewBlockedBody, type HumanReviewMatch } from "./human-review-triggers";
+
+/** What the handler decided about review-trigger matches on a buffered stream, for the extractor to record. */
+type StreamReviewDecision = { blocked: boolean; reviewRequestId: string | null; withheld: HumanReviewMatch[] };
+
 import type { ClientFingerprint } from "./caller-fingerprint";
 
 const ANTHROPIC_BASE = "https://api.anthropic.com";
@@ -270,6 +275,7 @@ export async function handleAnthropicProxy(
     // exist once the stream has finished, so hold the whole response, decide,
     // and either withhold it (403) or replay it to the client unchanged.
     let upstreamBody: ReadableStream<Uint8Array> = anthropicResponse.body;
+    let streamReviewDecision: StreamReviewDecision | undefined;
     if (anthropicResponse.ok && agentEnforcesReview(agent)) {
       const bufferedText = await anthropicResponse.text();
       const reviewMatches = await evaluateAgentReviewTriggers(
@@ -277,6 +283,25 @@ export async function handleAnthropicProxy(
         collectAnthropicToolUsesFromSse(bufferedText)
       );
       if (reviewMatches.length > 0) {
+        // Approved waivers let matching calls through; the rest are withheld
+        // and queued for a reviewer.
+        const adjudication = await adjudicateHumanReview({
+          agent,
+          matches: reviewMatches,
+          provider: "claude",
+          model,
+          requestId: anthropicResponse.headers.get("request-id"),
+          userEmail,
+          department,
+        });
+        streamReviewDecision = {
+          blocked: adjudication.withheld.length > 0,
+          reviewRequestId: adjudication.request?.id ?? null,
+          withheld: adjudication.withheld,
+        };
+      }
+      if (streamReviewDecision?.blocked) {
+        const decision = streamReviewDecision;
         after(
           extractStreamUsage(new Response(bufferedText).body!, {
             model,
@@ -291,12 +316,15 @@ export async function handleAnthropicProxy(
             client,
             declaredServers,
             requestId: anthropicResponse.headers.get("request-id"),
-            reviewDecision: "blocked",
+            reviewDecision: decision,
           }).catch((err) => {
             console.error("extractStreamUsage (withheld) failed:", err);
           })
         );
-        return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+        return NextResponse.json(
+          humanReviewBlockedBody(agent, decision.withheld, decision.reviewRequestId ? { id: decision.reviewRequestId, url: null } : null),
+          { status: 403 }
+        );
       }
       upstreamBody = new Response(bufferedText).body!;
     }
@@ -321,6 +349,7 @@ export async function handleAnthropicProxy(
         client,
         declaredServers,
         requestId: anthropicResponse.headers.get("request-id"),
+        reviewDecision: streamReviewDecision,
       }).catch((err) => {
         console.error("extractStreamUsage failed:", err);
       })
@@ -444,7 +473,11 @@ export async function handleAnthropicProxy(
   }
 
   const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
-  const reviewBlocked = reviewMatches.length > 0 && agentEnforcesReview(agent);
+  const adjudication =
+    agent && reviewMatches.length > 0 && agentEnforcesReview(agent)
+      ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider: "claude", model, requestId, userEmail, department })
+      : null;
+  const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;
 
   await recordToolActivity({
     agent,
@@ -458,11 +491,13 @@ export async function handleAnthropicProxy(
     toolUses,
     reviewMatches,
   });
-  if (agent && reviewMatches.length > 0) {
+  // Monitor mode records every match; enforce mode records only what was withheld.
+  if (agent && reviewMatches.length > 0 && (!adjudication || reviewBlocked)) {
     await recordHumanReviewMatches({
       agent,
-      matches: reviewMatches,
+      matches: adjudication ? adjudication.withheld : reviewMatches,
       blocked: reviewBlocked,
+      reviewRequestId: adjudication?.request?.id ?? null,
       provider: "claude",
       model,
       aiSystemId: attributedSystemId,
@@ -472,8 +507,8 @@ export async function handleAnthropicProxy(
       isStreaming: false,
     });
   }
-  if (reviewBlocked && agent) {
-    return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+  if (reviewBlocked && agent && adjudication) {
+    return NextResponse.json(humanReviewBlockedBody(agent, adjudication.withheld, adjudication.request), { status: 403 });
   }
 
   return NextResponse.json(responseBody, {
@@ -501,8 +536,8 @@ async function extractStreamUsage(
     client: ClientFingerprint;
     declaredServers: DeclaredMcpServer[];
     requestId: string | null;
-    /** Set when the handler already withheld this response over a review trigger. */
-    reviewDecision?: "blocked";
+    /** The handler's adjudication of review-trigger matches on a buffered (enforce-mode) stream. */
+    reviewDecision?: StreamReviewDecision;
   }
 ) {
   try {
@@ -633,18 +668,26 @@ async function extractStreamUsage(
       reviewMatches,
     });
     if (ctx.agent && reviewMatches.length > 0) {
-      await recordHumanReviewMatches({
-        agent: ctx.agent,
-        matches: reviewMatches,
-        blocked: ctx.reviewDecision === "blocked",
-        provider: "claude",
-        model: ctx.model,
-        aiSystemId: ctx.aiSystemId,
-        userEmail: ctx.userEmail,
-        department: ctx.department,
-        requestId: ctx.requestId,
-        isStreaming: true,
-      });
+      // Monitor mode: record every match as a dry run. Enforce mode: the
+      // handler already adjudicated; record only what it withheld (waived
+      // calls are not denials).
+      const enforcing = agentEnforcesReview(ctx.agent);
+      const toRecord = !enforcing ? reviewMatches : ctx.reviewDecision?.blocked ? ctx.reviewDecision.withheld : [];
+      if (toRecord.length > 0) {
+        await recordHumanReviewMatches({
+          agent: ctx.agent,
+          matches: toRecord,
+          blocked: enforcing,
+          reviewRequestId: ctx.reviewDecision?.reviewRequestId ?? null,
+          provider: "claude",
+          model: ctx.model,
+          aiSystemId: ctx.aiSystemId,
+          userEmail: ctx.userEmail,
+          department: ctx.department,
+          requestId: ctx.requestId,
+          isStreaming: true,
+        });
+      }
     }
   } catch (err) {
     console.error("Failed to extract stream usage:", err);

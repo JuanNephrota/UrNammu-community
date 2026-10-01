@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runAgentBaselines } from "@/lib/agent-baseline-data";
+import { expireHumanReviews } from "@/lib/human-review-queue";
 import { unauthorizedCronResponse } from "@/lib/cron-auth";
 
 export const runtime = "nodejs";
@@ -15,5 +16,11 @@ export async function GET(req: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const result = await runAgentBaselines();
-  return NextResponse.json(result, { status: result.ok ? 200 : 207 });
+  // Housekeeping for the review queue rides along: stale pending requests and
+  // lapsed waivers become EXPIRED.
+  const expired = await expireHumanReviews().catch((err) => {
+    console.error("expireHumanReviews failed:", err);
+    return null;
+  });
+  return NextResponse.json({ ...result, humanReviews: expired }, { status: result.ok ? 200 : 207 });
 }

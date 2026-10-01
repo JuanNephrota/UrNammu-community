@@ -26,6 +26,7 @@ import { loadPromptHashSalt } from "./prompt-hash-salt";
 import { extractOpenAIStreamUsage, type StreamContext } from "./stream-parser";
 import { scanResponseForSensitiveInfo } from "./sensitive-detect";
 import {
+  adjudicateHumanReview,
   agentEnforcesReview,
   evaluateAgentReviewTriggers,
   recordHumanReviewMatches,
@@ -421,13 +422,26 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
           collectOpenAIToolUsesFromSse(bufferedText, endpoint)
         );
         if (reviewMatches.length > 0) {
-          void extractOpenAIStreamUsage(Readable.from([bufferedText]), {
-            ...streamCtx,
-            reviewDecision: "blocked",
-          }).catch((err: unknown) => {
-            console.error("extractOpenAIStreamUsage (withheld) failed:", err);
+          const adjudication = await adjudicateHumanReview({
+            agent,
+            matches: reviewMatches,
+            provider,
+            model,
+            requestId,
+            userEmail,
+            department,
           });
-          return { status: 403, jsonBody: humanReviewBlockedBody(agent, reviewMatches) };
+          streamCtx.reviewDecision = {
+            blocked: adjudication.withheld.length > 0,
+            reviewRequestId: adjudication.request?.id ?? null,
+            withheld: adjudication.withheld,
+          };
+          if (streamCtx.reviewDecision.blocked) {
+            void extractOpenAIStreamUsage(Readable.from([bufferedText]), streamCtx).catch((err: unknown) => {
+              console.error("extractOpenAIStreamUsage (withheld) failed:", err);
+            });
+            return { status: 403, jsonBody: humanReviewBlockedBody(agent, adjudication.withheld, adjudication.request) };
+          }
         }
         nodeStream = Readable.from([bufferedText]);
       } else {
@@ -526,7 +540,11 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
     }).catch((err) => console.error("logUsage failed:", err));
 
     const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
-    const reviewBlocked = reviewMatches.length > 0 && upstream.ok && agentEnforcesReview(agent);
+    const adjudication =
+      agent && reviewMatches.length > 0 && upstream.ok && agentEnforcesReview(agent)
+        ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider, model, requestId, userEmail, department })
+        : null;
+    const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;
 
     await recordToolActivity({
       agent,
@@ -540,11 +558,12 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
       toolUses,
       reviewMatches,
     });
-    if (agent && reviewMatches.length > 0) {
+    if (agent && reviewMatches.length > 0 && (!adjudication || reviewBlocked)) {
       await recordHumanReviewMatches({
         agent,
-        matches: reviewMatches,
+        matches: adjudication ? adjudication.withheld : reviewMatches,
         blocked: reviewBlocked,
+        reviewRequestId: adjudication?.request?.id ?? null,
         provider,
         model,
         aiSystemId,
@@ -554,8 +573,8 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
         isStreaming: false,
       });
     }
-    if (reviewBlocked && agent) {
-      return { status: 403, jsonBody: humanReviewBlockedBody(agent, reviewMatches) };
+    if (reviewBlocked && agent && adjudication) {
+      return { status: 403, jsonBody: humanReviewBlockedBody(agent, adjudication.withheld, adjudication.request) };
     }
 
     return {

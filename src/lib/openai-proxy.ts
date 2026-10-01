@@ -45,13 +45,18 @@ import {
   type ObservedToolUse,
 } from "./mcp-tool-governance";
 import {
+  adjudicateHumanReview,
   agentEnforcesReview,
   evaluateAgentReviewTriggers,
   recordHumanReviewMatches,
   recordToolActivity,
   type AgentGovernance,
 } from "./mcp-tool-activity";
-import { humanReviewBlockedBody } from "./human-review-triggers";
+import { humanReviewBlockedBody, type HumanReviewMatch } from "./human-review-triggers";
+
+/** What the handler decided about review-trigger matches on a buffered stream, for the extractor to record. */
+type StreamReviewDecision = { blocked: boolean; reviewRequestId: string | null; withheld: HumanReviewMatch[] };
+
 import {
   authenticateProxyRequest,
   logProxyUsage,
@@ -524,6 +529,7 @@ export async function handleOpenAIProxy(
     // Human-review triggers in enforce mode: hold the whole stream, decide,
     // then either withhold it (403) or replay it to the client unchanged.
     let upstreamBody: ReadableStream<Uint8Array> = responsePayload.body;
+    let streamReviewDecision: StreamReviewDecision | undefined;
     if (upstream.ok && agentEnforcesReview(agent)) {
       const bufferedText = await new Response(responsePayload.body).text();
       const reviewMatches = await evaluateAgentReviewTriggers(
@@ -531,23 +537,40 @@ export async function handleOpenAIProxy(
         collectOpenAIToolUsesFromSse(bufferedText, endpoint)
       );
       if (reviewMatches.length > 0) {
-        after(
-          extractOpenAIStreamUsage(new Response(bufferedText).body!, { ...streamCtx, reviewDecision: "blocked" }).catch(
-            (err) => {
-              logger.error(`${logPrefix}.stream_usage_failed`, {
-                model,
-                error: err instanceof Error ? err.message : "Unknown error",
-              });
-            }
-          )
-        );
-        return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+        const adjudication = await adjudicateHumanReview({
+          agent,
+          matches: reviewMatches,
+          provider,
+          model,
+          requestId,
+          userEmail,
+          department,
+        });
+        streamReviewDecision = {
+          blocked: adjudication.withheld.length > 0,
+          reviewRequestId: adjudication.request?.id ?? null,
+          withheld: adjudication.withheld,
+        };
+        if (streamReviewDecision.blocked) {
+          const decision = streamReviewDecision;
+          after(
+            extractOpenAIStreamUsage(new Response(bufferedText).body!, { ...streamCtx, reviewDecision: decision }).catch(
+              (err) => {
+                logger.error(`${logPrefix}.stream_usage_failed`, {
+                  model,
+                  error: err instanceof Error ? err.message : "Unknown error",
+                });
+              }
+            )
+          );
+          return NextResponse.json(humanReviewBlockedBody(agent, decision.withheld, adjudication.request), { status: 403 });
+        }
       }
       upstreamBody = new Response(bufferedText).body!;
     }
     const [clientStream, logStream] = upstreamBody.tee();
     after(
-      extractOpenAIStreamUsage(logStream, streamCtx).catch((err) => {
+      extractOpenAIStreamUsage(logStream, { ...streamCtx, reviewDecision: streamReviewDecision }).catch((err) => {
         logger.error(`${logPrefix}.stream_usage_failed`, {
           model,
           error: err instanceof Error ? err.message : "Unknown error",
@@ -671,7 +694,11 @@ export async function handleOpenAIProxy(
     });
   }
   const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
-  const reviewBlocked = reviewMatches.length > 0 && agentEnforcesReview(agent);
+  const adjudication =
+    agent && reviewMatches.length > 0 && upstream.ok && agentEnforcesReview(agent)
+      ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider, model, requestId, userEmail, department })
+      : null;
+  const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;
   await recordToolActivity({
     agent,
     aiSystemId,
@@ -684,11 +711,12 @@ export async function handleOpenAIProxy(
     toolUses,
     reviewMatches,
   });
-  if (agent && reviewMatches.length > 0) {
+  if (agent && reviewMatches.length > 0 && (!adjudication || reviewBlocked)) {
     await recordHumanReviewMatches({
       agent,
-      matches: reviewMatches,
+      matches: adjudication ? adjudication.withheld : reviewMatches,
       blocked: reviewBlocked,
+      reviewRequestId: adjudication?.request?.id ?? null,
       provider,
       model,
       aiSystemId,
@@ -698,8 +726,8 @@ export async function handleOpenAIProxy(
       isStreaming: false,
     });
   }
-  if (reviewBlocked && agent && upstream.ok) {
-    return NextResponse.json(humanReviewBlockedBody(agent, reviewMatches), { status: 403 });
+  if (reviewBlocked && agent && adjudication) {
+    return NextResponse.json(humanReviewBlockedBody(agent, adjudication.withheld, adjudication.request), { status: 403 });
   }
 
   if (!upstream.ok) {
@@ -742,8 +770,8 @@ async function extractOpenAIStreamUsage(
     injectedUsage: boolean;
     baseMeta: Record<string, unknown>;
     logPrefix: string;
-    /** Set when the handler already withheld this response over a review trigger. */
-    reviewDecision?: "blocked";
+    /** The handler's adjudication of review-trigger matches on a buffered (enforce-mode) stream. */
+    reviewDecision?: StreamReviewDecision;
   }
 ) {
   try {
@@ -852,18 +880,23 @@ async function extractOpenAIStreamUsage(
       reviewMatches,
     });
     if (ctx.agent && reviewMatches.length > 0) {
-      await recordHumanReviewMatches({
-        agent: ctx.agent,
-        matches: reviewMatches,
-        blocked: ctx.reviewDecision === "blocked",
-        provider: ctx.provider,
-        model: ctx.model,
-        aiSystemId: ctx.aiSystemId,
-        userEmail: ctx.userEmail,
-        department: ctx.department,
-        requestId: ctx.requestId,
-        isStreaming: true,
-      });
+      const enforcing = agentEnforcesReview(ctx.agent);
+      const toRecord = !enforcing ? reviewMatches : ctx.reviewDecision?.blocked ? ctx.reviewDecision.withheld : [];
+      if (toRecord.length > 0) {
+        await recordHumanReviewMatches({
+          agent: ctx.agent,
+          matches: toRecord,
+          blocked: enforcing,
+          reviewRequestId: ctx.reviewDecision?.reviewRequestId ?? null,
+          provider: ctx.provider,
+          model: ctx.model,
+          aiSystemId: ctx.aiSystemId,
+          userEmail: ctx.userEmail,
+          department: ctx.department,
+          requestId: ctx.requestId,
+          isStreaming: true,
+        });
+      }
     }
   } catch (err) {
     logger.error(`${ctx.logPrefix}.stream_usage_failed`, {

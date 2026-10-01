@@ -49,6 +49,7 @@ test("agent approvals, overdue agent reviews, review-trigger alerts and agent in
     agentApprovals: [{ id: "ap-1", agentId: "a1", agentName: "Refund bot", decision: "CHANGES_REQUESTED", createdAt: new Date("2026-09-30T09:00:00Z") }],
     agentOverdueReviews: [{ id: "a2", agentName: "SOC bot", nextReviewDate: new Date("2026-09-01T00:00:00Z") }],
     reviewAlerts: [{ id: "al-1", title: "Human review required: Refund bot — Refund over $1,000", createdAt: new Date("2026-09-30T11:00:00Z") }],
+    pendingReviews: [{ id: "hr-1", agentName: "Refund bot", tool: "payments/issue_refund", lastSeenAt: new Date("2026-09-30T12:00:00Z") }],
   });
   const byId = Object.fromEntries(notifications.map((n) => [n.id, n]));
   assert.equal(byId["agent-approval-ap-1"].href, "/agents/a1#approval");
@@ -57,6 +58,8 @@ test("agent approvals, overdue agent reviews, review-trigger alerts and agent in
   assert.equal(byId["review-al-1"].category, "incident");
   assert.equal(byId["review-al-1"].tone, "critical");
   assert.equal(byId["incident-inc-1"].href, "/agents/a1#incidents");
+  assert.equal(byId["pending-review-hr-1"].href, "/oversight/human-review?request=hr-1");
+  assert.equal(byId["pending-review-hr-1"].tone, "critical");
   // newest first
-  assert.equal(notifications[0].id, "review-al-1");
+  assert.equal(notifications[0].id, "pending-review-hr-1");
 });
