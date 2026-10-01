@@ -158,12 +158,22 @@ Shipped:
 
 Not done: a per-agent "approve for all agents" shortcut from the MCP card.
 
-## 6. ☐ Agent governance posture card
+## 6. ☑ Agent governance posture card (PR: `feat/agent-posture-card`)
 
-The article's six governance-by-design dimensions — ownership, authority,
-decision making, control, boundaries, responsibilities — scored per agent from
-the fields above, on the detail page and rolled up into the executive view.
-Depends on 2–4.
+Shipped: `src/lib/agent-posture.ts` scores ownership, authority, decision
+making, control, boundaries and responsibilities (0–100 each, weights in the
+user guide) from the fields items 1–5 added; Governance Posture card on the
+agent page with linked gaps; tier badge on registry cards; portfolio
+roll-up (average, tier counts, weakest dimensions, agents needing attention)
+on the Executive page. Descriptive only; the approval gate stays the gate.
+
+## Status
+
+All six items shipped between 2026-09-30 and 2026-10-01 (PRs #156, #159,
+#160 hotfix, #161, #162, #163 and the posture PR). Still open from the
+individual items: agent evidence artifacts; a "pending review" queue for
+calls withheld by a review trigger; an "approve for all agents" shortcut on
+the agent MCP card; Gemini/Bedrock argument extraction for review triggers.
 
 ## Testing and validation (not building)
 

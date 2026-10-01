@@ -15,6 +15,9 @@ import {
 } from "@/lib/executive-posture";
 import { EXCLUDE_PROXY_DUPLICATES_COST } from "@/lib/oversight-telemetry";
 import { formatDate } from "@/lib/utils";
+import { loadAgentPostures } from "@/lib/agent-governance-data";
+import { summarizePostures } from "@/lib/agent-posture";
+import { AgentPostureSummaryCard } from "@/components/executive/agent-posture-summary-card";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -346,6 +349,8 @@ export default async function ExecutivePage() {
     .sort((a, b) => b.avgScore - a.avgScore)
     .slice(0, 6);
 
+  const agentPortfolio = summarizePostures(await loadAgentPostures());
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -365,6 +370,9 @@ export default async function ExecutivePage() {
 
       {/* Board KPI Cards */}
       <BoardSummaryCards metrics={posture.boardMetrics} />
+
+      {/* Agent governance posture (playbook dimensions) */}
+      <AgentPostureSummaryCard portfolio={agentPortfolio} />
 
       {/* Posture Trend */}
       <Card>

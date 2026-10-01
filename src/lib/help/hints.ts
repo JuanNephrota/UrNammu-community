@@ -34,6 +34,8 @@ export const HELP_HINTS = {
     "Purpose, the actions the agent may and may not take, the limits it must stay within, and how success is measured. Required before approval; reviewers and the AI risk review read it.",
   agent_approval_stages:
     "Which stakeholders must sign off before this agent can be approved. Owner, Security and Compliance are on by default; Legal is off. Approval restarts the review interval.",
+  agent_posture:
+    "Six governance-by-design dimensions from the agentic-AI playbook, each 0–100 from this agent's record: Ownership (roles), Authority (enforced allowlists and triggers), Decision making (human review, incidents, drift), Control (argument thresholds, baseline, review cadence), Boundaries (charter, parent, connected systems), Responsibilities (approval, stage reviews, risk basis). Descriptive, not a gate.",
   mcp_catalog:
     "Org-wide approved MCP servers (Oversight → MCP Activity). Agents that inherit the catalog get every server here on their allowlist; tool lists narrow only agents that keep their own tool allowlist. Both proxies apply it within a minute.",
   agent_baseline:

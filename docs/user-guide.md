@@ -20,6 +20,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [Kill Switch](#kill-switch)
    - [Accountability, Incidents and Retirement](#accountability-incidents-and-retirement)
    - [Behaviour Baselines and the Approved MCP Catalog](#behaviour-baselines-and-the-approved-mcp-catalog)
+   - [Governance Posture](#governance-posture)
 6. [Risk Center](#6-risk-center)
 7. [Compliance](#7-compliance)
    - [Framework Control Catalog & Crosswalk](#framework-control-catalog--crosswalk)
@@ -452,6 +453,21 @@ Findings raise `agent_behavior_drift` alerts (deduped 24 h per agent and finding
 **Approved MCP catalog** (Oversight → MCP Activity → *Approved MCP catalog*). Approve a server once, with the same grammar as the per-agent allowlists (`jira`, `mcp.example.com`, `*.internal.example.com`), optionally listing the tools allowed on it. Every agent with **Inherit the org-approved MCP catalog** ticked gets those servers on its allowlist at both proxies within a minute, shown on its MCP card as dashed "catalog" chips.
 
 Two deliberate rules: existing agents do **not** inherit until the box is ticked (so adding the first catalog entry never changes a running agent), and catalog **tool** lists narrow only agents that keep their own tool allowlist. An agent with no tool allowlist gets every tool on a catalog server, because the alternative would have to spell out `server/*` for the agent's own host- or URL-pattern servers, which the tool grammar cannot express. Withdrawing a server keeps the row for the audit trail and stops it being merged.
+
+### Governance Posture
+
+The playbook frames governance-by-design as six questions. The **Governance Posture** card on each agent answers them from the agent's own record, 0–100 each, and links every gap to where it is fixed.
+
+| Dimension | Question | Scored from |
+|---|---|---|
+| Ownership | Who owns outcomes across the lifecycle? | business owner (25), technical owner (25), risk owner (25), escalation contact (25) |
+| Authority | How are authority limits enforced technically? | MCP allowlist in force (30), MCP Enforce mode (20), enforceable triggers declared (25), triggers in Enforce mode (25) |
+| Decision making | When should a person intervene? | human-review setting consistent with autonomy (30), triggers declared (30), no open incidents (20), baseline mature (10) and no drift (10) |
+| Control | What threshold limits apply? | argument-level triggers (35), mature baseline (30), review cadence set and current (35) |
+| Boundaries | Within what parameters does it operate? | charter purpose / in-scope / boundaries (50, partial credit), out-of-scope (10), success criteria (10), parent system (15), connected systems (15) |
+| Responsibilities | How are business, technology and risk roles divided? | approval on record (40), required stage reviews approved (30, by fraction), risk basis (30) |
+
+The overall score is the plain average. **Strong** is 80 or more, **Developing** 55 or more, otherwise **Weak**. The badge appears on registry cards, and **Executive** shows the portfolio: average, tier counts, dimensions ranked weakest first, and the agents needing attention. The score is descriptive; it never blocks anything. The approval gate remains the only gate.
 
 ### Discovered Agents
 

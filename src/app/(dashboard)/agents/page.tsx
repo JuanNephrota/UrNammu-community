@@ -11,6 +11,8 @@ import { formatDateTime } from "@/lib/utils";
 import { AGENT_DISCOVERY_SOURCE_LABELS, isAgentDiscoverySource, type AgentSignal } from "@/lib/agent-discovery";
 import { CLIENT_LABELS } from "@/lib/caller-fingerprint";
 import { DiscoveredAgentsTable, type DiscoveredAgentRow } from "@/components/agents/discovered-agents-table";
+import { loadAgentPostures } from "@/lib/agent-governance-data";
+import { TIER_LABEL, TIER_VARIANT } from "@/components/agents/agent-posture-card";
 
 export default async function AgentsPage({
   searchParams,
@@ -95,13 +97,17 @@ export default async function AgentsPage({
     );
   }
 
-  const agents = await prisma.aIAgent.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      owner: { select: { name: true } },
-      aiSystem: { select: { id: true, name: true } },
-    },
-  });
+  const [agents, postures] = await Promise.all([
+    prisma.aIAgent.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        owner: { select: { name: true } },
+        aiSystem: { select: { id: true, name: true } },
+      },
+    }),
+    loadAgentPostures({ includeRetired: true }),
+  ]);
+  const postureById = new Map(postures.map((p) => [p.id, p.posture]));
 
   return (
     <div className="space-y-6">
@@ -139,6 +145,14 @@ export default async function AgentsPage({
                       {agent.status.replace("_", " ")}
                     </Badge>
                     {agent.suspendedAt && <Badge variant="critical">SUSPENDED</Badge>}
+                    {(() => {
+                      const posture = postureById.get(agent.id);
+                      return posture ? (
+                        <Badge variant={TIER_VARIANT[posture.tier]} title="Governance posture">
+                          Posture {posture.overall} · {TIER_LABEL[posture.tier]}
+                        </Badge>
+                      ) : null;
+                    })()}
                     <AutonomyBadge level={agent.autonomyLevel} />
                     {agent.humanReviewRequired && (
                       <Badge variant="info">HITL</Badge>

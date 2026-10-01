@@ -14,6 +14,10 @@ A single 0–100 score, computed as a weighted blend of five dimensions:
 
 Because the dimensions are weighted, a strong compliance rate will not hide a growing shadow-AI backlog — each dimension is also shown on its own so you can see which one is dragging the score.
 
+## Agent governance posture
+
+A portfolio view of the six governance-by-design dimensions scored per agent (see **AI Agents → Governance posture**): the average score, how many agents are Strong / Developing / Weak, the dimensions ranked weakest first across the portfolio, and the agents needing the most attention, each linking to its posture card. Retired agents are excluded.
+
 ## Board metrics
 
 Six headline figures, each with a period-over-period delta: **Governance Score**, **Compliance Rate**, **Avg Risk Score**, **Monthly Spend**, **Shadow AI Backlog**, and **Open Incidents**.

@@ -174,6 +174,19 @@ Agents represent autonomous (or semi-autonomous) behavior layered on top of a sy
 - Register a **system** for the AI capability (e.g. "Claude-based support assistant").
 - Register an **agent** when that capability runs autonomously with defined tools, triggers, or human-review rules. Agents link back to a parent system via **Connected Systems**.
 
+## Governance posture
+
+The **Governance Posture** card scores the six governance-by-design dimensions from IBM's agentic-AI governance playbook, each 0–100 from the agent's own record, with the gaps linked to where they are fixed:
+
+- **Ownership** — business owner, technical owner, risk owner, escalation contact.
+- **Authority** — MCP allowlist in force and enforced; enforceable review triggers declared and enforced.
+- **Decision making** — human-review setting consistent with the autonomy level, triggers declared, no open incidents, mature baseline without drift.
+- **Control** — argument-level thresholds, a mature behaviour baseline, a current review cadence.
+- **Boundaries** — charter (purpose, in-scope, boundaries; out-of-scope and success criteria), parent system, connected systems.
+- **Responsibilities** — approval on record, required stage reviews approved, risk basis.
+
+Overall is the average: **Strong** ≥ 80, **Developing** ≥ 55, otherwise **Weak**. Registry cards carry the badge; **Executive** rolls the portfolio up. The score describes; the approval gate decides.
+
 ## Charter and approval
 
 Every agent carries a **charter**: its purpose, the actions it may take (in scope), the actions it must never take (out of scope), the decision boundaries where it has to stop and hand off, and its success criteria. Purpose, at least one in-scope action and the decision boundaries are required before approval; the rest is recommended. Edit it on the agent form; it shows on the **Agent Charter** card.
@@ -705,6 +718,10 @@ A single 0–100 score, computed as a weighted blend of five dimensions:
 - **Incident Health** (15%) — open incidents and critical alerts in the period.
 
 Because the dimensions are weighted, a strong compliance rate will not hide a growing shadow-AI backlog — each dimension is also shown on its own so you can see which one is dragging the score.
+
+## Agent governance posture
+
+A portfolio view of the six governance-by-design dimensions scored per agent (see **AI Agents → Governance posture**): the average score, how many agents are Strong / Developing / Weak, the dimensions ranked weakest first across the portfolio, and the agents needing the most attention, each linking to its posture card. Retired agents are excluded.
 
 ## Board metrics
 

@@ -18,6 +18,7 @@ import { AgentAccountabilityCard } from "@/components/agents/agent-accountabilit
 import { AgentRetireDialog } from "@/components/agents/agent-retire-dialog";
 import { GovernanceIncidentsCard } from "@/components/registry/governance-incidents-card";
 import { AgentBaselineCard } from "@/components/agents/agent-baseline-card";
+import { AgentPostureCard } from "@/components/agents/agent-posture-card";
 import type { AgentBaselineStats, DriftFinding } from "@/lib/agent-baseline";
 import {
   HUMAN_REVIEW_RULE,
@@ -232,6 +233,7 @@ export default async function AgentDetailPage({
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <AgentPostureCard posture={governance.posture} className="lg:col-span-2" />
         <WorkflowSummaryCard workflow={workflow} status={agent.status} className="lg:col-span-2" />
         <div className="lg:col-span-2">
           <AgentCharterCard agent={agent} canEdit={canOperate} />
