@@ -79,6 +79,12 @@ A reviewer can **Approve** or **Reject**:
 
 Nothing is replayed. After an approval the agent (or whoever runs it) re-issues the request; the proxy recognises the waiver, lets the matching call through, and consumes one use. Waivers expire on their own; pending requests expire after 7 days. Both proxies apply waivers, so a decision in the console takes effect at the next call.
 
+## Connecting an agent to the proxy
+
+Governance applies to traffic that reaches a UrNammu proxy with the agent's id. In the agent's SDK, set the base URL to the proxy (`…/api/proxy/anthropic` or `…/api/proxy/openai/v1`; URLs and the shared secret are on **Settings → Proxy Setup**) and send `x-proxy-key`, `x-agent-id` (from the MCP Tool Governance card) and, optionally, `x-user-email` and `x-department`. The agent keeps its own provider key; the proxy forwards it. Claude Code and Agent SDK runtimes take the same values from `ANTHROPIC_BASE_URL` and `ANTHROPIC_CUSTOM_HEADERS`.
+
+Make the agent handle a `403`: `agent_blocked` (suspended or retired: stop), `policy_denied` (MCP server outside the allowlist or a policy rule: stop and surface the violations), `human_review_required` (a trigger withheld the call: surface `review.id` to a person and retry only after approval under **Oversight → Human Review**). The full walkthrough is in the user guide under **Connecting an Agent to the Proxy**.
+
 ## MCP tool governance
 
 The **MCP Tool Governance** card on the agent detail page shows which MCP servers the agent has declared and which tools its model actually invoked, as seen by the proxy. Traffic is attributed with the `x-agent-id` request header (the agent's id is shown on the card); `x-ai-system-id` still links usage to the parent system.

@@ -103,6 +103,8 @@ const ATTRIBUTION_HEADERS_TS = (secret: string) => `  defaultHeaders: {
     "x-proxy-key": "${secret}",
     "x-department": "Engineering",
     "x-user-email": "developer@company.com",
+    // Registered AI agents: add the id from the agent's MCP Tool Governance card
+    // "x-agent-id": "<agent id>",
   },`;
 
 export function ProxySetupGuide({
@@ -180,6 +182,7 @@ client = anthropic.Anthropic(
         "x-proxy-key": "${customSecret}",
         "x-department": "Data Science",
         "x-user-email": "analyst@company.com",
+        # Registered AI agents: "x-agent-id": "<agent id>",
     },
 )
 
@@ -774,7 +777,7 @@ const response = await client.send(
               <HeaderRow name="x-department">Department name for cost attribution</HeaderRow>
               <HeaderRow name="x-user-email">User email to link usage to a platform user</HeaderRow>
               <HeaderRow name="x-ai-system-id">Links usage to a registered AI system and enables its policy-as-code rules</HeaderRow>
-              <HeaderRow name="x-agent-id">Links usage to a registered AI agent and enables its MCP server/tool allowlist</HeaderRow>
+              <HeaderRow name="x-agent-id">Links usage to a registered AI agent and applies its governance: MCP allowlists, human-review triggers, the kill switch and behaviour baseline. Clients must handle 403 <code>agent_blocked</code>, <code>policy_denied</code> and <code>human_review_required</code>.</HeaderRow>
             </div>
           </div>
 

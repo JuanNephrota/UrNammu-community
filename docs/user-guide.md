@@ -16,6 +16,7 @@ For a codebase walkthrough aimed at developers, see [implementation-guide.md](./
    - [EU AI Act Classification](#eu-ai-act-classification)
 5. [AI Agents](#5-ai-agents)
    - [Charter and Approval Gate](#charter-and-approval-gate)
+   - [Connecting an Agent to the Proxy](#connecting-an-agent-to-the-proxy)
    - [MCP Tool Governance](#mcp-tool-governance)
    - [Kill Switch](#kill-switch)
    - [Accountability, Incidents and Retirement](#accountability-incidents-and-retirement)
@@ -377,6 +378,81 @@ Agents go through the same approve-before-deploy gate as systems, with agent-spe
 **Recommendations** (shown, not blocking): optional charter fields empty, SUPERVISED without enforcement, human-review settings that contradict the autonomy level (or required with no triggers), observed MCP tools not on the allowlist, no parent system linked.
 
 Decisions and stage reviews are audit-logged (`AgentApproval`, `AgentGovernanceReview`).
+
+### Connecting an Agent to the Proxy
+
+Everything the agent pages govern — allowlists, review triggers, the kill switch, baselines — applies only to traffic that reaches a UrNammu proxy carrying the agent's id. Connecting an agent is a base-URL change plus a few headers; the agent keeps using its own Anthropic (or OpenAI) key, which the proxy forwards.
+
+1. **Register the agent** (AI Agents → Register Agent) and copy its id from the *MCP Tool Governance* card on its detail page.
+2. **Point the SDK at the proxy.** The Azure Functions proxy is the primary endpoint; `/api/proxy/<provider>` on your UrNammu domain is the fallback. The exact URLs, and the current `PROXY_SECRET`, are on **Settings → Proxy Setup**.
+
+TypeScript (Anthropic SDK, or anything built on it such as the Claude Agent SDK):
+
+```ts
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,            // the agent's own key; forwarded as x-api-key
+  baseURL: "https://<your-function-app>.azurewebsites.net/api/proxy/anthropic",
+  defaultHeaders: {
+    "x-proxy-key": process.env.URNAMMU_PROXY_SECRET, // PROXY_SECRET from Settings → Proxy Setup
+    "x-agent-id": "<agent id>",
+    "x-user-email": "svc-refund-bot@example.com",   // optional: who runs it
+    "x-department": "Customer Success",              // optional
+  },
+});
+```
+
+Python:
+
+```python
+client = anthropic.Anthropic(
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+    base_url="https://<your-function-app>.azurewebsites.net/api/proxy/anthropic",
+    default_headers={
+        "x-proxy-key": os.environ["URNAMMU_PROXY_SECRET"],
+        "x-agent-id": "<agent id>",
+        "x-user-email": "svc-refund-bot@example.com",
+    },
+)
+```
+
+Claude Code and Agent SDK runtimes take the same settings from the environment, which is what the Proxy Setup page generates:
+
+```bash
+export ANTHROPIC_BASE_URL="https://<your-function-app>.azurewebsites.net/api/proxy/anthropic"
+export ANTHROPIC_CUSTOM_HEADERS=$'x-proxy-key: <PROXY_SECRET>\nx-agent-id: <agent id>\nx-user-email: svc-refund-bot@example.com'
+```
+
+OpenAI-based agents use `baseURL: ".../api/proxy/openai/v1"` with the same headers; see Settings → Proxy Setup for the Azure OpenAI, Gemini and Bedrock variants.
+
+**Notes**
+
+- The SDK appends `/v1/messages` itself, so the base URL ends at `/anthropic`. Streaming, the MCP connector (`mcp_servers`) and `anthropic-beta` headers pass through unchanged.
+- Leave `x-ai-system-id` out when the agent has a parent system; the proxy attributes usage to the parent automatically.
+- Omit `x-api-key` and the Messages endpoint falls back to the proxy's own server key, which is fine for a smoke test but loses per-key tracking.
+- The proxy fails closed: if the agent record cannot be loaded the request gets `503 agent_unavailable` rather than being forwarded ungoverned.
+
+**Handle a 403.** The proxy refuses with a JSON body whose `error.type` tells the agent (or its operator) what to do:
+
+| `error.type` | Meaning | What the agent should do |
+|---|---|---|
+| `agent_blocked` | The agent is suspended (kill switch) or RETIRED. | Stop. A person must resume it from the agent page. |
+| `policy_denied` | The request declared an MCP server outside the agent's allowlist (Enforce mode), or a policy-as-code rule blocked it. | Stop and surface `violations[]`; do not retry unchanged. |
+| `human_review_required` | A review trigger withheld the model's response. `error.review.id` names the pending request. | Surface the review id (and `url`) to a person; retry only after it is approved under Oversight → Human Review. |
+
+Blind retries make things worse: a withheld call retried in a loop just increments the pending request's `occurrences` and keeps the alert hot.
+
+**Smoke test.** Once the agent is wired up, its first call appears on the *MCP Tool Governance* card and the governance checklist's "Route the agent's traffic through the proxy" item ticks itself. From a shell:
+
+```bash
+curl -s https://<your-function-app>.azurewebsites.net/api/proxy/anthropic/v1/messages \
+  -H "x-proxy-key: $URNAMMU_PROXY_SECRET" -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "x-agent-id: <agent id>" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","max_tokens":20,"messages":[{"role":"user","content":"ping"}]}'
+```
+
+A model response, or a 403 from one of the gates above, means the proxy is governing the agent. `503 agent_unavailable` means the proxy could not read the agent record and needs attention.
 
 ### MCP Tool Governance
 
