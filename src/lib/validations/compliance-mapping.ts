@@ -22,4 +22,4 @@ export const upsertControlMappingSchema = z.object({
 
 export type UpsertControlMappingInput = z.infer<typeof upsertControlMappingSchema>;
 
-export const catalogFrameworkSchema = z.enum(["EU_AI_ACT", "NIST_AI_RMF", "ISO_42001", "SOC2"]);
+export const catalogFrameworkSchema = z.enum(["EU_AI_ACT", "NIST_AI_RMF", "ISO_42001", "SOC2", "COLORADO_AI", "NEW_YORK_AI"]);

@@ -370,7 +370,7 @@ Manage policies, assignments, and the audit trail.
 
 ## Policies
 
-Each policy belongs to a framework — \`EU_AI_ACT\`, \`NIST_AI_RMF\`, \`ISO_42001\`, \`SOC2\`, or \`CUSTOM\` — and has two parts:
+Each policy belongs to a framework — \`EU_AI_ACT\`, \`NIST_AI_RMF\`, \`ISO_42001\`, \`SOC2\`, \`COLORADO_AI\`, \`NEW_YORK_AI\`, or \`CUSTOM\` — and has two parts:
 
 - **Content** — long-form policy text.
 - **Rules (JSON)** — machine-evaluable constraints: allowed/blocked vendors, max data sensitivity, required approval stages, max review interval, minimum risk level, model name patterns.
@@ -415,7 +415,7 @@ Read this page alongside the enforcement mode: in dry run, entries are requests 
 
 ## Framework controls
 
-**Compliance → Framework Coverage** (and the **Framework Controls** card on a system's Compliance tab) works from a seeded catalog of controls per framework: the 19 NIST AI RMF categories, the 38 ISO/IEC 42001 Annex A controls, the EU AI Act articles that carry provider or deployer obligations, and the SOC 2 trust services criteria.
+**Compliance → Framework Coverage** (and the **Framework Controls** card on a system's Compliance tab) works from a seeded catalog of controls per framework: the 19 NIST AI RMF categories, the 38 ISO/IEC 42001 Annex A controls, the EU AI Act articles that carry provider or deployer obligations, the SOC 2 trust services criteria, the Colorado AI law (SB 26-189, effective January 1, 2027) and New York's AI laws (NYC Local Law 144 bias audits, algorithmic pricing disclosure, the RAISE Act for frontier developers). Colorado and New York are jurisdiction-specific: attest only the controls that apply to the decisions your systems make.
 
 - Assess a system control by control. Each rating is a \`ComplianceMapping\` row with its own evidence text.
 - A control marked \`COMPLIANT\` also satisfies its **crosswalked** peers in the other frameworks, shown as **Inherited**. Inheritance is one hop and only from a direct \`COMPLIANT\` rating — a partial rating does not propagate.

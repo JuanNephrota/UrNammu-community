@@ -74,7 +74,7 @@ The most important Prisma models are:
 - `Policy` and `PolicyAssignment`
   Policies can now contain structured rules that are evaluated directly against systems.
 - `FrameworkControl`, `ControlCrosswalk`, `ComplianceMapping`
-  The seeded per-framework control catalog (NIST AI RMF, ISO 42001, EU AI Act, SOC 2), the undirected crosswalk between controls in different frameworks, and a system's per-control assessment. Coverage is computed in `src/lib/framework-coverage.ts` (pure) and loaded in `src/lib/framework-controls-data.ts`; the catalog content lives in `src/lib/framework-catalog.ts` and is inserted by migration.
+  The seeded per-framework control catalog (NIST AI RMF, ISO 42001, EU AI Act, SOC 2, Colorado SB 26-189, New York LL144/pricing/RAISE), the undirected crosswalk between controls in different frameworks, and a system's per-control assessment. Coverage is computed in `src/lib/framework-coverage.ts` (pure) and loaded in `src/lib/framework-controls-data.ts`; the catalog content lives in `src/lib/framework-catalog.ts` and is inserted by migration.
 - `EuAiActClassification`
   One row per system: risk tier and role under the EU AI Act, obligation flags, applicable article codes (matching `FrameworkControl.code`), the raw wizard answers, and rationale. Classification logic is pure in `src/lib/eu-ai-act.ts`; `src/lib/eu-ai-act-data.ts` derives the approval-blocker / recommendation input. Saving pre-creates `ComplianceMapping` rows for applicable articles and raises `eu_ai_act` alerts.
 - `AgentToolCall` and `AgentToolProfile`

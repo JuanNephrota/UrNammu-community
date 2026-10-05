@@ -61,7 +61,7 @@ UrNammu is an enterprise AI governance platform that gives compliance, security,
 - **AI System** — a managed AI service or application (e.g. "Customer Support Copilot"). The primary governance unit.
 - **AI Agent** — an autonomous agent tied to a system, with its own autonomy level and human-oversight rules.
 - **Risk Assessment** — a multi-dimensional scoring of a system across bias, security, privacy, fairness, performance, and transparency, with branching questions and issue-level follow-up.
-- **Policy** — a governance rule (mapped to EU AI Act, NIST AI RMF, ISO 42001, SOC 2, or custom) that can be assigned to systems. Policies can also carry machine-readable rules that are enforced at the proxy at runtime (advisory or blocking).
+- **Policy** — a governance rule (mapped to EU AI Act, NIST AI RMF, ISO 42001, SOC 2, Colorado AI law, New York AI laws, or custom) that can be assigned to systems. Policies can also carry machine-readable rules that are enforced at the proxy at runtime (advisory or blocking).
 - **Shadow AI** — unregistered AI tools discovered in the org via Google Workspace OAuth activity, Microsoft 365 apps, Hexnode-managed devices, or DNS/proxy/Netskope network logs.
 - **Oversight** — provider-level telemetry: token usage, cost, anomalies, model drift, dangerous prompt alerts, investigations, and vendor lifecycle — plus per-surface dashboards for Claude Platform/API, Claude Code, Cowork, and Cursor.
 - **Governance Workflow** — the staged approval flow (Owner → Security → Legal → Compliance) plus exceptions, evidence, incidents, and investigations.
@@ -669,7 +669,7 @@ Every system has a `reviewIntervalDays` field. When `nextReviewDate` is within `
 From Compliance → **New Policy**:
 
 1. **Name**, **description**.
-2. **Framework** — one of `EU_AI_ACT`, `NIST_AI_RMF`, `ISO_42001`, `SOC2`, `CUSTOM`.
+2. **Framework** — one of `EU_AI_ACT`, `NIST_AI_RMF`, `ISO_42001`, `SOC2`, `COLORADO_AI`, `NEW_YORK_AI`, `CUSTOM`.
 3. **Version** and **status** (`DRAFT` / `ACTIVE` / `ARCHIVED`).
 4. **Content** — the long-form policy text.
 5. **Structured rules (JSON)** — machine-evaluatable constraints:
@@ -759,6 +759,10 @@ Policies are your own documents. The **framework control catalog** is the extern
 | ISO/IEC 42001:2023 | The 38 Annex A controls (A.2.2 – A.10.4) |
 | EU AI Act | 19 articles carrying provider or deployer obligations (Art. 4, 5, 9–17, 26, 27, 43, 49, 50, 53, 72, 73) |
 | SOC 2 (TSC 2017) | CC1–CC9, A1, C1, PI1, P1–P8 |
+| Colorado AI law (SB 26-189) | CO-1 – CO-11: covered-ADMT inventory, pre-decision notice, 30-day post-adverse-outcome disclosure, data correction, human review, accessible notices, developer documentation and update notices, 3-year records, fault allocation and contract terms, Attorney General enforcement with 60-day cure. Applies to decisions made on or after January 1, 2027; replaced SB 24-205, which never took effect |
+| New York AI laws | NY-1 – NY-5: NYC Local Law 144 (AEDT inventory, independent bias audit within one year, published summary, 10-business-day notice, alternative-process instructions and data disclosure); NY-6: algorithmic pricing disclosure (GBL § 349-a); NY-7 – NY-9: RAISE Act (frontier-model developers only; effective January 1, 2027) |
+
+The Colorado and New York controls were written from the enacted texts: the enrolled SB 26-189, Local Law 144 and the DCWP rules (6 RCNY §§ 5-300 to 5-304), GBL § 349-a, and the RAISE Act (read as introduced in A.9449; the signed version, S.8828, was not compared line by line). They are summaries for attestation, not legal advice. Colorado's Attorney General must adopt disclosure and consumer-rights rules by January 1, 2027, which may change the wording, so have counsel confirm applicability before relying on them.
 
 **Assessing a system.** Open the system, switch to the **Compliance** tab, and scroll to **Framework Controls**. Pick a framework tile, then click a control's status badge to record Compliant / Partially Compliant / Non-Compliant with evidence. Each rating is stored per system and per control, and every change is written to the audit trail.
 
@@ -2075,7 +2079,7 @@ Runs on every maintenance call. Produces alerts for:
 | **PromptRiskRule** | A tunable detection rule (key, label, severity, up to 10 regex patterns) used by the proxy to flag dangerous prompts. Editable at `/alerts/prompt-rules`. |
 | **PromptRiskException** | Per-rule-key suppression record created via False Positive marking. Suppresses alert creation when all matched categories of a candidate alert are covered. |
 | **Audit Log** | Append-only record of every governance action. |
-| **FrameworkControl** | One seeded requirement of a framework (NIST AI RMF category, ISO 42001 Annex A control, EU AI Act article, SOC 2 criterion). Assessed per system as a `ComplianceMapping`. |
+| **FrameworkControl** | One seeded requirement of a framework (NIST AI RMF category, ISO 42001 Annex A control, EU AI Act article, SOC 2 criterion, Colorado or New York requirement). Assessed per system as a `ComplianceMapping`. |
 | **Crosswalk** | Curated link between controls in different frameworks. A `COMPLIANT` control satisfies its crosswalked peers as *Inherited*; one hop, no chaining. |
 | **Coverage** | Compliant plus inherited controls as a share of a framework's controls. Partial ratings are shown but not counted. |
 | **EU AI Act Classification** | Per-system result of the classification wizard: risk tier (Prohibited / High-risk / Limited / Minimal), role, obligation flags, and applicable articles. |

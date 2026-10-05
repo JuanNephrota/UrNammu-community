@@ -48,6 +48,8 @@ export const FRAMEWORK_LABELS: Record<ComplianceFramework, string> = {
   NIST_AI_RMF: "NIST AI RMF",
   ISO_42001: "ISO/IEC 42001",
   SOC2: "SOC 2",
+  COLORADO_AI: "Colorado AI law",
+  NEW_YORK_AI: "New York AI laws",
   CUSTOM: "Custom",
 };
 
@@ -60,6 +62,10 @@ export const FRAMEWORK_DESCRIPTIONS: Record<CatalogFramework, string> = {
     "Binding EU regulation with tiered obligations. Prohibited practices apply from February 2025, GPAI obligations from August 2025, and most high-risk requirements from August 2026.",
   SOC2:
     "AICPA Trust Services Criteria used for third-party assurance reports on security, availability, processing integrity, confidentiality and privacy.",
+  COLORADO_AI:
+    "Colorado SB 26-189 (signed May 2026; applies to decisions from January 1, 2027), which replaced SB 24-205 before it took effect. Notice, a plain-language explanation of adverse outcomes, data correction and human review for consequential decisions that automated decision-making technology materially influences; the earlier impact-assessment mandate was dropped. Attorney General enforcement only, with a 60-day cure period.",
+  NEW_YORK_AI:
+    "NYC Local Law 144 (bias-audited automated employment decision tools, enforced since July 2023), New York's algorithmic pricing disclosure law (GBL § 349-a), and the RAISE Act, which applies only to frontier-model developers (effective January 1, 2027).",
 };
 
 export const CATALOG_FRAMEWORKS: CatalogFramework[] = [
@@ -67,6 +73,8 @@ export const CATALOG_FRAMEWORKS: CatalogFramework[] = [
   "NIST_AI_RMF",
   "ISO_42001",
   "SOC2",
+  "COLORADO_AI",
+  "NEW_YORK_AI",
 ];
 
 export function isCatalogFramework(value: string): value is CatalogFramework {
@@ -303,7 +311,53 @@ const SOC2: CatalogControl[] = [
   { code: "P8", category: "Privacy", title: "Monitoring and enforcement", description: "The entity implements a process for receiving, addressing, resolving and communicating the resolution of inquiries, complaints and disputes, and monitors compliance with its privacy commitments." },
 ].map((c, i) => ({ ...c, framework: "SOC2" as const, sortOrder: (i + 1) * 10 }));
 
-export const FRAMEWORK_CATALOG: CatalogControl[] = [...EU, ...NIST, ...ISO, ...SOC2];
+// ─── Colorado SB 26-189 (automated decision-making technology) ─────────────
+//
+// Enrolled act, C.R.S. 6-1-1701 to 6-1-1709 (part 17 of article 1, title 6),
+// repealing and reenacting SB 24-205 before it took effect. Signed 2026-05-14;
+// applies to consequential decisions made on or after 2027-01-01. The
+// Attorney General must adopt post-adverse-outcome disclosure and
+// consumer-rights rules on or before 2027-01-01, so wording below may need
+// to follow those rules. Codes are descriptive ("CO-n"), not statute
+// sections, because one section often yields several attestable controls.
+
+const COLORADO: CatalogControl[] = [
+  { code: "CO-1", category: "Scoping", title: "Covered ADMT and consequential-decision inventory", description: "Identify each automated decision-making technology (ADMT) that materially influences — is a non-de minimis factor that affects the outcome of — a decision about access to, eligibility for, selection for or pricing in a covered domain: education enrollment or opportunity, employment, lease or purchase of Colorado residential real estate, financial or lending services, insurance, health-care services, or essential government services and public benefits. Record exclusions relied on (routine or low-stakes uses, summarising for human review) and sector carve-outs (insurers under 10-3-1104.9, HIPAA covered entities other than for employment, FDA-overseen devices, GLBA data). Applies to decisions made on or after January 1, 2027." },
+  { code: "CO-2", category: "Deployer", title: "Notice before the decision", description: "Before using a covered ADMT to materially influence a consequential decision, give the consumer clear and conspicuous notice that one is or will be used, with instructions for getting the additional information the Act requires. A prominent public notice reasonably accessible at points of consumer interaction, such as a link or posting near the interaction, satisfies this (6-1-1704(1)–(2))." },
+  { code: "CO-3", category: "Deployer", title: "Disclosure within 30 days of an adverse outcome", description: "Within 30 days of a decision with an adverse outcome, give the consumer a plain-language description of the decision and the ADMT's role in it; a simple process to request the ADMT's name, version, developer and the types, categories and sources of personal data used (to the extent the developer supplied them); and an explanation of the consumer's rights and how to exercise them. If trade secrets or legally protected information are withheld, tell the consumer. Creditors may rely on ECOA/FCRA notices that also satisfy these elements (6-1-1704(3), (5), (6))." },
+  { code: "CO-4", category: "Deployer", title: "Data access and correction on request", description: "After an adverse outcome, give the consumer, on request, instructions for requesting their personal data and for correcting factually incorrect or materially inaccurate personal data used in the decision. Correction does not extend to opinions, predictions, scores or protected evaluations (6-1-1705(1)(a)(I), (1)(c))." },
+  { code: "CO-5", category: "Deployer", title: "Meaningful human review and reconsideration", description: "After an adverse outcome, on request, offer meaningful human review and reconsideration of the decision to the extent commercially reasonable. The reviewer must be designated by the deployer, have authority to approve, modify or override the decision, consider relevant primary evidence, be trained, not default to the system output, and understand the output's intended use, limitations, input categories and principal factors (6-1-1701(15), 6-1-1705(1)(a)(II))." },
+  { code: "CO-6", category: "Deployer", title: "Accessible notices and disclosures", description: "Provide every notice and disclosure under the Act in a manner reasonably accessible to consumers with disabilities and consumers with limited English proficiency, consistent with applicable law. Education deployers subject to FERPA may use their FERPA channels (6-1-1704(8)–(9))." },
+  { code: "CO-7", category: "Developer", title: "Developer documentation to deployers", description: "From January 1, 2027, developers of a covered ADMT marketed or configured for consequential decisions make available to each deployer: intended uses and known harmful or inappropriate uses; categories of training data, to the extent known; known limitations, risks and circumstances in which it should not be used; instructions for appropriate use, monitoring and meaningful human review; and information reasonably necessary for the deployer to give the CO-3 disclosures, noting if any is withheld. Deployers obtain and keep this for each in-scope system (6-1-1702(1), (3))." },
+  { code: "CO-8", category: "Developer", title: "Notice of material updates", description: "Developers give each deployer notice, within a reasonable time, of material updates, intentional and substantial modifications, and changes to intended use, limitations or risk mitigation. Public release notes suffice if the developer also directly notifies each deployer of the release. Deployers have a process to receive, review and re-assess the system after such a notice (6-1-1702(2))." },
+  { code: "CO-9", category: "Records", title: "Records retained for three years", description: "Developers keep records reasonably necessary to show compliance — system version identifiers, changelogs, and documentation and notices of material updates — for at least three years after the record is created. Deployers keep such records, which may include ADMT version identifiers, changelogs and documentation of material mitigation changes, for at least three years after the date of the consequential decision. Longer where other law requires (6-1-1702(4), 6-1-1703)." },
+  { code: "CO-10", category: "Liability", title: "Fault allocation and contract terms", description: "Developers and deployers can each be liable under Colorado anti-discrimination law for a decision a covered ADMT materially influenced, with fault allocated by relative fault. A contract term that indemnifies a party for its own discriminatory acts in using an ADMT is void. Using an ADMT, or complying with the Act, is not a defense to other legal obligations. Review vendor and customer contracts and documented intended-use limits accordingly (6-1-1707, 6-1-1709)." },
+  { code: "CO-11", category: "Enforcement", title: "Attorney General enforcement and cure readiness", description: "A violation is a deceptive trade practice enforced exclusively by the Attorney General; there is no private right of action. Before any enforcement action the Attorney General issues a notice of violation where cure is possible, and the entity has 60 days to cure; no cure period is required for knowing or repeated violations. The cure provision is repealed January 1, 2030. Keep a named owner, evidence for each control above, and a remediation path ready (6-1-1706)." },
+].map((c, i) => ({ ...c, framework: "COLORADO_AI" as const, sortOrder: (i + 1) * 10 }));
+
+// ─── New York ──────────────────────────────────────────────────────────────
+//
+// NYC Local Law 144 of 2021 (Admin. Code § 20-870 to 20-874, effective
+// 2023-01-01; enforcement began 2023-07-05) and the DCWP rules at 6 RCNY
+// §§ 5-300 to 5-304; the State algorithmic pricing disclosure in General
+// Business Law § 349-a; and the RAISE Act (GBL article 44-B, chapter 96 of
+// 2026, effective 2027-01-01), which reaches only frontier-model developers.
+// The RAISE text reviewed is A.9449 as introduced; the enacted version was
+// carried as S.8828 and was not compared line by line.
+
+const NEW_YORK: CatalogControl[] = [
+  { code: "NY-1", category: "NYC Local Law 144", title: "AEDT inventory", description: "Identify each automated employment decision tool (AEDT) used to screen candidates for employment or employees for promotion within New York City. A tool is in scope when its simplified output (score, tag, classification, ranking) is the sole basis for the decision, is weighted more than any other criterion, or is used to overrule other conclusions including human judgment (6 RCNY § 5-300). Junk-mail filters, firewalls, calculators and spreadsheets are out. Penalties: up to $500 for a first violation, $500–$1,500 for each later one; each day of use and each missing notice is a separate violation (§ 20-872)." },
+  { code: "NY-2", category: "NYC Local Law 144", title: "Independent bias audit within one year", description: "Do not use or continue to use an AEDT if more than one year has passed since its last bias audit. The auditor must be independent: not involved in using, developing or distributing the tool, and with no employment or financial relationship with the employer or vendor. For tools that select or classify, calculate selection rate and impact ratio by sex, by race/ethnicity and by their intersections (EEO-1 component 1 categories), report individuals in unknown categories, and, for scoring tools, scoring rate. Categories under 2% of the data may be excluded with justification (§ 20-871(a)(1); 6 RCNY § 5-301)." },
+  { code: "NY-3", category: "NYC Local Law 144", title: "Publish the audit summary", description: "Before using the AEDT, publish clearly and conspicuously on the employment section of the website: the date of the latest bias audit; a summary of results, including the data source and explanation, unknown-category count, applicant counts, selection or scoring rates and impact ratios for all categories; and the date the employer began using the tool. A clearly labelled hyperlink is enough. Keep it posted for at least 6 months after the tool's latest use (§ 20-871(a)(2); 6 RCNY § 5-303)." },
+  { code: "NY-4", category: "NYC Local Law 144", title: "Notice at least 10 business days before use", description: "At least 10 business days before use, tell each candidate or employee who resides in New York City that an AEDT will be used and the job qualifications and characteristics it will use. Candidates may be notified on the employment section of the website, in the job posting, or by mail or email; employees may also be notified through a written policy (§ 20-871(b)(1)–(2); 6 RCNY § 5-304(b)–(c))." },
+  { code: "NY-5", category: "NYC Local Law 144", title: "Alternative-process instructions and data-practice disclosure", description: "The notice must include instructions for requesting an alternative selection process or a reasonable accommodation, where available; the rules do not require an employer to provide an alternative process. Also publish the type of data the AEDT collects, its source and the retention policy, with instructions for a written request; answer written requests within 30 days, explaining any refusal that law or a law-enforcement investigation requires (§ 20-871(b)(1), (3); 6 RCNY § 5-304(a), (d))." },
+  { code: "NY-6", category: "Algorithmic pricing", title: "Personalized algorithmic pricing disclosure", description: "When an entity sets a New York consumer's price with an algorithm using that consumer's personal data and advertises or displays it to them, include with the price the clear and conspicuous statement \"THIS PRICE WAS SET BY AN ALGORITHM USING YOUR PERSONAL DATA\", in the same medium and at or near the price. Insurers, GLBA financial institutions and lower prices for existing subscribers are excluded. The Attorney General may seek penalties up to $1,000 per violation after a cure period (GBL § 349-a)." },
+  { code: "NY-7", category: "RAISE Act", title: "Frontier AI framework and transparency report", description: "Applies only to developers of frontier models (trained with more than 10^26 operations). Large frontier developers (with affiliates, over $500M annual gross revenue) publish a frontier AI framework covering how they assess and mitigate catastrophic risk, review and update it at least annually, and publish material changes within 30 days. Every frontier developer publishes a transparency report on or before deploying a new or substantially modified frontier model; large developers add summaries of their catastrophic-risk assessments. No materially false statements about catastrophic risk. Effective January 1, 2027 (GBL § 1421)." },
+  { code: "NY-8", category: "RAISE Act", title: "Critical safety incident reporting", description: "Frontier developers report a critical safety incident to the state office within 72 hours of determining it occurred or learning facts sufficient for a reasonable belief it did, and within 24 hours to an appropriate authority if it poses imminent risk of death or serious injury. Large frontier developers send the office a summary of internal-use catastrophic-risk assessments every three months. Penalties up to $1M for a first violation and $3M thereafter, by the Attorney General (GBL §§ 1422, 1427)." },
+  { code: "NY-9", category: "RAISE Act", title: "Large frontier developer disclosure statement", description: "A large frontier developer may not develop, deploy or operate a frontier model in New York without a current disclosure statement filed with the Department of Financial Services office and the pro-rata assessment paid. The statement names the developer, its New York offices, qualifying owners and three contacts, and is renewed every two years or on a transfer or material change. $1,000 per day for failure to file (GBL § 1428)." },
+].map((c, i) => ({ ...c, framework: "NEW_YORK_AI" as const, sortOrder: (i + 1) * 10 }));
+
+export const FRAMEWORK_CATALOG: CatalogControl[] = [...EU, ...NIST, ...ISO, ...SOC2, ...COLORADO, ...NEW_YORK];
 
 // ─── Crosswalk ──────────────────────────────────────────────────────────────
 //
@@ -365,6 +419,25 @@ const XW: XwSpec[] = [
   ["EU_AI_ACT", "Art. 15", [["SOC2", "CC6"], ["SOC2", "CC7"], ["SOC2", "A1"]]],
   ["EU_AI_ACT", "Art. 17", [["SOC2", "CC5"], ["SOC2", "CC8"], ["ISO_42001", "A.6.1.3"]]],
   ["EU_AI_ACT", "Art. 73", [["SOC2", "P6"]]],
+  // Colorado SB 26-189
+  ["COLORADO_AI", "CO-1", [["NIST_AI_RMF", "MAP 1"], ["NIST_AI_RMF", "MAP 2"], ["NEW_YORK_AI", "NY-1"]]],
+  ["COLORADO_AI", "CO-2", [["EU_AI_ACT", "Art. 26"], ["EU_AI_ACT", "Art. 50"], ["ISO_42001", "A.8.2"], ["NEW_YORK_AI", "NY-4"]]],
+  ["COLORADO_AI", "CO-3", [["NIST_AI_RMF", "GOVERN 5"], ["ISO_42001", "A.8.3"], ["NEW_YORK_AI", "NY-5"]]],
+  ["COLORADO_AI", "CO-4", [["SOC2", "P5"], ["SOC2", "P7"]]],
+  ["COLORADO_AI", "CO-5", [["EU_AI_ACT", "Art. 14"], ["NIST_AI_RMF", "MANAGE 2"], ["ISO_42001", "A.9.2"]]],
+  ["COLORADO_AI", "CO-7", [["EU_AI_ACT", "Art. 13"], ["NIST_AI_RMF", "GOVERN 6"], ["ISO_42001", "A.10.3"]]],
+  ["COLORADO_AI", "CO-8", [["SOC2", "CC8"], ["ISO_42001", "A.6.2.5"]]],
+  ["COLORADO_AI", "CO-9", [["EU_AI_ACT", "Art. 12"], ["ISO_42001", "A.6.2.8"]]],
+  ["COLORADO_AI", "CO-10", [["NIST_AI_RMF", "GOVERN 6"]]],
+  ["COLORADO_AI", "CO-11", [["NIST_AI_RMF", "GOVERN 1"]]],
+  // New York
+  ["NEW_YORK_AI", "NY-1", [["NIST_AI_RMF", "MAP 1"]]],
+  ["NEW_YORK_AI", "NY-2", [["NIST_AI_RMF", "MEASURE 2"], ["EU_AI_ACT", "Art. 10"], ["ISO_42001", "A.7.4"]]],
+  ["NEW_YORK_AI", "NY-3", [["NIST_AI_RMF", "GOVERN 5"], ["EU_AI_ACT", "Art. 13"]]],
+  ["NEW_YORK_AI", "NY-4", [["EU_AI_ACT", "Art. 26"], ["ISO_42001", "A.8.2"]]],
+  ["NEW_YORK_AI", "NY-6", [["EU_AI_ACT", "Art. 50"], ["SOC2", "P1"]]],
+  ["NEW_YORK_AI", "NY-7", [["EU_AI_ACT", "Art. 53"], ["NIST_AI_RMF", "GOVERN 1"]]],
+  ["NEW_YORK_AI", "NY-8", [["EU_AI_ACT", "Art. 73"], ["NIST_AI_RMF", "MANAGE 4"], ["ISO_42001", "A.8.4"]]],
 ];
 
 export const FRAMEWORK_CROSSWALK: CatalogCrosswalk[] = XW.flatMap(([fw, code, targets]) =>

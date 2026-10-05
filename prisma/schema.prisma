@@ -102,6 +102,8 @@ enum ComplianceFramework {
   NIST_AI_RMF
   ISO_42001
   SOC2
+  COLORADO_AI
+  NEW_YORK_AI
   CUSTOM
 }
 

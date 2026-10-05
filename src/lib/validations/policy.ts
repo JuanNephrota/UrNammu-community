@@ -3,7 +3,7 @@ import { z } from "zod";
 export const createPolicySchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   description: z.string().optional(),
-  framework: z.enum(["EU_AI_ACT", "NIST_AI_RMF", "ISO_42001", "SOC2", "CUSTOM"]),
+  framework: z.enum(["EU_AI_ACT", "NIST_AI_RMF", "ISO_42001", "SOC2", "COLORADO_AI", "NEW_YORK_AI", "CUSTOM"]),
   version: z.string().default("1.0"),
   content: z.string().min(1, "Policy content is required"),
   rules: z.any().optional().nullable(),

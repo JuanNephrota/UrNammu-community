@@ -381,14 +381,14 @@ async function main() {
   // Framework control catalog (NIST AI RMF, ISO 42001, EU AI Act, SOC 2) and a
   // handful of per-system control assessments so coverage has something to show.
   const controlIds = await syncFrameworkCatalog(prisma);
-  const control = (framework: "EU_AI_ACT" | "NIST_AI_RMF" | "ISO_42001" | "SOC2", code: string) => {
+  const control = (framework: "EU_AI_ACT" | "NIST_AI_RMF" | "ISO_42001" | "SOC2" | "COLORADO_AI" | "NEW_YORK_AI", code: string) => {
     const id = controlIds.get(controlKey(framework, code));
     if (!id) throw new Error(`Catalog control ${framework} ${code} missing`);
     return { controlId: id, framework, requirement: code };
   };
   const controlMappings: Array<{
     systemIndex: number;
-    framework: "EU_AI_ACT" | "NIST_AI_RMF" | "ISO_42001" | "SOC2";
+    framework: "EU_AI_ACT" | "NIST_AI_RMF" | "ISO_42001" | "SOC2" | "COLORADO_AI" | "NEW_YORK_AI";
     code: string;
     status: "COMPLIANT" | "PARTIALLY_COMPLIANT" | "NON_COMPLIANT";
     evidence: string;

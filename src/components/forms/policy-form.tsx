@@ -30,6 +30,8 @@ const FRAMEWORK_OPTIONS = [
   { value: "NIST_AI_RMF", label: "NIST AI RMF" },
   { value: "ISO_42001", label: "ISO 42001" },
   { value: "SOC2", label: "SOC 2" },
+  { value: "COLORADO_AI", label: "Colorado AI law" },
+  { value: "NEW_YORK_AI", label: "New York AI laws" },
   { value: "CUSTOM", label: "Custom" },
 ];
 
