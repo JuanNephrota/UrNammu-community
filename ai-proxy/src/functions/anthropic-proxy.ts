@@ -7,8 +7,8 @@ import { scanResponseForSensitiveInfo } from "../lib/sensitive-detect";
 import { applyMcpPassthrough } from "../lib/mcp-passthrough";
 import {
   adjudicateHumanReview,
-  agentEnforcesReview,
-  evaluateAgentReviewTriggers,
+  agentWithholdsResponses,
+  evaluateAgentToolPolicy,
   recordHumanReviewMatches,
   recordToolActivity,
 } from "../lib/tool-activity";
@@ -216,9 +216,9 @@ export async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit
     // exist once the stream has finished, so hold the whole response, decide,
     // and either withhold it (403) or replay it to the client unchanged.
     let nodeStream: Readable;
-    if (anthropicRes.ok && agentEnforcesReview(agent)) {
+    if (anthropicRes.ok && agentWithholdsResponses(agent)) {
       const bufferedText = await anthropicRes.text();
-      const reviewMatches = await evaluateAgentReviewTriggers(
+      const reviewMatches = await evaluateAgentToolPolicy(
         agent,
         collectAnthropicToolUsesFromSse(bufferedText)
       );
@@ -366,9 +366,9 @@ export async function anthropicProxy(req: HttpRequest): Promise<HttpResponseInit
     console.error("logUsage failed:", err);
   });
 
-  const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+  const reviewMatches = await evaluateAgentToolPolicy(agent, toolUses);
   const adjudication =
-    agent && reviewMatches.length > 0 && anthropicRes.ok && agentEnforcesReview(agent)
+    agent && reviewMatches.length > 0 && anthropicRes.ok && agentWithholdsResponses(agent)
       ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider: "claude", model, requestId, userEmail, department })
       : null;
   const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;

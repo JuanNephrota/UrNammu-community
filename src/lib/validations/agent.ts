@@ -6,7 +6,7 @@ export const createAgentSchema = z.object({
   description: z.string().optional(),
   aiSystemId: z.string().optional(),
   capabilities: z.array(z.string()).default([]),
-  accessLevel: z.string().default("read-only"),
+  accessLevel: z.enum(["restricted", "read-only", "read-write", "admin"]).default("read-only"),
   autonomyLevel: z.enum([
     "FULL_AUTONOMY",
     "SUPERVISED",
@@ -50,6 +50,8 @@ export const createAgentSchema = z.object({
   mcpEnforcement: z.enum(["monitor", "enforce"]).default("monitor"),
   // New agents inherit the org catalog; existing rows keep their stored value.
   inheritMcpCatalog: z.boolean().default(true),
+  // Charter scope enforcement (src/lib/agent-scope.ts).
+  scopeEnforcement: z.enum(["monitor", "enforce"]).default("monitor"),
 });
 
 export const updateAgentSchema = createAgentSchema.partial();

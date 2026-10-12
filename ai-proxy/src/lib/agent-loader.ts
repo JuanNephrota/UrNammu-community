@@ -21,6 +21,13 @@ import {
   type HumanReviewEnforcement,
   type HumanReviewTrigger,
 } from "./human-review-triggers";
+import {
+  normalizeAccessLevel,
+  normalizeScopeEnforcement,
+  normalizeToolAccess,
+  type AgentScopeConfig,
+  type ToolClassificationRule,
+} from "./agent-scope";
 
 export type LoadedAgent = {
   id: string;
@@ -32,6 +39,8 @@ export type LoadedAgent = {
   config: McpGovernanceConfig;
   /** Human-review triggers and how a match is handled; see human-review-triggers.ts. */
   review: { triggers: HumanReviewTrigger[]; enforcement: HumanReviewEnforcement };
+  /** Charter scope (access level, connected systems, classification rules); see agent-scope.ts. */
+  scope: AgentScopeConfig;
 };
 
 type CacheEntry = { value: LoadedAgent | null; expiresAt: number };
@@ -59,6 +68,31 @@ async function loadCatalog(): Promise<McpCatalogEntryLike[]> {
   }
 }
 
+const CLASSIFICATION_TTL_MS = 60_000;
+let classificationCache: { value: ToolClassificationRule[]; expiresAt: number } | null = null;
+
+/** Org-wide tool classification rules, cached; same fail-closed contract as the agent. */
+async function loadClassifications(): Promise<ToolClassificationRule[]> {
+  const now = Date.now();
+  if (classificationCache && classificationCache.expiresAt > now) return classificationCache.value;
+  try {
+    const rows = await prisma.toolClassification.findMany({ select: { server: true, tool: true, access: true, system: true } });
+    const value: ToolClassificationRule[] = [];
+    for (const row of rows) {
+      const access = normalizeToolAccess(row.access);
+      if (access) value.push({ server: row.server, tool: row.tool, access, system: row.system });
+    }
+    classificationCache = { value, expiresAt: now + CLASSIFICATION_TTL_MS };
+    return value;
+  } catch (err) {
+    if (classificationCache) {
+      console.error("loadClassifications: DB error, serving stale cached rules:", err);
+      return classificationCache.value;
+    }
+    throw err;
+  }
+}
+
 export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
   const now = Date.now();
   const cached = agentCache.get(agentId);
@@ -80,6 +114,9 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
         humanReviewTriggers: true,
         humanReviewEnforcement: true,
         inheritMcpCatalog: true,
+        accessLevel: true,
+        connectedSystems: true,
+        scopeEnforcement: true,
       },
     });
   } catch (err) {
@@ -114,6 +151,15 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
           triggers: normalizeHumanReviewTriggers(row.humanReviewTriggers),
           enforcement: normalizeReviewEnforcement(row.humanReviewEnforcement),
         },
+        scope: {
+          accessLevel: normalizeAccessLevel(row.accessLevel),
+          connectedSystems: Array.isArray(row.connectedSystems)
+            ? (row.connectedSystems as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+            : [],
+          enforcement: normalizeScopeEnforcement(row.scopeEnforcement),
+          toolAllowlist: row.mcpToolAllowlist,
+          rules: await loadClassifications(),
+        },
       }
     : null;
 
@@ -124,4 +170,5 @@ export async function loadAgent(agentId: string): Promise<LoadedAgent | null> {
 export function __clearAgentCache() {
   agentCache.clear();
   catalogCache = null;
+  classificationCache = null;
 }

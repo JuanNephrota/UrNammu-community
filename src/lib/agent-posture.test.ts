@@ -24,6 +24,7 @@ function governed(overrides: Partial<PostureInput> = {}): PostureInput {
     parentRiskAssessmentsCount: 1,
     riskReviewsCount: 0,
     mcpEnforcement: "enforce",
+    scopeEnforcement: "enforce",
     mcpServerAllowlist: ["payments"],
     mcpToolAllowlist: [],
     unapprovedToolProfiles: 0,
@@ -69,6 +70,7 @@ test("a bare agent is weak with gaps that link to where they are fixed", () => {
       riskOwnerId: null,
       escalationContact: null,
       mcpEnforcement: "monitor",
+      scopeEnforcement: "monitor",
       mcpServerAllowlist: [],
       enforceableTriggersCount: 0,
       humanReviewTriggersCount: 0,
@@ -115,13 +117,21 @@ test("partial credit: charter thirds, stage-review fraction", () => {
 });
 
 test("authority rewards enforcement, not just configuration", () => {
-  const monitored = computeAgentPosture(governed({ mcpEnforcement: "monitor", humanReviewEnforcement: "monitor" }));
+  const monitored = computeAgentPosture(
+    governed({ mcpEnforcement: "monitor", scopeEnforcement: "monitor", humanReviewEnforcement: "monitor" })
+  );
   const authority = monitored.dimensions.find((d) => d.key === "authority")!;
   assert.equal(authority.score, 30 + 25);
   assert.deepEqual(
     authority.gaps.map((g) => g.text),
-    ["Switch MCP enforcement from Monitor to Enforce", "Switch human-review enforcement to Enforce"]
+    [
+      "Switch MCP enforcement from Monitor to Enforce",
+      "Switch charter scope enforcement from Monitor to Enforce",
+      "Switch human-review enforcement to Enforce",
+    ]
   );
+  const scoped = computeAgentPosture(governed({ mcpEnforcement: "monitor", humanReviewEnforcement: "monitor", scopeEnforcement: "enforce" }));
+  assert.equal(scoped.dimensions.find((d) => d.key === "authority")!.score, 30 + 8 + 25);
 });
 
 test("decision making penalises inconsistency, open incidents and unaddressed drift", () => {

@@ -22,7 +22,13 @@ export const HELP_HINTS = {
   human_review_enforcement:
     "Monitor records a dry-run denial and raises a HIGH alert when a trigger matches, but forwards the response. Enforce holds the whole response (streams are buffered), returns 403 human_review_required with a pending review id, and queues the call under Oversight → Human Review; approving there lets the agent through when it re-runs the call.",
   connected_systems:
-    "Which AI systems this agent acts on top of. Used for risk inheritance and telemetry attribution.",
+    "The business systems this agent reaches (CRM, Jira, payments…). Used for risk inheritance and, once listed, enforced: a tool classified as reaching a system not named here is out of scope. An empty list is not enforced.",
+  access_level:
+    "The highest kind of tool the agent may call. Every tool is classified read / write / admin (org-wide rules, else by name; unknown names count as write). Read only permits read tools; read write adds write tools; admin permits everything; restricted permits only read tools on the agent's own MCP tool allowlist.",
+  scope_enforcement:
+    "What both proxies do when a tool call exceeds the access level or reaches a system not in Connected systems. Monitor records a dry-run denial and raises a HIGH alert; Enforce withholds the response (403 agent_scope_violation). Scope violations are never queued for review: reclassify the tool or change the charter.",
+  tool_classifications:
+    "Org-wide rules that say what a tool does (read / write / admin) and which system it reaches, keyed by MCP server and tool patterns (`*` any server, `-` tools with no server, globs allowed; most specific wins). Both proxies apply them within a minute. Tools without a rule are classified by name.",
 
   mcp_governance:
     "Which MCP servers and tools this agent may use. Observed activity comes from proxy traffic carrying x-agent-id; unlisted tools raise alerts and, in enforce mode, are blocked or hidden.",

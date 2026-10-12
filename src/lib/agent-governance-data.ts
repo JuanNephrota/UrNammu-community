@@ -91,6 +91,7 @@ function buildPostureInput(agent: AgentRow, input: AgentGovernanceInput): Postur
   return {
     ...input,
     connectedSystemsCount: Array.isArray(agent.connectedSystems) ? agent.connectedSystems.length : 0,
+    scopeEnforcement: agent.scopeEnforcement,
     toolArgumentTriggersCount: triggers.filter((t) => t.kind === "tool_argument").length,
     baseline: baselineRow
       ? {

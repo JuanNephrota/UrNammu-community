@@ -42,8 +42,8 @@ import {
 } from "./mcp-tool-governance";
 import {
   adjudicateHumanReview,
-  agentEnforcesReview,
-  evaluateAgentReviewTriggers,
+  agentWithholdsResponses,
+  evaluateAgentToolPolicy,
   recordHumanReviewMatches,
   recordToolActivity,
   type AgentGovernance,
@@ -276,9 +276,9 @@ export async function handleAnthropicProxy(
     // and either withhold it (403) or replay it to the client unchanged.
     let upstreamBody: ReadableStream<Uint8Array> = anthropicResponse.body;
     let streamReviewDecision: StreamReviewDecision | undefined;
-    if (anthropicResponse.ok && agentEnforcesReview(agent)) {
+    if (anthropicResponse.ok && agentWithholdsResponses(agent)) {
       const bufferedText = await anthropicResponse.text();
-      const reviewMatches = await evaluateAgentReviewTriggers(
+      const reviewMatches = await evaluateAgentToolPolicy(
         agent,
         collectAnthropicToolUsesFromSse(bufferedText)
       );
@@ -472,9 +472,9 @@ export async function handleAnthropicProxy(
     });
   }
 
-  const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+  const reviewMatches = await evaluateAgentToolPolicy(agent, toolUses);
   const adjudication =
-    agent && reviewMatches.length > 0 && agentEnforcesReview(agent)
+    agent && reviewMatches.length > 0 && agentWithholdsResponses(agent)
       ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider: "claude", model, requestId, userEmail, department })
       : null;
   const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;
@@ -592,7 +592,7 @@ async function extractStreamUsage(
       }
     }
     toolUses.push(...toolAccumulator.flush());
-    const reviewMatches = await evaluateAgentReviewTriggers(ctx.agent, toolUses);
+    const reviewMatches = await evaluateAgentToolPolicy(ctx.agent, toolUses);
 
     const accounted = accountTokens(usage);
     const pricing = calculateCost("anthropic", ctx.model, usage);
@@ -671,7 +671,7 @@ async function extractStreamUsage(
       // Monitor mode: record every match as a dry run. Enforce mode: the
       // handler already adjudicated; record only what it withheld (waived
       // calls are not denials).
-      const enforcing = agentEnforcesReview(ctx.agent);
+      const enforcing = agentWithholdsResponses(ctx.agent);
       const toRecord = !enforcing ? reviewMatches : ctx.reviewDecision?.blocked ? ctx.reviewDecision.withheld : [];
       if (toRecord.length > 0) {
         await recordHumanReviewMatches({

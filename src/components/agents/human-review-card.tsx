@@ -26,6 +26,7 @@ const KIND_BADGE: Record<HumanReviewTrigger["kind"], string> = {
   tool_argument: "argument",
   sensitive_data: "sensitive data",
   note: "note",
+  scope: "charter scope",
 };
 
 /**

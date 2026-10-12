@@ -833,6 +833,20 @@ async function main() {
       });
       await prisma.agentToolCall.deleteMany({ where: { agentId: agent.id } });
       await prisma.agentToolProfile.deleteMany({ where: { agentId: agent.id } });
+      // Org-wide tool classifications (charter scope enforcement). The agent
+      // above is read-only, so transition_issue shows as out of scope.
+      for (const rule of [
+        { server: "jira", tool: "search_*", access: "read", system: "Jira", notes: "Jira MCP server searches" },
+        { server: "jira", tool: "get_*", access: "read", system: "Jira", notes: "Jira MCP server reads" },
+        { server: "jira", tool: "transition_issue", access: "write", system: "Jira", notes: "Moves an issue between workflow states" },
+        { server: "-", tool: "web_search", access: "read", system: null, notes: "Provider-hosted web search" },
+      ]) {
+        await prisma.toolClassification.upsert({
+          where: { server_tool: { server: rule.server, tool: rule.tool } },
+          update: { access: rule.access, system: rule.system, notes: rule.notes },
+          create: rule,
+        });
+      }
       const scopeKey = `agent:${agent.id}`;
       const samples: Array<{ serverKey: string; serverName: string | null; serverHost: string | null; toolName: string; kind: string; approved: boolean; calls: number; daysAgoFirst: number }> = [
         { serverKey: "jira", serverName: "jira", serverHost: "mcp.internal.example.com", toolName: "*", kind: "mcp_server", approved: true, calls: 42, daysAgoFirst: 20 },

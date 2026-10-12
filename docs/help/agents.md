@@ -83,7 +83,9 @@ Nothing is replayed. After an approval the agent (or whoever runs it) re-issues 
 
 Governance applies to traffic that reaches a UrNammu proxy with the agent's id. In the agent's SDK, set the base URL to the proxy (`…/api/proxy/anthropic` or `…/api/proxy/openai/v1`; URLs and the shared secret are on **Settings → Proxy Setup**) and send `x-proxy-key`, `x-agent-id` (from the MCP Tool Governance card) and, optionally, `x-user-email` and `x-department`. The agent keeps its own provider key; the proxy forwards it. Claude Code and Agent SDK runtimes take the same values from `ANTHROPIC_BASE_URL` and `ANTHROPIC_CUSTOM_HEADERS`.
 
-Make the agent handle a `403`: `agent_blocked` (suspended or retired: stop), `policy_denied` (MCP server outside the allowlist or a policy rule: stop and surface the violations), `human_review_required` (a trigger withheld the call: surface `review.id` to a person and retry only after approval under **Oversight → Human Review**). The full walkthrough is in the user guide under **Connecting an Agent to the Proxy**.
+Make the agent handle a `403`: `agent_blocked` (suspended or retired: stop), `policy_denied` (MCP server outside the allowlist or a policy rule: stop and surface the violations), `human_review_required` (a trigger withheld the call: surface `review.id` to a person and retry only after approval under **Oversight → Human Review**), `agent_scope_violation` (the call exceeded the agent's access level or reached a system it is not connected to: stop; a person reclassifies the tool or changes the charter). The full walkthrough is in the user guide under **Connecting an Agent to the Proxy**.
+
+The proxy only governs tools it sees execute (MCP connector and provider tools). An agent that executes its own tools asks **before running one**: `POST /api/agent-policy/check` on the UrNammu app with `x-proxy-key` and `x-agent-id`, body `{ "tool": "...", "server": "...", "arguments": {...} }` (or `{ "calls": [...] }`). It answers `allow`, `review` (with a pending review id) or `deny`, applying the same kill switch, allowlists, charter scope and review triggers as the proxy, and records the call on the MCP card like proxy traffic. `GET /api/agent-policy` returns the agent's effective policy so a runtime can hide out-of-scope tools up front.
 
 ## MCP tool governance
 
@@ -95,6 +97,16 @@ The **MCP Tool Governance** card on the agent detail page shows which MCP server
 - **Enforce** returns `403` for unlisted servers and rewrites each server's `allowed_tools` so the provider only exposes allowlisted tools to the model.
 
 **Approve** on an unapproved row adds it to the allowlist. **Oversight → MCP Activity** shows the same data across all agents.
+
+## Charter scope enforcement
+
+The charter's **Access level** and **Connected systems** are enforced, not just recorded. Both proxies classify every tool the model calls as read, write or admin and attribute it to a system, using the org-wide **Tool classifications** (Oversight → MCP Activity) first and the tool's name otherwise; a name that cannot be placed counts as write until someone classifies it.
+
+- **Read only** permits read tools; **Read write** adds write tools; **Admin** permits everything; **Restricted** permits only read tools that are on the agent's own tool allowlist.
+- Once **Connected systems** is non-empty, a tool classified as reaching any other system is out of scope. An empty list is not enforced.
+- **Scope enforcement** (agent form, next to Access level) is **Monitor** by default: out-of-scope calls are forwarded, recorded as dry-run denials and raise a HIGH `agent_scope` alert. **Enforce** withholds the response (`403 agent_scope_violation`, streams buffered). Scope violations are never queued for human review: reclassify the tool or change the charter.
+
+The MCP Tool Governance card shows each observed tool's classification (and where it came from), whether it is in scope, and the most recent out-of-scope calls. The pencil next to a classification sets an org-wide rule for that tool; the posture score's Authority dimension rewards Enforce.
 
 ## Accountability
 

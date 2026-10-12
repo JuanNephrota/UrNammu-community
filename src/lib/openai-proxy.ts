@@ -46,8 +46,8 @@ import {
 } from "./mcp-tool-governance";
 import {
   adjudicateHumanReview,
-  agentEnforcesReview,
-  evaluateAgentReviewTriggers,
+  agentWithholdsResponses,
+  evaluateAgentToolPolicy,
   recordHumanReviewMatches,
   recordToolActivity,
   type AgentGovernance,
@@ -530,9 +530,9 @@ export async function handleOpenAIProxy(
     // then either withhold it (403) or replay it to the client unchanged.
     let upstreamBody: ReadableStream<Uint8Array> = responsePayload.body;
     let streamReviewDecision: StreamReviewDecision | undefined;
-    if (upstream.ok && agentEnforcesReview(agent)) {
+    if (upstream.ok && agentWithholdsResponses(agent)) {
       const bufferedText = await new Response(responsePayload.body).text();
-      const reviewMatches = await evaluateAgentReviewTriggers(
+      const reviewMatches = await evaluateAgentToolPolicy(
         agent,
         collectOpenAIToolUsesFromSse(bufferedText, endpoint)
       );
@@ -693,9 +693,9 @@ export async function handleOpenAIProxy(
       aiSystemId,
     });
   }
-  const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+  const reviewMatches = await evaluateAgentToolPolicy(agent, toolUses);
   const adjudication =
-    agent && reviewMatches.length > 0 && upstream.ok && agentEnforcesReview(agent)
+    agent && reviewMatches.length > 0 && upstream.ok && agentWithholdsResponses(agent)
       ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider, model, requestId, userEmail, department })
       : null;
   const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;
@@ -806,7 +806,7 @@ async function extractOpenAIStreamUsage(
       }
     }
     toolUses.push(...toolAccumulator.flush());
-    const reviewMatches = await evaluateAgentReviewTriggers(ctx.agent, toolUses);
+    const reviewMatches = await evaluateAgentToolPolicy(ctx.agent, toolUses);
 
     const accounted = accountTokens(usage);
     const pricing = calculateCost(ctx.pricingProvider, ctx.model, usage);
@@ -880,7 +880,7 @@ async function extractOpenAIStreamUsage(
       reviewMatches,
     });
     if (ctx.agent && reviewMatches.length > 0) {
-      const enforcing = agentEnforcesReview(ctx.agent);
+      const enforcing = agentWithholdsResponses(ctx.agent);
       const toRecord = !enforcing ? reviewMatches : ctx.reviewDecision?.blocked ? ctx.reviewDecision.withheld : [];
       if (toRecord.length > 0) {
         await recordHumanReviewMatches({

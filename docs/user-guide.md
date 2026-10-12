@@ -440,8 +440,36 @@ OpenAI-based agents use `baseURL: ".../api/proxy/openai/v1"` with the same heade
 | `agent_blocked` | The agent is suspended (kill switch) or RETIRED. | Stop. A person must resume it from the agent page. |
 | `policy_denied` | The request declared an MCP server outside the agent's allowlist (Enforce mode), or a policy-as-code rule blocked it. | Stop and surface `violations[]`; do not retry unchanged. |
 | `human_review_required` | A review trigger withheld the model's response. `error.review.id` names the pending request. | Surface the review id (and `url`) to a person; retry only after it is approved under Oversight → Human Review. |
+| `agent_scope_violation` | The model called a tool above the agent's access level, or one that reaches a system the agent is not connected to (Scope enforcement = Enforce). | Stop and surface `violations[]`. Not waivable: a person reclassifies the tool or changes the agent's access level / connected systems. |
 
 Blind retries make things worse: a withheld call retried in a loop just increments the pending request's `occurrences` and keeps the alert hot.
+
+**Tools the agent executes itself.** The proxy governs what it can see: tools run by the provider (MCP connector, web search, code execution). When the agent runs its own tools — a LangChain / Agent SDK tool function, a shell command, an internal API — the proxy only ever sees the model *ask* for them. For those, ask UrNammu before executing:
+
+```bash
+curl -s https://<your-urnammu-domain>/api/agent-policy/check \
+  -H "x-proxy-key: $URNAMMU_PROXY_SECRET" -H "x-agent-id: <agent id>" \
+  -H "x-user-email: svc-refund-bot@example.com" -H "content-type: application/json" \
+  -d '{"tool":"issue_refund","server":"payments","arguments":{"order_id":"o_123","amount":5000}}'
+```
+
+```json
+{
+  "decision": "deny",
+  "agent": { "id": "…", "name": "Refund bot" },
+  "calls": [{
+    "tool": "payments/issue_refund",
+    "decision": "deny",
+    "classification": { "access": "write", "system": "Payments", "source": "rule" },
+    "reasons": [{ "rule": "agent_scope_violation", "message": "Charter scope: tool exceeds the agent's access level: write tool (classified write) exceeds access level read-only", "policy": "Agent charter scope: Refund bot" }],
+    "advisories": []
+  }]
+}
+```
+
+The verdict is the one the proxy would give: `deny` for the kill switch, an MCP server or tool outside the allowlist (Enforce), or a charter-scope violation (Enforce); `review` when a human-review trigger withheld it (the response carries `review.id` and `url`, and an approved waiver turns the next identical check into `allow`); otherwise `allow`. Dimensions still in Monitor mode report what they would have done under `advisories` and allow. Send `{"calls":[…]}` to check several tools at once (the overall `decision` is the worst). A suspended or retired agent gets the same `403 agent_blocked` as the proxy. Every check is recorded exactly like proxy traffic — the tool appears on the MCP Tool Governance card with provider `policy-check`, denials and alerts are raised, pending reviews queued — so client-side tools are governed and visible like MCP ones.
+
+`GET /api/agent-policy` (same headers) returns the agent's effective policy — kill-switch state, allowlists with the catalog merged, access level and the maximum tool access it permits, connected systems, classification rules and the enforceable review triggers — so a runtime can hide out-of-scope tools from the model before it ever asks.
 
 **Smoke test.** Once the agent is wired up, its first call appears on the *MCP Tool Governance* card and the governance checklist's "Route the agent's traffic through the proxy" item ticks itself. From a shell:
 
@@ -499,6 +527,36 @@ Each refusal is recorded as an **enforced** denial under **Compliance → Denial
 - The Azure proxy caches agent state for 30 seconds, so a suspension takes effect within that window. The Vercel fallback proxy checks every request.
 
 The detail page shows a **Traffic blocked at the proxy** banner (who suspended it, when, and why) while either condition holds; registry cards carry a **SUSPENDED** badge.
+
+### Charter Scope Enforcement
+
+An agent's charter says it is *read-only* and reaches *Jira* and *Slack*. Until now that was documentation; nothing stopped a read-only agent from calling a write tool. Scope enforcement closes that gap at both proxies.
+
+**Classification.** Every tool the model calls is classified as `read`, `write` or `admin` and optionally attributed to a business system:
+
+1. **Tool classifications** (Oversight → MCP Activity, or the pencil next to a tool on an agent's MCP card) are org-wide rules keyed by server and tool patterns — `jira/create_issue`, `jira/*`, `*/run_*`, or `-/bash` for tools with no server. The most specific rule wins. A rule may name the **system** the tool reaches (`Jira`, `Salesforce`).
+2. Otherwise the tool's **name** decides: `get_`, `list_`, `search_`, `fetch_`… are read; `create_`, `update_`, `send_`, `run_`… are write; `delete_`, `grant_`, `deploy_`, `terminate_`… are admin. A destructive token anywhere in the name wins; otherwise the leading verb.
+3. A name that cannot be placed counts as **write** until someone classifies it, so an unrecognised tool never slips past a read-only agent. The MCP card lists these as *unclassified*.
+
+**Access level** (agent form) ranks `restricted` < `read-only` < `read-write` < `admin`:
+
+| Access level | May call |
+|---|---|
+| Read only | read tools |
+| Read write | read and write tools |
+| Admin | any tool, including admin / destructive ones |
+| Restricted | only read tools that are on the agent's **own** MCP tool allowlist (the org catalog does not count) |
+
+**Connected systems** (agent form): once the list is non-empty, a tool whose classification names a system not on the list is out of scope, case-insensitively. An empty list is "not documented" and is not enforced; the posture score already asks for it.
+
+**Scope enforcement** (agent form, next to Access level; badge on the MCP card):
+
+- **Monitor** (default for every agent, existing ones included): the call is forwarded, a dry-run `PolicyDenial` (`agent_scope_violation`) is written and a HIGH alert (source `agent_scope`) is raised, deduped 24 hours per agent and reason.
+- **Enforce**: both proxies hold the response (streams are buffered, as for review triggers) and return `403 agent_scope_violation` listing each violating tool and why. Nothing is queued for human review and no waiver applies: either the tool is misclassified (fix the rule) or the charter is wrong (change the access level or add the system). Scope and review enforcement are independent; an agent can enforce one and monitor the other, and a response that trips both reports both.
+
+**Where to look.** The MCP Tool Governance card shows each observed tool's classification, where it came from (*rule*, *by name*, *unclassified*), the system it reaches and an **In scope / Out of scope** verdict, with a *Charter scope* summary and the most recent out-of-scope calls beneath. Rows that are out of scope are highlighted. The posture score's **Authority** dimension gives 8 of its 100 points to scope enforcement being on. Client-side tools checked through `POST /api/agent-policy/check` appear on the same card.
+
+**Rolling it out.** Leave everything in Monitor for a week. Read the `agent_scope` alerts: each names the tool, the classification and why it was out of scope. Classify the tools that were misjudged by name (one rule per tool fixes it for every agent), raise the access level of agents that genuinely need write tools, and add the systems agents genuinely reach. When the alerts stop being surprising, switch the agent to Enforce.
 
 ### Accountability, Incidents and Retirement
 
@@ -2012,6 +2070,8 @@ Runs on every maintenance call. Produces alerts for:
 3. Click **Approve** on each expected row, or edit the agent and add server / tool entries by hand (`jira`, `*.internal.example.com`, `jira/search_issues`, `docs/*`).
 4. Switch the agent to **Enforce**. Unlisted servers now return `403` and the proxy narrows `allowed_tools` for listed servers.
 5. Watch **Alerts** for `mcp_tool_governance` entries: a HIGH alert means the model reached for a tool outside the allowlist; a MEDIUM alert means a new server or tool appeared.
+6. Check the **Access** and **Scope** columns on the same card. Classify any *unclassified* tool (pencil) and any tool the name heuristic got wrong; add the systems the agent reaches under **Connected systems**. Watch `agent_scope` alerts for a week.
+7. Switch **Scope enforcement** to **Enforce**. Calls above the access level or into unlisted systems now return `403 agent_scope_violation`. If the agent runs its own tools, have it call `POST /api/agent-policy/check` before each one (see *Connecting an Agent to the Proxy*).
 
 ## 17. Troubleshooting / FAQ
 

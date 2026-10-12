@@ -177,6 +177,15 @@ Follow-ups:
   `HumanReviewRequest` rows; reviewers approve (exact-call or trigger-wide
   waiver) or reject under Oversight → Human Review; both proxies honour
   waivers when the agent re-runs the call.
+- ☑ Charter scope enforcement (`feat/agent-scope-enforcement`, 2026-10-12):
+  `accessLevel` and `connectedSystems` are enforced at both proxies against
+  org-wide `ToolClassification` rules (name heuristic fallback); monitor /
+  enforce per agent (`scopeEnforcement`), 403 `agent_scope_violation`, never
+  waivable.
+- ☑ Policy check for client-side tools (`POST /api/agent-policy/check`,
+  `GET /api/agent-policy`): the runtime asks before executing its own tools
+  and gets the proxy's verdict (kill switch, allowlists, scope, review
+  triggers with waivers); recorded like proxy traffic.
 - ☐ Agent evidence artifacts.
 - ☐ "Approve for all agents" shortcut on the agent MCP card.
 - ☐ Gemini/Bedrock argument extraction for review triggers.

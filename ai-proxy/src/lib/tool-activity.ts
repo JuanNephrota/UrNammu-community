@@ -22,14 +22,17 @@ import {
 import { describeWithheldCalls, reviewFingerprint, waiverCovers } from "./review-fingerprint";
 import {
   HUMAN_REVIEW_ALERT_SOURCE,
+  SCOPE_ALERT_SOURCE,
   evaluateHumanReviewTriggers,
   hasSensitiveDataTriggers,
   humanReviewDenialReasons,
   isEnforceableTrigger,
+  isScopeMatch,
   matchedToolLabels,
   summarizeMatches,
   type HumanReviewMatch,
 } from "./human-review-triggers";
+import { evaluateAgentScope } from "./agent-scope";
 import { analyzeText } from "./sensitive-detect";
 
 export const MCP_ALERT_SOURCE = "mcp_tool_governance";
@@ -37,25 +40,32 @@ export const MCP_SERVER_DENIAL_RULE = "mcp_server_not_allowed";
 
 const ALERT_DEDUPE_MS = 24 * 60 * 60 * 1000;
 
-/** True when a matched trigger must withhold the response (buffer streams, 403). */
-export function agentEnforcesReview(agent: LoadedAgent | null | undefined): agent is LoadedAgent {
-  return (
-    !!agent && agent.review.enforcement === "enforce" && agent.review.triggers.some(isEnforceableTrigger)
-  );
+/**
+ * True when the agent's policy can withhold a response: enforced review
+ * triggers or enforced charter scope. Handlers buffer streams and adjudicate
+ * only for these agents; everyone else is monitor-only and forwards.
+ */
+export function agentWithholdsResponses(agent: LoadedAgent | null | undefined): agent is LoadedAgent {
+  if (!agent) return false;
+  if (agent.scope.enforcement === "enforce") return true;
+  return agent.review.enforcement === "enforce" && agent.review.triggers.some(isEnforceableTrigger);
 }
 
 /**
- * Evaluate an agent's human-review triggers against the tool calls a response
- * contained. `sensitive_data` triggers run the proxy's sensitive-data detector
- * over each call's arguments; everything else is pure.
+ * Evaluate an agent's tool policy against the tool calls a response
+ * contained: human-review triggers (`sensitive_data` triggers run the
+ * proxy's sensitive-data detector over each call's arguments; everything
+ * else is pure) plus charter-scope violations (agent-scope.ts). Scope matches
+ * are distinguishable with `isScopeMatch()`.
  */
-export async function evaluateAgentReviewTriggers(
+export async function evaluateAgentToolPolicy(
   agent: LoadedAgent | null | undefined,
   uses: ObservedToolUse[]
 ): Promise<HumanReviewMatch[]> {
   if (!agent || uses.length === 0) return [];
+  const scopeMatches = evaluateAgentScope(agent.scope, uses);
   const triggers = agent.review.triggers.filter(isEnforceableTrigger);
-  if (triggers.length === 0) return [];
+  if (triggers.length === 0) return scopeMatches;
   let sensitiveCategories: Array<string[] | null> | undefined;
   if (hasSensitiveDataTriggers(triggers)) {
     sensitiveCategories = await Promise.all(
@@ -70,7 +80,7 @@ export async function evaluateAgentReviewTriggers(
       })
     );
   }
-  return evaluateHumanReviewTriggers(triggers, uses, { sensitiveCategories });
+  return [...evaluateHumanReviewTriggers(triggers, uses, { sensitiveCategories }), ...scopeMatches];
 }
 
 /**
@@ -88,7 +98,8 @@ export async function recordHumanReviewMatches(input: {
   userEmail: string | null;
   department: string | null;
   requestId?: string | null;
-  isStreaming: boolean;
+  /** Null when the recorder does not know (monitor-mode matches recorded during adjudication). */
+  isStreaming: boolean | null;
   /** Pending review request the withheld calls were recorded under (enforce mode). */
   reviewRequestId?: string | null;
 }): Promise<void> {
@@ -124,6 +135,18 @@ export async function recordHumanReviewMatches(input: {
     for (const m of input.matches) byTrigger.set(m.triggerLabel, [...(byTrigger.get(m.triggerLabel) ?? []), m]);
     for (const [label, group] of byTrigger) {
       const tools = [...new Set(group.map((m) => m.tool))].join(", ");
+      if (group.every(isScopeMatch)) {
+        await upsertAlert({
+          source: SCOPE_ALERT_SOURCE,
+          title: `Out-of-scope tool call: ${input.agent.name} — ${label}`,
+          description: `${input.blocked ? "Response withheld (scope enforce mode)." : "Observed in scope monitor mode; the call was forwarded."} Agent "${input.agent.name}" called ${tools} via ${input.provider}/${input.model}: ${group
+            .map((m) => m.detail)
+            .join("; ")}. Reclassify the tool on the agent's MCP card (or Oversight → MCP Activity → Tool classifications), or change the agent's access level / connected systems. Scope violations are not waivable.`,
+          severity: "HIGH",
+          aiSystemId,
+        });
+        continue;
+      }
       await upsertAlert({
         source: HUMAN_REVIEW_ALERT_SOURCE,
         title: `Human review required: ${input.agent.name} — ${label}`,
@@ -199,7 +222,7 @@ export async function recordToolActivity(input: {
     const config = input.agent?.config ?? null;
     const uses = dedupeToolUses(input.toolUses);
     const verdicts = config ? evaluateToolUses(uses, config) : uses.map((use) => ({ use, allowed: true }));
-    const reviewTools = matchedToolLabels(input.reviewMatches ?? []);
+    const reviewTools = matchedToolLabels((input.reviewMatches ?? []).filter((m) => !isScopeMatch(m)));
     const now = new Date();
 
     if (verdicts.length > 0) {
@@ -337,11 +360,16 @@ export async function recordToolActivity(input: {
 // ─── Pending review queue ──────────────────────────────────────────────────
 
 export type ReviewAdjudication = {
-  /** Matches with no waiver: the response is withheld. */
+  /** Matches with no waiver (or scope violations in enforce mode): the response is withheld. */
   withheld: HumanReviewMatch[];
   /** Matches an approved waiver covered; each use consumed one waiver use. */
   waived: HumanReviewMatch[];
-  /** The pending request the withheld matches were recorded under. */
+  /**
+   * Matches whose dimension is in monitor mode while the other is enforced;
+   * already recorded as dry-run denials here, so handlers need not.
+   */
+  monitored: HumanReviewMatch[];
+  /** The pending request the withheld review matches were recorded under. */
   request: { id: string; url: string | null } | null;
 };
 
@@ -351,10 +379,14 @@ export function humanReviewUrl(id: string): string | null {
 }
 
 /**
- * Decide what to do with matched triggers in enforce mode: consume approved
- * waivers for the matches they cover, and record the rest as one pending
- * review request (identical re-runs collapse onto the same request). Fails
- * closed: on a DB error everything is withheld and no request id is returned.
+ * Decide what to do with matched triggers when the agent withholds
+ * responses: scope violations are withheld outright in scope enforce mode
+ * (never waived, never queued); review matches consume approved waivers for
+ * the calls they cover and the rest become one pending review request
+ * (identical re-runs collapse onto the same request). Whichever dimension is
+ * still in monitor mode has its matches recorded as dry-run denials here and
+ * returned as `monitored`. Fails closed: on a DB error every enforced match
+ * is withheld and no request id is returned. PORT of the main app's version.
  */
 export async function adjudicateHumanReview(input: {
   agent: LoadedAgent;
@@ -366,8 +398,32 @@ export async function adjudicateHumanReview(input: {
   department: string | null;
 }): Promise<ReviewAdjudication> {
   const now = new Date();
+  const scopeMatches = input.matches.filter(isScopeMatch);
+  const reviewMatches = input.matches.filter((m) => !isScopeMatch(m));
+  const scopeEnforced = input.agent.scope.enforcement === "enforce";
+  const reviewEnforced =
+    input.agent.review.enforcement === "enforce" && input.agent.review.triggers.some(isEnforceableTrigger);
+  const monitored = [...(scopeEnforced ? [] : scopeMatches), ...(reviewEnforced ? [] : reviewMatches)];
+  if (monitored.length > 0) {
+    await recordHumanReviewMatches({
+      agent: input.agent,
+      matches: monitored,
+      blocked: false,
+      provider: input.provider,
+      model: input.model,
+      aiSystemId: input.agent.aiSystemId,
+      userEmail: input.userEmail,
+      department: input.department,
+      requestId: input.requestId,
+      isStreaming: null,
+    });
+  }
+  const scopeWithheld = scopeEnforced ? scopeMatches : [];
+  if (!reviewEnforced || reviewMatches.length === 0) {
+    return { withheld: scopeWithheld, waived: [], monitored, request: null };
+  }
   try {
-    const setFingerprint = reviewFingerprint(input.matches);
+    const setFingerprint = reviewFingerprint(reviewMatches);
     const waivers = await prisma.humanReviewRequest.findMany({
       where: { agentId: input.agent.id, status: "APPROVED", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
       select: { id: true, waiverScope: true, fingerprint: true, triggers: true, expiresAt: true, usesRemaining: true },
@@ -375,7 +431,7 @@ export async function adjudicateHumanReview(input: {
     const consumed = new Map<string, number>();
     const waived: HumanReviewMatch[] = [];
     const withheld: HumanReviewMatch[] = [];
-    for (const match of input.matches) {
+    for (const match of reviewMatches) {
       const waiver = waivers.find(
         (w) =>
           (w.usesRemaining === null || w.usesRemaining - (consumed.get(w.id) ?? 0) > 0) &&
@@ -400,7 +456,7 @@ export async function adjudicateHumanReview(input: {
         },
       });
     }
-    if (withheld.length === 0) return { withheld, waived, request: null };
+    if (withheld.length === 0) return { withheld: scopeWithheld, waived, monitored, request: null };
 
     const fingerprint = reviewFingerprint(withheld);
     const existing = await prisma.humanReviewRequest.findFirst({
@@ -431,9 +487,9 @@ export async function adjudicateHumanReview(input: {
       });
       id = created.id;
     }
-    return { withheld, waived, request: { id, url: humanReviewUrl(id) } };
+    return { withheld: [...withheld, ...scopeWithheld], waived, monitored, request: { id, url: humanReviewUrl(id) } };
   } catch (err) {
     console.error("adjudicateHumanReview failed; withholding everything:", err);
-    return { withheld: input.matches, waived: [], request: null };
+    return { withheld: [...reviewMatches, ...scopeWithheld], waived: [], monitored, request: null };
   }
 }

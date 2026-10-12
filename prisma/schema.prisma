@@ -257,6 +257,7 @@ model User {
   riskOwnedAgents        AIAgent[] @relation("AgentRiskOwner")
   retiredAgents          AIAgent[] @relation("AgentRetiredBy")
   mcpCatalogApprovals    McpCatalogEntry[] @relation("McpCatalogApprovedBy")
+  toolClassifications    ToolClassification[] @relation("ToolClassificationCreatedBy")
   humanReviewDecisions   HumanReviewRequest[] @relation("HumanReviewDecidedBy")
   apiUsageLogs APIUsageLog[]
   auditLogs    AuditLog[]
@@ -397,6 +398,13 @@ model AIAgent {
   // adding the first catalog entry never changes their behaviour; new agents
   // inherit by default (validation schema).
   inheritMcpCatalog  Boolean  @default(false)
+  // Charter scope enforcement (src/lib/agent-scope.ts). Both proxies classify
+  // every tool call (ToolClassification rules, else a name heuristic) and
+  // compare it with `accessLevel` and `connectedSystems`. "monitor" records a
+  // dry-run denial + alert; "enforce" withholds the response (403
+  // agent_scope_violation). Never queued for review — the charter is changed,
+  // not waived.
+  scopeEnforcement   String   @default("monitor")
 
   // Kill switch. While `suspendedAt` is set both proxies refuse requests that
   // carry this agent's x-agent-id (403, recorded as an enforced PolicyDenial).
@@ -439,6 +447,28 @@ model McpCatalogEntry {
   updatedAt    DateTime @updatedAt
 
   @@index([active])
+}
+
+// Org-wide tool classification: what a tool does (read / write / admin) and
+// which business system it reaches. Both proxies match every tool call against
+// these rules (server/tool globs, most specific wins; `*` any server, `-` only
+// tools with no server) and fall back to a name heuristic. Drives charter
+// scope enforcement (src/lib/agent-scope.ts).
+model ToolClassification {
+  id          String   @id @default(cuid())
+  server      String   @default("*")
+  tool        String
+  /// "read" | "write" | "admin"
+  access      String
+  /// Business system the tool reaches; compared with AIAgent.connectedSystems.
+  system      String?
+  notes       String?  @db.Text
+  createdBy   User?    @relation("ToolClassificationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([server, tool])
 }
 
 // Per-agent behavioural baseline over a trailing window, plus the drift

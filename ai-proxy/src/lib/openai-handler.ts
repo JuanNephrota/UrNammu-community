@@ -27,8 +27,8 @@ import { extractOpenAIStreamUsage, type StreamContext } from "./stream-parser";
 import { scanResponseForSensitiveInfo } from "./sensitive-detect";
 import {
   adjudicateHumanReview,
-  agentEnforcesReview,
-  evaluateAgentReviewTriggers,
+  agentWithholdsResponses,
+  evaluateAgentToolPolicy,
   recordHumanReviewMatches,
   recordToolActivity,
 } from "./tool-activity";
@@ -415,9 +415,9 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
       // Human-review triggers in enforce mode: hold the whole stream, decide,
       // then either withhold it (403) or replay it to the client unchanged.
       let nodeStream: Readable;
-      if (agentEnforcesReview(agent)) {
+      if (agentWithholdsResponses(agent)) {
         const bufferedText = await upstream.text();
-        const reviewMatches = await evaluateAgentReviewTriggers(
+        const reviewMatches = await evaluateAgentToolPolicy(
           agent,
           collectOpenAIToolUsesFromSse(bufferedText, endpoint)
         );
@@ -539,9 +539,9 @@ export function createOpenAIProxyHandler(flavor: OpenAIProxyFlavor) {
       },
     }).catch((err) => console.error("logUsage failed:", err));
 
-    const reviewMatches = await evaluateAgentReviewTriggers(agent, toolUses);
+    const reviewMatches = await evaluateAgentToolPolicy(agent, toolUses);
     const adjudication =
-      agent && reviewMatches.length > 0 && upstream.ok && agentEnforcesReview(agent)
+      agent && reviewMatches.length > 0 && upstream.ok && agentWithholdsResponses(agent)
         ? await adjudicateHumanReview({ agent, matches: reviewMatches, provider, model, requestId, userEmail, department })
         : null;
     const reviewBlocked = (adjudication?.withheld.length ?? 0) > 0;

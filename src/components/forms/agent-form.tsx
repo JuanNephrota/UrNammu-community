@@ -29,6 +29,7 @@ interface AgentFormProps {
     mcpServerAllowlist?: string[];
     mcpToolAllowlist?: string[];
     mcpEnforcement?: string;
+    scopeEnforcement?: string;
     purpose?: string | null;
     inScopeActions?: string[];
     outOfScopeActions?: string[];
@@ -101,6 +102,7 @@ export function AgentForm({ initialData, systems, users = [] }: AgentFormProps) 
       mcpToolAllowlist: mcpTools,
       mcpEnforcement: (formData.get("mcpEnforcement") as string) || "monitor",
       inheritMcpCatalog: formData.get("inheritMcpCatalog") === "on",
+      scopeEnforcement: (formData.get("scopeEnforcement") as string) || "monitor",
       // Charter. Empty strings are sent as-is; the API normalises them to null.
       purpose: formData.get("purpose") as string,
       inScopeActions: inScope,
@@ -186,12 +188,25 @@ export function AgentForm({ initialData, systems, users = [] }: AgentFormProps) 
               </select>
             </div>
             <div className="space-y-2">
-              <Label>Access Level</Label>
+              <Label className="flex items-center gap-1.5">
+                Access Level
+                <HelpHint hint="access_level" />
+              </Label>
               <select name="accessLevel" defaultValue={initialData?.accessLevel ?? "read-only"} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
-                <option value="read-only">Read Only</option>
-                <option value="read-write">Read Write</option>
-                <option value="admin">Admin</option>
-                <option value="restricted">Restricted</option>
+                <option value="read-only">Read only — read tools only</option>
+                <option value="read-write">Read write — read and write tools, no admin</option>
+                <option value="admin">Admin — any tool, including destructive ones</option>
+                <option value="restricted">Restricted — only read tools on its own allowlist</option>
+              </select>
+            </div>
+            <div id="scope" className="scroll-mt-6 space-y-2">
+              <Label className="flex items-center gap-1.5">
+                Scope enforcement
+                <HelpHint hint="scope_enforcement" />
+              </Label>
+              <select name="scopeEnforcement" defaultValue={initialData?.scopeEnforcement ?? "monitor"} className="flex h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-primary)] appearance-none">
+                <option value="monitor">Monitor — record out-of-scope calls and alert</option>
+                <option value="enforce">Enforce — withhold responses that exceed the access level or reach unlisted systems</option>
               </select>
             </div>
           </div>

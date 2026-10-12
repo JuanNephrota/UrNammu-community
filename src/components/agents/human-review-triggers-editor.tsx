@@ -17,7 +17,12 @@ const KIND_LABELS: Record<HumanReviewTrigger["kind"], string> = {
   tool_argument: "Argument condition",
   sensitive_data: "Sensitive data in arguments",
   note: "Note (not evaluated)",
+  // Synthetic kind produced by the scope evaluator; never offered in the editor.
+  scope: "Charter scope",
 };
+
+/** Kinds a person may author; `scope` is synthetic (agent-scope.ts). */
+const EDITABLE_KINDS = ["tool", "tool_argument", "sensitive_data", "note"] as const;
 
 const OP_LABELS: Record<TriggerOp, string> = {
   gt: "greater than",
@@ -43,7 +48,8 @@ function blank(kind: HumanReviewTrigger["kind"]): HumanReviewTrigger {
     case "sensitive_data":
       return { kind, tool: "*" };
     case "note":
-      return { kind, text: "" };
+    case "scope":
+      return { kind: "note", text: "" };
   }
 }
 
@@ -108,7 +114,7 @@ export function HumanReviewTriggersEditor({
                 className={`${selectClass} sm:max-w-xs`}
                 aria-label="Trigger kind"
               >
-                {(Object.keys(KIND_LABELS) as HumanReviewTrigger["kind"][]).map((k) => (
+                {EDITABLE_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {KIND_LABELS[k]}
                   </option>

@@ -10,7 +10,9 @@ import { Badge, riskBadgeVariant, statusBadgeVariant } from "@/components/ui/bad
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AutonomyBadge } from "@/components/ui/autonomy-tooltip";
 import { AgentAIRiskCard } from "@/components/agents/agent-ai-risk-card";
-import { McpGovernanceCard } from "@/components/agents/mcp-governance-card";
+import { McpGovernanceCard, type ScopeDenialRow } from "@/components/agents/mcp-governance-card";
+import { loadToolClassifications } from "@/lib/mcp-tool-activity";
+import { normalizeAccessLevel, normalizeScopeEnforcement } from "@/lib/agent-scope";
 import { AgentKillSwitch } from "@/components/agents/agent-kill-switch";
 import { AgentCharterCard } from "@/components/agents/agent-charter-card";
 import { HumanReviewCard, type HumanReviewMatchRow } from "@/components/agents/human-review-card";
@@ -22,6 +24,7 @@ import { AgentPostureCard } from "@/components/agents/agent-posture-card";
 import type { AgentBaselineStats, DriftFinding } from "@/lib/agent-baseline";
 import {
   HUMAN_REVIEW_RULE,
+  SCOPE_RULE,
   normalizeHumanReviewTriggers,
   normalizeReviewEnforcement,
 } from "@/lib/human-review-triggers";
@@ -125,6 +128,35 @@ export default async function AgentDetailPage({
       matches: Array.isArray(meta.matches) ? meta.matches : [],
     };
   });
+
+  const scopeDenials = await prisma.policyDenial.findMany({
+    where: {
+      requestMetadata: { path: ["agentId"], equals: agent.id },
+      reasons: { array_contains: [{ ruleKey: SCOPE_RULE }] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 6,
+    select: { id: true, createdAt: true, provider: true, model: true, mode: true, requestMetadata: true },
+  });
+  const recentScopeDenials: ScopeDenialRow[] = scopeDenials.map((row) => {
+    const meta = (row.requestMetadata ?? {}) as { matches?: Array<{ rule?: string; trigger: string; tool: string; detail: string }> };
+    return {
+      id: row.id,
+      createdAt: row.createdAt,
+      provider: row.provider,
+      model: row.model,
+      mode: row.mode,
+      matches: Array.isArray(meta.matches) ? meta.matches.filter((m) => m.rule === SCOPE_RULE || !m.rule) : [],
+    };
+  });
+  const classificationRules = await loadToolClassifications();
+  const scopeConfig = {
+    accessLevel: normalizeAccessLevel(agent.accessLevel),
+    connectedSystems: (agent.connectedSystems as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0),
+    enforcement: normalizeScopeEnforcement(agent.scopeEnforcement),
+    toolAllowlist: agent.mcpToolAllowlist,
+    rules: classificationRules,
+  };
 
   const since30d = daysAgo(30);
   const [toolProfiles, calls30d, unapproved30d, lastCall] = await Promise.all([
@@ -361,6 +393,7 @@ export default async function AgentDetailPage({
             mcpServerAllowlist: agent.mcpServerAllowlist,
             mcpToolAllowlist: agent.mcpToolAllowlist,
             mcpEnforcement: agent.mcpEnforcement,
+            scopeEnforcement: agent.scopeEnforcement,
             accessLevel: agent.accessLevel,
             connectedSystems: agent.connectedSystems as string[],
             capabilities: agent.capabilities as string[],
@@ -369,6 +402,9 @@ export default async function AgentDetailPage({
           }}
           profiles={toolProfiles}
           stats={{ calls30d, unapproved30d, lastCallAt: lastCall?.createdAt ?? null }}
+          scope={scopeConfig}
+          canClassify={canOperate}
+          recentScopeDenials={recentScopeDenials}
         />
         </div>
         <div id="risk" className="scroll-mt-6 lg:col-span-2">

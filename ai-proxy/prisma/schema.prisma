@@ -131,6 +131,11 @@ model AIAgent {
   humanReviewTriggers    Json?
   humanReviewEnforcement String @default("monitor")
   inheritMcpCatalog      Boolean @default(false)
+  // Charter scope (agent-scope.ts): declared access level + connected systems,
+  // enforced against ToolClassification rules.
+  accessLevel        String   @default("read-only")
+  connectedSystems   Json     @default("[]")
+  scopeEnforcement   String   @default("monitor")
 
   toolCalls    AgentToolCall[]
   toolProfiles AgentToolProfile[]
@@ -180,6 +185,17 @@ model HumanReviewRequest {
 
 // Read-only mirror; the main app owns writes. Merged into an agent's
 // allowlists when `inheritMcpCatalog` is set.
+// READ-ONLY mirror (subset): org-wide tool classification rules.
+model ToolClassification {
+  id     String  @id @default(cuid())
+  server String  @default("*")
+  tool   String
+  access String
+  system String?
+
+  @@unique([server, tool])
+}
+
 model McpCatalogEntry {
   id     String   @id @default(cuid())
   server String   @unique

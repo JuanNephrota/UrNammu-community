@@ -30,6 +30,13 @@ import { toolLabel, type ObservedToolUse } from "./mcp-tool-governance";
 
 export const HUMAN_REVIEW_RULE = "human_review_required";
 export const HUMAN_REVIEW_ALERT_SOURCE = "human_review_trigger";
+/**
+ * Charter-scope violations (see agent-scope.ts) ride the same match plumbing
+ * as review triggers, under their own rule key and alert source.
+ */
+export const SCOPE_RULE = "agent_scope_violation";
+export const SCOPE_ALERT_SOURCE = "agent_scope";
+export type ScopeViolationRule = "access_level" | "connected_system" | "restricted";
 
 export type TriggerOp = "gt" | "gte" | "lt" | "lte" | "eq" | "neq" | "contains" | "matches" | "exists";
 export const TRIGGER_OPS: readonly TriggerOp[] = ["gt", "gte", "lt", "lte", "eq", "neq", "contains", "matches", "exists"];
@@ -45,7 +52,12 @@ export type HumanReviewTrigger =
       label?: string;
     }
   | { kind: "sensitive_data"; tool?: string; categories?: string[]; label?: string }
-  | { kind: "note"; text: string };
+  | { kind: "note"; text: string }
+  /**
+   * Synthetic: produced by `evaluateAgentScope()` for a call outside the
+   * agent's charter, never stored on the agent (normalisation drops it).
+   */
+  | { kind: "scope"; rule: ScopeViolationRule; label?: string };
 
 export type HumanReviewEnforcement = "monitor" | "enforce";
 
@@ -117,6 +129,9 @@ function normalizeOne(raw: unknown): HumanReviewTrigger | null {
       const text = asString(t.text) ?? asString(t.note);
       return text ? { kind: "note", text: text.slice(0, 500) } : null;
     }
+    case "scope":
+      // Synthetic trigger kind; only the scope evaluator may create it.
+      return null;
     default: {
       const text = asString(t.text) ?? asString(t.note) ?? asString(t.description);
       return noteOf(text ?? raw);
@@ -188,8 +203,16 @@ export function describeTrigger(trigger: HumanReviewTrigger): string {
       }`;
     case "note":
       return trigger.text;
+    case "scope":
+      return SCOPE_RULE_TEXT[trigger.rule];
   }
 }
+
+const SCOPE_RULE_TEXT: Record<ScopeViolationRule, string> = {
+  access_level: "Charter scope: tool exceeds the agent's access level",
+  connected_system: "Charter scope: tool reaches a system the agent is not connected to",
+  restricted: "Charter scope: restricted agent called a tool outside its allowlist",
+};
 
 export function triggerLabel(trigger: HumanReviewTrigger): string {
   return (trigger.kind !== "note" && trigger.label) || describeTrigger(trigger);
@@ -328,6 +351,7 @@ export function evaluateHumanReviewTriggers(
   uses.forEach((use, index) => {
     const label = toolLabel(use);
     for (const trigger of active) {
+      if (trigger.kind === "scope") continue; // evaluated by agent-scope.ts, never from the stored list
       if (trigger.kind === "tool") {
         if (toolMatches(trigger.tool, use)) {
           matches.push({ trigger, triggerLabel: triggerLabel(trigger), use, tool: label, detail: "tool invoked" });
@@ -369,6 +393,16 @@ export function evaluateHumanReviewTriggers(
   return matches;
 }
 
+/** True for a charter-scope violation (agent-scope.ts) rather than a review trigger. */
+export function isScopeMatch(match: HumanReviewMatch): boolean {
+  return match.trigger.kind === "scope";
+}
+
+/** The PolicyDenial rule key a match is recorded under. */
+export function matchRuleKey(match: HumanReviewMatch): typeof HUMAN_REVIEW_RULE | typeof SCOPE_RULE {
+  return isScopeMatch(match) ? SCOPE_RULE : HUMAN_REVIEW_RULE;
+}
+
 /** Labels of the tools that matched, for flagging AgentToolCall rows. */
 export function matchedToolLabels(matches: HumanReviewMatch[]): Set<string> {
   return new Set(matches.map((m) => m.tool));
@@ -376,17 +410,27 @@ export function matchedToolLabels(matches: HumanReviewMatch[]): Set<string> {
 
 /** `PolicyDenial.reasons[]` entries for a set of matches. */
 export function humanReviewDenialReasons(agent: { id: string; name: string }, matches: HumanReviewMatch[]) {
-  return matches.map((m) => ({
-    ruleKey: HUMAN_REVIEW_RULE,
-    message: `Agent "${agent.name}" called ${m.tool} (${m.detail}), matching human-review trigger "${m.triggerLabel}".`,
-    policyId: agent.id,
-    policyName: `Human review trigger: ${m.triggerLabel}`,
-  }));
+  return matches.map((m) =>
+    isScopeMatch(m)
+      ? {
+          ruleKey: SCOPE_RULE,
+          message: `Agent "${agent.name}" called ${m.tool} (${m.detail}), outside its charter scope.`,
+          policyId: agent.id,
+          policyName: `Agent charter scope: ${agent.name}`,
+        }
+      : {
+          ruleKey: HUMAN_REVIEW_RULE,
+          message: `Agent "${agent.name}" called ${m.tool} (${m.detail}), matching human-review trigger "${m.triggerLabel}".`,
+          policyId: agent.id,
+          policyName: `Human review trigger: ${m.triggerLabel}`,
+        }
+  );
 }
 
 /** Compact per-match record for `PolicyDenial.requestMetadata` and alerts. */
 export function summarizeMatches(matches: HumanReviewMatch[]) {
   return matches.slice(0, 20).map((m) => ({
+    rule: matchRuleKey(m),
     trigger: m.triggerLabel,
     kind: m.trigger.kind,
     tool: m.tool,
@@ -403,22 +447,38 @@ export function humanReviewBlockedBody(
   matches: HumanReviewMatch[],
   review?: { id: string; url: string | null } | null
 ) {
-  const first = matches[0];
+  const scope = matches.filter(isScopeMatch);
+  const reviews = matches.filter((m) => !isScopeMatch(m));
+  const violations = matches.map((m) => ({
+    rule: matchRuleKey(m),
+    trigger: m.triggerLabel,
+    tool: m.tool,
+    detail: m.detail,
+    policy: isScopeMatch(m) ? `Agent charter scope: ${agent.name}` : `Human review trigger: ${m.triggerLabel}`,
+  }));
+  if (reviews.length === 0) {
+    // Only charter-scope violations: nothing to wait for. The charter (access
+    // level, connected systems) or the tool's classification must change.
+    const first = scope[0];
+    return {
+      error: {
+        type: SCOPE_RULE,
+        message: `Response withheld: agent "${agent.name}" attempted ${first?.tool ?? "a tool call"} outside its charter scope (${first?.detail ?? "scope violation"}). Reclassify the tool or change the agent's access level / connected systems; this is not waivable.`,
+        violations,
+      },
+    };
+  }
+  const first = reviews[0];
   const next = review
     ? ` Pending review ${review.id}${review.url ? ` (${review.url})` : ""}: once a reviewer approves it, re-run the call and the proxy will let it through.`
     : " A reviewer must act before the agent may continue.";
+  const alsoScope = scope.length > 0 ? ` ${scope.length} call${scope.length === 1 ? " is" : "s are"} also outside the agent's charter scope and cannot be waived.` : "";
   return {
     error: {
       type: HUMAN_REVIEW_RULE,
-      message: `Response withheld: agent "${agent.name}" attempted ${first?.tool ?? "a tool call"} that requires human review (${first?.triggerLabel ?? "trigger"}).${next}`,
+      message: `Response withheld: agent "${agent.name}" attempted ${first?.tool ?? "a tool call"} that requires human review (${first?.triggerLabel ?? "trigger"}).${next}${alsoScope}`,
       ...(review ? { review: { id: review.id, url: review.url, status: "PENDING" } } : {}),
-      violations: matches.map((m) => ({
-        rule: HUMAN_REVIEW_RULE,
-        trigger: m.triggerLabel,
-        tool: m.tool,
-        detail: m.detail,
-        policy: `Human review trigger: ${m.triggerLabel}`,
-      })),
+      violations,
     },
   };
 }

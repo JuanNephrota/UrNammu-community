@@ -30,8 +30,8 @@ import {
   type OpenAIEndpoint,
 } from "./proxy-providers";
 import {
-  agentEnforcesReview,
-  evaluateAgentReviewTriggers,
+  agentWithholdsResponses,
+  evaluateAgentToolPolicy,
   recordHumanReviewMatches,
   recordToolActivity,
 } from "./tool-activity";
@@ -135,7 +135,7 @@ async function finalizeStream(
     );
   }
 
-  const reviewMatches = await evaluateAgentReviewTriggers(ctx.agent, toolUses);
+  const reviewMatches = await evaluateAgentToolPolicy(ctx.agent, toolUses);
   await recordToolActivity({
     agent: ctx.agent ?? null,
     aiSystemId: ctx.aiSystemId,
@@ -151,7 +151,7 @@ async function finalizeStream(
   if (ctx.agent && reviewMatches.length > 0) {
     // Monitor mode: every match is a dry run. Enforce mode: the handler
     // already adjudicated; record only what it withheld.
-    const enforcing = agentEnforcesReview(ctx.agent);
+    const enforcing = agentWithholdsResponses(ctx.agent);
     const toRecord = !enforcing ? reviewMatches : ctx.reviewDecision?.blocked ? ctx.reviewDecision.withheld : [];
     if (toRecord.length > 0) {
       await recordHumanReviewMatches({

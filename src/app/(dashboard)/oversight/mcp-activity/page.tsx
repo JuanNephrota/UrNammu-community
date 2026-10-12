@@ -9,6 +9,7 @@ import { formatDateTime } from "@/lib/utils";
 import { getSession } from "@/lib/auth-guard";
 import { canRunWorkflows } from "@/lib/workflow";
 import { McpCatalogCard } from "@/components/oversight/mcp-catalog-card";
+import { ToolClassificationsCard } from "@/components/oversight/tool-classifications-card";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,7 @@ export default async function McpActivityPage() {
     : [];
   const systemName = new Map(systems.map((s) => [s.id, s.name]));
 
-  const [session, catalogEntries, inheritingAgents] = await Promise.all([
+  const [session, catalogEntries, inheritingAgents, classificationRules] = await Promise.all([
     getSession(),
     prisma.mcpCatalogEntry.findMany({
       where: { active: true },
@@ -73,6 +74,10 @@ export default async function McpActivityPage() {
       include: { approvedBy: { select: { name: true, email: true } } },
     }),
     prisma.aIAgent.count({ where: { inheritMcpCatalog: true, status: { not: "RETIRED" } } }),
+    prisma.toolClassification.findMany({
+      orderBy: [{ server: "asc" }, { tool: "asc" }],
+      include: { createdBy: { select: { name: true, email: true } } },
+    }),
   ]);
   const canEdit = canRunWorkflows(session?.user.role);
   const activeAgents = agents.filter((a) => a._count.toolCalls > 0);
@@ -98,6 +103,8 @@ export default async function McpActivityPage() {
       </div>
 
       <McpCatalogCard entries={catalogEntries} inheritingAgents={inheritingAgents} canEdit={canEdit} />
+
+      <ToolClassificationsCard rules={classificationRules} canEdit={canEdit} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

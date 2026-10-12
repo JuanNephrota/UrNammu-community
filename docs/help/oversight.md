@@ -95,6 +95,8 @@ Every proxy path (Vercel and Azure, Anthropic and OpenAI) records the same four 
 
 **Oversight → MCP Activity** lists every MCP server agents declare and every tool the model invokes through the proxy, with the allowlist verdict for each. Tools invoked outside an agent's allowlist appear under **Needs a decision**; open the agent to approve them or tighten the allowlist.
 
+**Tool classifications** on the same page are the org-wide rules that say what a tool does (read / write / admin) and which business system it reaches, keyed by server and tool patterns (`*` any server, `-` tools with no server, globs allowed; the most specific rule wins). Both proxies compare them with every agent's access level and connected systems; tools without a rule are classified by name and unknown names count as write. Calls the proxy executes through the **policy check** endpoint show up here with provider `policy-check`.
+
 ## Spend budgets
 
 Create a budget by **provider**, **system**, or **department**. Monthly budget + warning threshold % (default 80%). Crossing the threshold raises a `cost_anomaly` alert.

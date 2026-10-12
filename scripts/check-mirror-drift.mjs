@@ -40,6 +40,11 @@ const MIRRORS = [
     proxyHeaderLines: 2,
   },
   {
+    app: "src/lib/agent-scope.ts",
+    proxy: "ai-proxy/src/lib/agent-scope.ts",
+    proxyHeaderLines: 2,
+  },
+  {
     app: "src/lib/review-fingerprint.ts",
     proxy: "ai-proxy/src/lib/review-fingerprint.ts",
     proxyHeaderLines: 2,

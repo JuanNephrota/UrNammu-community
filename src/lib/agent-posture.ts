@@ -24,6 +24,8 @@ import {
 
 export type PostureInput = AgentGovernanceInput & {
   connectedSystemsCount: number;
+  /** Charter scope enforcement ("monitor" | "enforce"); see agent-scope.ts. */
+  scopeEnforcement?: string;
   /** `tool_argument` triggers: real thresholds, not just "any call". */
   toolArgumentTriggersCount: number;
   baseline: { mature: boolean; findingsCount: number } | null;
@@ -117,7 +119,8 @@ export function computeAgentPosture(input: PostureInput): AgentPosture {
     ],
     authority: [
       { points: 30, ok: allowlisted, evidence: `MCP server allowlist in force (${input.mcpServerAllowlist.length})`, gap: "Allowlist the MCP servers it may use, or inherit the org catalog", href: `${edit}#mcp` },
-      { points: 20, ok: input.mcpEnforcement === "enforce", evidence: "MCP allowlist enforced at the proxy", gap: "Switch MCP enforcement from Monitor to Enforce", href: `${edit}#mcp` },
+      { points: 12, ok: input.mcpEnforcement === "enforce", evidence: "MCP allowlist enforced at the proxy", gap: "Switch MCP enforcement from Monitor to Enforce", href: `${edit}#mcp` },
+      { points: 8, ok: input.scopeEnforcement === "enforce", evidence: "Charter scope (access level, connected systems) enforced at the proxy", gap: "Switch charter scope enforcement from Monitor to Enforce", href: `${edit}#scope` },
       { points: 25, ok: input.enforceableTriggersCount > 0, evidence: `${input.enforceableTriggersCount} enforceable review trigger${input.enforceableTriggersCount === 1 ? "" : "s"}`, gap: "Declare tool or argument triggers the proxy can evaluate", href: `${edit}#human-review` },
       { points: 25, ok: enforcedTriggers, evidence: "Review triggers withhold matching calls", gap: input.enforceableTriggersCount > 0 ? "Switch human-review enforcement to Enforce" : "Enforce review triggers once declared", href: `${edit}#human-review` },
     ],
