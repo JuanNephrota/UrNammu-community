@@ -40,9 +40,10 @@ const WRITE_MODELS = [
   "AgentToolCall",
   "AgentToolProfile",
   "HumanReviewRequest",
+  "NetworkRequestLog",
 ];
 // Models the proxy only reads — the proxy may declare a subset.
-const READ_MODELS = ["User", "Policy", "PolicyAssignment", "AppSetting", "AIAgent", "McpCatalogEntry", "ToolClassification"];
+const READ_MODELS = ["User", "Policy", "PolicyAssignment", "AppSetting", "AIAgent", "McpCatalogEntry", "ToolClassification", "NetworkBlockRule", "DiscoveredAITool"];
 
 function parse(src) {
   const models = new Map();

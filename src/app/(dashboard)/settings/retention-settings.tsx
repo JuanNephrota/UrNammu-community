@@ -71,6 +71,12 @@ const ROWS: Array<{
     note: "Auth and admin-audit events ingested from provider compliance feeds (ChatGPT Enterprise). Metadata only.",
   },
   {
+    key: "network_request_log_retention_days",
+    label: "Network proxy request log",
+    tables: "NetworkRequestLog",
+    note: "Per-request rows from the general network proxy (host, path, verdict). No bodies or query strings are stored.",
+  },
+  {
     key: "claude_code_telemetry_retention_days",
     label: "Claude Code telemetry",
     tables: "ClaudeCodeMetric · ClaudeCodeEvent",

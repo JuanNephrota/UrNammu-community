@@ -76,6 +76,7 @@ describe("retention settings catalog", () => {
       proxy_health_retention_days: 90,
       scan_result_retention_days: 365,
       compliance_activity_retention_days: 365,
+      network_request_log_retention_days: 90,
     });
   });
 

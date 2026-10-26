@@ -256,6 +256,7 @@ model User {
   technicalOwnedAgents   AIAgent[] @relation("AgentTechnicalOwner")
   riskOwnedAgents        AIAgent[] @relation("AgentRiskOwner")
   retiredAgents          AIAgent[] @relation("AgentRetiredBy")
+  networkRules           NetworkBlockRule[]
   mcpCatalogApprovals    McpCatalogEntry[] @relation("McpCatalogApprovedBy")
   toolClassifications    ToolClassification[] @relation("ToolClassificationCreatedBy")
   humanReviewDecisions   HumanReviewRequest[] @relation("HumanReviewDecidedBy")
@@ -2309,4 +2310,63 @@ model ApiKeyProfile {
 
   @@unique([provider, externalId])
   @@index([provider, lastActiveAt])
+}
+
+// ─── General network proxy ──────────────────────────────
+//
+// URL block rules evaluated by both proxies' `/proxy/net/{host}/{*path}`
+// route (see src/lib/network-rules.ts for the pattern grammar) and the
+// per-request log they write. Mirrored in ai-proxy/prisma/schema.prisma.
+
+enum NetworkRuleAction {
+  BLOCK
+  ALLOW
+}
+
+model NetworkBlockRule {
+  id          String            @id @default(cuid())
+  // Host / path pattern, e.g. `example.com`, `*.example.com`, `example.com/v1/*`, `*`.
+  pattern     String
+  action      NetworkRuleAction @default(BLOCK)
+  enabled     Boolean           @default(true)
+  // Shown to the caller in the 403 body and in the request log.
+  reason      String?
+  createdBy   User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([pattern, action])
+  @@index([enabled])
+}
+
+model NetworkRequestLog {
+  id            String   @id @default(cuid())
+  // Which proxy handled it: "vercel" | "azure".
+  proxy         String
+  method        String
+  host          String
+  // Path only — the query string may carry credentials and is never stored.
+  path          String
+  // "forwarded" | "blocked" (enforce) | "monitored" (would block) | "error".
+  action        String
+  // Upstream status; null when the request never left the proxy.
+  status        Int?
+  ruleId        String?
+  rulePattern   String?
+  // "rule" | "shadow_ai" | "private_address" | "upstream" | "proxy".
+  ruleSource    String?
+  reason        String?
+  userEmail     String?
+  department    String?
+  aiSystemId    String?
+  agentId       String?
+  requestBytes  Int      @default(0)
+  responseBytes Int?
+  durationMs    Int?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([host, createdAt])
+  @@index([action, createdAt])
 }

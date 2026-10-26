@@ -6,6 +6,8 @@ import { createAuditLog } from "@/lib/audit";
 import { findMatchingGovernedSystem } from "@/lib/governed-system-match";
 import { normalizeDirectoryEmail, rollupDepartments } from "@/lib/directory-identity";
 import { isAIToolCategory, resolveToolCategory } from "@/lib/ai-tools-registry";
+import { proxyBlockStats } from "@/lib/network-enforcement";
+import { normalizeDomain } from "@/lib/shadow-blocklist";
 
 const createDiscoveredToolSchema = z.object({
   toolName: z.string().min(1),
@@ -67,14 +69,29 @@ export async function GET(req: NextRequest) {
           })
         : [];
 
+    // How often the network proxy has denied (or, in monitor mode, would have
+    // denied) each blocked tool's domain recently — the in-path evidence that
+    // a Block is doing something.
+    const blockedDomains = tools
+      .filter((tool) => tool.status === "BLOCKED" && tool.detectedDomain)
+      .map((tool) => tool.detectedDomain as string);
+    const proxyStats = await proxyBlockStats(blockedDomains).catch((err) => {
+      console.error("proxyBlockStats failed:", err);
+      return new Map();
+    });
+
     return NextResponse.json(
-      tools.map((tool) => ({
-        ...tool,
-        departmentRollup:
-          tool.userEmails.length > 0 && people.length > 0
-            ? rollupDepartments(tool.userEmails, people)
-            : null,
-      }))
+      tools.map((tool) => {
+        const domain = tool.status === "BLOCKED" ? normalizeDomain(tool.detectedDomain) : null;
+        return {
+          ...tool,
+          departmentRollup:
+            tool.userEmails.length > 0 && people.length > 0
+              ? rollupDepartments(tool.userEmails, people)
+              : null,
+          proxyBlocks: domain ? proxyStats.get(domain) ?? { blocked: 0, monitored: 0, lastAt: null } : null,
+        };
+      })
     );
   });
 }

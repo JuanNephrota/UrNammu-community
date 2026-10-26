@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   CheckCircle2,
   CircleAlert,
@@ -19,6 +20,8 @@ import {
 } from "@/components/ui/card";
 
 interface Props {
+  /** `network_proxy_mode`: the in-path layer is armed only in enforce mode. */
+  networkProxyMode: "off" | "monitor" | "enforce";
   feedTokenSet: boolean;
   microsoftConfigured: boolean;
   googleConfigured: boolean;
@@ -77,6 +80,7 @@ function Row({
 }
 
 export function EnforcementReadiness({
+  networkProxyMode,
   feedTokenSet,
   microsoftConfigured,
   googleConfigured,
@@ -114,10 +118,30 @@ export function EnforcementReadiness({
         </CardTitle>
         <CardDescription>
           Which enforcement paths are actually armed when you Block a discovered tool. Blocking
-          is best-effort across all three — each covers a gap the others can&apos;t.
+          is best-effort across all four — each covers a gap the others can&apos;t.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* In-path network proxy */}
+        <Row
+          level={networkProxyMode === "enforce" ? "armed" : networkProxyMode === "monitor" ? "partial" : "off"}
+          title="Network — In-path proxy"
+          detail={
+            networkProxyMode === "enforce"
+              ? "Enforce mode. Traffic routed through /api/proxy/net is denied (403) for every blocked tool's domain and subdomains — no external control needed."
+              : networkProxyMode === "monitor"
+                ? "Monitor mode. Blocked domains are logged as would-block but still forwarded. Switch to Enforce in Settings → Proxy Setup to deny them."
+                : "Off. The network proxy route is disabled, so blocks are not enforced in-path. Turn it on in Settings → Proxy Setup."
+          }
+        >
+          <Link
+            href="/settings/proxy"
+            className="mt-2 inline-block text-xs text-[var(--accent)] hover:underline"
+          >
+            Network proxy settings →
+          </Link>
+        </Row>
+
         {/* Network feed */}
         <Row
           level={feedTokenSet ? "armed" : "partial"}

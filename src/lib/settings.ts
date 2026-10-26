@@ -72,6 +72,8 @@ export async function getSetting(key: string): Promise<string | null> {
     // IANA timezone for "outside business hours" governance alerts.
     org_timezone: process.env.ORG_TIMEZONE,
     proxy_secret: process.env.PROXY_SECRET,
+    // General network proxy: off | monitor | enforce (default off).
+    network_proxy_mode: process.env.NETWORK_PROXY_MODE,
     azure_openai_endpoint: process.env.AZURE_OPENAI_ENDPOINT,
     azure_openai_deployments: process.env.AZURE_OPENAI_DEPLOYMENTS,
     shadow_ai_blocklist_token: process.env.SHADOW_AI_BLOCKLIST_TOKEN,

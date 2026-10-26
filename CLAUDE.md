@@ -66,7 +66,7 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 │   │       │   ├── scan/   Google Workspace OAuth scan
 │   │       │   └── ingest/ DNS/proxy log ingestion
 │       ├── endpoint-agent/ Endpoint agent enroll + manifest + report + device admin
-│   │       └── proxy/      Claude + OpenAI transparent proxy (Vercel fallback)
+│   │       └── proxy/      Claude + OpenAI transparent proxy (Vercel fallback) + net/ general network proxy with URL block rules
 │   ├── components/
 │   │   ├── ui/             Primitives: button, badge, card, input, select, dialog, tabs, data-table
 │   │   ├── layout/         Sidebar, top bar, page header
@@ -165,6 +165,10 @@ OPENAI_API_KEY=<optional>
 
 # Proxy
 PROXY_SECRET=<shared secret for API proxy auth>
+# General network proxy (/api/proxy/net/<host>/<path>): off | monitor | enforce.
+# Also the `network_proxy_mode` setting. Off by default; set identically on Azure.
+NETWORK_PROXY_MODE=off
+
 # Salt for the dangerous-prompt correlation hash (also `prompt_hash_salt` setting).
 # Falls back to NEXTAUTH_SECRET. Set identically on the Azure Function App.
 PROMPT_HASH_SALT=<random>

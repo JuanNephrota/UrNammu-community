@@ -5,6 +5,7 @@ import { withRole } from "@/lib/auth-guard";
 import { createAuditLog } from "@/lib/audit";
 import { classifyDiscoveredTool } from "@/lib/ai-classification";
 import { enforceIdentityBlock, type IdentityEnforcementResult } from "@/lib/identity-enforcement";
+import { describeProxyEnforcement, type ProxyEnforcementResult } from "@/lib/network-enforcement";
 import { dismissedDomainKey } from "@/lib/discovery-merge";
 import { AI_TOOL_CATEGORY_IDS } from "@/lib/ai-tools-registry";
 
@@ -217,6 +218,9 @@ export async function PUT(
     // sign-ins; when it leaves BLOCKED, restore them. Best-effort — a failure
     // here is reported, not fatal, so the status change still persists.
     let identityEnforcement: IdentityEnforcementResult | undefined;
+    // In-path enforcement needs no call — the network proxy denies every
+    // BLOCKED domain — but the outcome depends on its mode, so report it.
+    let proxyEnforcement: ProxyEnforcementResult | undefined;
     const enteringBlocked =
       nextStatus === "BLOCKED" && existing.status !== "BLOCKED";
     const leavingBlocked =
@@ -228,6 +232,10 @@ export async function PUT(
           externalAppId: existing.externalAppId,
           externalAppProvider: existing.externalAppProvider,
         },
+        enteringBlocked
+      );
+      proxyEnforcement = await describeProxyEnforcement(
+        { toolName: existing.toolName, detectedDomain: existing.detectedDomain },
         enteringBlocked
       );
     }
@@ -253,10 +261,20 @@ export async function PUT(
                 },
               }
             : {}),
+          ...(proxyEnforcement
+            ? {
+                proxyEnforcement: {
+                  mode: proxyEnforcement.mode,
+                  action: proxyEnforcement.action,
+                  enforced: proxyEnforcement.enforced,
+                  domain: proxyEnforcement.domain,
+                },
+              }
+            : {}),
         },
       });
     }
 
-    return NextResponse.json({ ...updated, identityEnforcement });
+    return NextResponse.json({ ...updated, identityEnforcement, proxyEnforcement });
   });
 }

@@ -511,12 +511,14 @@ The page splits discoveries into three sections:
 
 ## What "Block" actually does
 
-Blocking records the decision in UrNammu — but UrNammu is not in your traffic path, so the block only takes effect through one of two enforcement layers:
+Blocking records the decision in UrNammu and takes effect through up to three enforcement layers:
+
+- **In-path** — the network proxy (\`/api/proxy/net/<host>/<path>\`, Settings → Proxy Setup) denies every blocked tool's domain and subdomains automatically: \`403\` in Enforce mode, a logged would-block in Monitor mode, nothing when the proxy is Off. The block/unblock notice says which applies, and each blocked tool shows how many requests the proxy denied in the last 30 days.
 
 - **Network** — blocked domains are published on an authenticated feed at \`/api/discovered-tools/blocklist\`, which a DNS sinkhole, proxy ACL, firewall URL list, or CASB polls to enforce. Formats: \`text\` (default), \`hosts\`, \`json\`, and \`pac\`, selected with \`?format=\`. The feed requires a Bearer token and fails closed — with no token configured it returns 503 rather than serving unauthenticated. Set the token in **Settings → Shadow AI**.
 - **Identity** — where the tool is federated to Google Workspace or Microsoft 365 and the scan captured an app handle, blocking disables the app at the identity provider so sign-ins stop. Tools discovered without an app handle report \`skipped\`; a provider missing the required admin permission reports \`failed\`.
 
-Check **Settings → Shadow AI** for a readiness summary of both layers. A blocked tool with neither layer configured is a documented decision, not an enforced one.
+Check **Settings → Shadow AI** for a readiness summary of all layers. A blocked tool with no layer armed is a documented decision, not an enforced one.
 
 ## Automatic suppression
 
@@ -993,7 +995,7 @@ Most settings require \`ADMIN\`. Secret values are encrypted in the database wit
 - **Overview** — jump-off page to every settings area.
 - **General** — choose the AI provider (Anthropic / OpenAI) and model used for in-app AI features (risk suggestion, compliance gap analysis, agent risk review, summarization). The global **policy enforcement mode** for the proxy — Off / Dry run / Enforce — is also set here, along with Azure Monitor access for Proxy Health and the **Data Retention** card.
 - **Provider Admin APIs** — admin keys for org telemetry: Anthropic (Admin API, Compliance API, Enterprise Analytics API), OpenAI, Cursor, GitHub Copilot (token + organization / enterprise; needs the GitHub **Copilot usage metrics** policy and \`read:org\` or \`manage_billing:copilot\` / \`read:enterprise\`), Google Gemini billing export, plus the AI gateways (the ChatGPT Enterprise Compliance API key lives on the **Integrations** page, and its \`chatgpt_enterprise\` sync appears in the per-provider table here). The **Background Provider Sync** card sets the global auto-sync default and interval, and a per-provider table lets each provider (including Claude Code analytics and each gateway) override both, with its last run, outcome, and next-due time. Unset overrides inherit the global value. **Sync History & Backfill** shows each provider's ingested date range (history from → watermark) and pulls older history on demand in 7-day chunks. Anomaly thresholds, governance-automation notice days, and **Usage Attribution** live here too: a default registered AI system per provider (Anthropic, OpenAI, LiteLLM, Cursor) and per-API-key overrides that map an individual provider key to a system. Mappings apply to both usage and cost rows on the next sync and drive the Cost by Governed System / Cost by API Key panels on Oversight.
-- **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent proxy, per-provider base URLs and SDK snippets for Claude, OpenAI (chat, Responses, embeddings and every other \`/v1\` path), Azure OpenAI, Gemini and Amazon Bedrock, plus the Azure OpenAI resource endpoint and deployment → model map (\`azure_openai_endpoint\`, \`azure_openai_deployments\`) used to price deployment-named traffic. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`, and provider credential headers (\`api-key\`, \`x-goog-api-key\`, \`x-aws-region\`). For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile. Bedrock is log-only: calls are forwarded with the client's own AWS credentials (Bedrock API key or SigV4).
+- **Proxy Setup** — shared \`PROXY_SECRET\` for the transparent proxy, per-provider base URLs and SDK snippets for Claude, OpenAI (chat, Responses, embeddings and every other \`/v1\` path), Azure OpenAI, Gemini and Amazon Bedrock, plus the Azure OpenAI resource endpoint and deployment → model map (\`azure_openai_endpoint\`, \`azure_openai_deployments\`) used to price deployment-named traffic. Generates ready-to-paste config for Claude Code (managed settings or per-user). Supports attribution headers: \`x-user-email\`, \`x-department\`, \`x-ai-system-id\`, \`x-agent-id\`, and provider credential headers (\`api-key\`, \`x-goog-api-key\`, \`x-aws-region\`). For per-user attribution in Claude Code, developers add \`export PROXY_USER_EMAIL="$(git config user.email)"\` to their shell profile. Bedrock is log-only: calls are forwarded with the client's own AWS credentials (Bedrock API key or SigV4). The **Network Proxy & URL Blocking** card turns on a general HTTPS forwarder (\`/api/proxy/net/<host>/<path>\`) with a mode of Off / Monitor / Enforce, URL block and allow rules (a host and its subdomains, subdomains only, a path prefix, or every host for default-deny), a URL tester, and the recent request log. Shadow AI discoveries marked Blocked are denied by domain automatically; an Allow rule always wins.
 - **Users & Identity** — manage users and roles. Configure Google OAuth, Microsoft 365 / Entra ID sign-in, and password-backed local accounts. The **Directory sync** card (see below) pulls the people directory from Google Workspace and/or Microsoft Entra ID.
 - **Shadow AI** — credentials and scan controls for every discovery source (Google Workspace, Microsoft 365, Hexnode, CrowdStrike, Netskope), plus DNS / proxy import, the blocklist feed token, and the enforcement readiness summary. The **Agent Platforms** card configures agent imports (see below).
 - **Endpoint Agent** — enrollment secret, report cadence and which collectors run fleet-wide (apps, browser, network, local runtimes, and **MCP servers & agent frameworks**). The MCP collector is off until you tick it, because MCP configs are where credentials live. Changes reach agents on their next manifest fetch.
@@ -1032,13 +1034,14 @@ The **Agent Platforms** card in **Settings → Shadow AI** imports agents into *
 
 ## Enforcement readiness
 
-**Settings → Shadow AI** summarizes whether a \`BLOCKED\` shadow-AI decision can actually be enforced, across three checks:
+**Settings → Shadow AI** summarizes whether a \`BLOCKED\` shadow-AI decision can actually be enforced, across four checks:
 
+- **Network — In-path proxy** (armed only when \`network_proxy_mode\` is Enforce; Monitor shows as needs-setup)
 - **Identity — Google Workspace**
 - **Identity — Microsoft 365 (Entra)**
 - **Network — Blocklist feed**
 
-Identity enforcement disables a federated app at the IdP; the network feed publishes blocked domains for a DNS, proxy, firewall, or CASB to consume. Both are optional, but with neither configured a block is only a recorded decision. Microsoft app-disable additionally needs admin consent for the relevant Graph permission — the readiness card reports it as \`failed\` rather than silently doing nothing.
+The in-path proxy denies blocked domains for traffic routed through it; identity enforcement disables a federated app at the IdP; the network feed publishes blocked domains for a DNS, proxy, firewall, or CASB to consume. All are optional, but with none configured a block is only a recorded decision. Microsoft app-disable additionally needs admin consent for the relevant Graph permission — the readiness card reports it as \`failed\` rather than silently doing nothing.
 
 The blocklist feed token can be generated here (64 random characters). The feed fails closed: with no token set it returns \`503\` instead of serving unauthenticated.
 

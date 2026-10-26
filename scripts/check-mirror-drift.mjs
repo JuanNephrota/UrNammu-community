@@ -49,6 +49,11 @@ const MIRRORS = [
     proxy: "ai-proxy/src/lib/review-fingerprint.ts",
     proxyHeaderLines: 2,
   },
+  {
+    app: "src/lib/network-rules.ts",
+    proxy: "ai-proxy/src/lib/network-rules.ts",
+    proxyHeaderLines: 2,
+  },
 ];
 
 const errors = [];

@@ -408,3 +408,65 @@ model CostBucket {
 
   @@unique([provider, bucketStart, bucketEnd, granularity, dimensionKey])
 }
+
+// ─── General network proxy (proxy reads rules + BLOCKED discoveries, writes
+// the request log; main app owns migrations). Mirrors of the main app's
+// models — NetworkRequestLog must match column-for-column.
+
+enum NetworkRuleAction {
+  BLOCK
+  ALLOW
+}
+
+model NetworkBlockRule {
+  id          String            @id @default(cuid())
+  pattern     String
+  action      NetworkRuleAction @default(BLOCK)
+  enabled     Boolean           @default(true)
+  reason      String?
+
+  @@index([enabled])
+}
+
+model NetworkRequestLog {
+  id            String   @id @default(cuid())
+  proxy         String
+  method        String
+  host          String
+  path          String
+  action        String
+  status        Int?
+  ruleId        String?
+  rulePattern   String?
+  ruleSource    String?
+  reason        String?
+  userEmail     String?
+  department    String?
+  aiSystemId    String?
+  agentId       String?
+  requestBytes  Int      @default(0)
+  responseBytes Int?
+  durationMs    Int?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([host, createdAt])
+  @@index([action, createdAt])
+}
+
+enum DiscoveryStatus {
+  DISCOVERED
+  UNDER_REVIEW
+  REGISTERED
+  BLOCKED
+  APPROVED
+}
+
+// Shadow AI discoveries — the network proxy denies BLOCKED domains in-path.
+model DiscoveredAITool {
+  id             String          @id @default(cuid())
+  status         DiscoveryStatus @default(DISCOVERED)
+  detectedDomain String?
+
+  @@index([status])
+}

@@ -29,6 +29,7 @@ import {
  *   scan_result_retention_days       SensitiveScan +          default 365
  *                                    ProviderSecurityScan
  *   compliance_activity_retention_days ComplianceActivity     default 365
+ *   network_request_log_retention_days NetworkRequestLog      default 90
  *
  * UsageBucket and CostBucket are never touched — they are the long-term
  * aggregate that APIUsageLog and AgentToolCall roll up into, so pruning the
@@ -52,7 +53,8 @@ type TableName =
   | "ProxyHealthSnapshot"
   | "SensitiveScan"
   | "ProviderSecurityScan"
-  | "ComplianceActivity";
+  | "ComplianceActivity"
+  | "NetworkRequestLog";
 
 interface TableReport {
   table: TableName;
@@ -183,6 +185,25 @@ const complianceActivitySource: PruneSource = {
   },
 };
 
+const networkRequestLogSource: PruneSource = {
+  async findOldest(cutoff, take, after) {
+    const rows = await prisma.networkRequestLog.findMany({
+      where: { createdAt: window(cutoff, after) },
+      orderBy: { createdAt: "asc" },
+      take,
+      select: { id: true, createdAt: true },
+    });
+    return rows.map((r) => ({ id: r.id, ts: r.createdAt }));
+  },
+  async deleteByIds(ids) {
+    const res = await prisma.networkRequestLog.deleteMany({ where: { id: { in: ids } } });
+    return res.count;
+  },
+  countRemaining(cutoff) {
+    return prisma.networkRequestLog.count({ where: { createdAt: { lt: cutoff } } });
+  },
+};
+
 const BATCHED_TABLES: Array<{
   table: TableName;
   setting: CollectionRetentionKey;
@@ -217,6 +238,11 @@ const BATCHED_TABLES: Array<{
     table: "ComplianceActivity",
     setting: COLLECTION_RETENTION_SETTINGS_KEYS.COMPLIANCE_ACTIVITY,
     source: complianceActivitySource,
+  },
+  {
+    table: "NetworkRequestLog",
+    setting: COLLECTION_RETENTION_SETTINGS_KEYS.NETWORK_REQUEST_LOG,
+    source: networkRequestLogSource,
   },
 ];
 

@@ -1092,6 +1092,8 @@ Formats: `text` (bare domains, default), `hosts` (`0.0.0.0 domain`), `json` (wit
 
 Generate the token in **Settings → Shadow AI**. The feed **fails closed**: with no token set it returns `503` rather than serving an unauthenticated list of what your organization blocks.
 
+**In-path layer — the network proxy.** Traffic that is routed through the proxy's general forwarder (`/api/proxy/net/<host>/<path>`, see [13.3 Proxy Setup](#133-proxy-setup)) is checked against the Shadow AI denylist on every request: a Blocked discovery's domain (and its subdomains) gets `403` in enforce mode, or a `monitored` log row in monitor mode. This is the one layer where UrNammu *is* in the traffic path — but only for clients that are pointed at the proxy.
+
 **Identity layer — disable the app at the IdP.** Where a tool is federated to Google Workspace or Microsoft 365 and the scan captured an app handle, blocking disables the app so sign-ins stop. Outcomes you may see:
 
 | Result | Meaning |
@@ -1104,7 +1106,7 @@ Generate the token in **Settings → Shadow AI**. The feed **fails closed**: wit
 
 Microsoft app-disable requires admin consent for the app-management Graph permission. Without it you get `failed`, not silence.
 
-**Settings → Shadow AI** shows a readiness summary for both layers. If neither is configured, a block remains a documented, auditable decision — and nothing more. Knowing which of those two situations you are in matters.
+**Settings → Shadow AI** shows a readiness summary for all three layers (the in-path proxy row links to its settings). When you block or unblock a tool, the notice on the Shadow AI page reports both the proxy outcome (denied / monitored only / proxy off / no domain) and the identity outcome, and each blocked tool shows how many requests the proxy denied — or would have denied in Monitor mode — in the last 30 days. If no layer is armed, a block remains a documented, auditable decision — and nothing more. Knowing which situation you are in matters.
 
 ### AI-assisted auto-fill on conversion
 
@@ -1795,6 +1797,26 @@ Configure the shared `PROXY_SECRET` for the transparent proxy (Azure Functions +
 | Bedrock | `bedrock` | `invoke` and `invoke-with-response-stream` for Anthropic models, **log only**: the proxy forwards the client's own AWS credentials (a Bedrock API key, or a SigV4 signature computed for the Bedrock host) and never injects keys. |
 
 Policy-as-code (Settings → General enforcement mode), MCP server/tool allowlists (`x-agent-id`), prompt-risk detection and response DLP apply identically to all five providers.
+
+**Network proxy and URL blocking.** Below the provider cards, the **Network Proxy & URL Blocking** card turns the proxy into a general HTTPS forwarder: `/api/proxy/net/<host>/<path>` sends the request to `https://<host>/<path>`, checks it against the block rules, and logs it. Nothing is parsed or priced — it exists so that *any* outbound traffic from an agent or tool can be governed by URL, not just model calls.
+
+- **Mode** — `Off` (default; the route returns 404), `Monitor` (rule matches are logged as `monitored` but still forwarded — use this to tune rules), `Enforce` (matches return `403` with the rule and reason in the body). Both proxies pick up a change within a minute.
+- **Block rules** — one pattern per rule, `Block` or `Allow`, with an optional reason shown to the caller:
+
+  | Pattern | Matches |
+  |---------|---------|
+  | `example.com` | the host and every subdomain, any path |
+  | `*.example.com` | subdomains only |
+  | `example.com:8443` | that port only (default 443) |
+  | `example.com/v1/files` | `/v1/files` and `/v1/files/…` (path-segment prefix) |
+  | `example.com/v1/file*` | any path starting with `/v1/file` |
+  | `*` | every host — pair with Allow rules for a default-deny allowlist |
+
+  An **Allow** rule always wins over a Block rule and over a Shadow AI block, so exceptions are explicit. Every Shadow AI discovery marked **Blocked** is denied by domain automatically; the card shows how many.
+- **Test a URL** — dry-runs a URL against the current rules (fresh, uncached) and says which rule decided, without contacting the host.
+- **Recent requests** — the last 25 rows of the request log: verdict (`forwarded`, `monitored`, `blocked`, `error`), method, host and path, upstream status, the deciding rule, and the attributed user. Query strings and bodies are never stored. Retention is the **Network proxy request log** window in Settings → General → Data Retention (default 90 days).
+
+Safety limits: only `https` upstreams on public hosts (loopback, link-local, private ranges and cloud-metadata names are refused by name and after DNS resolution); redirects are rewritten back through the proxy rather than followed; request bodies are capped at 50 MB. Attribution headers and the agent kill switch (`x-agent-id` of a suspended agent → `403`) behave exactly as on the provider routes.
 
 **Attribution and credential headers**:
 

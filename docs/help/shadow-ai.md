@@ -65,12 +65,14 @@ The page splits discoveries into three sections:
 
 ## What "Block" actually does
 
-Blocking records the decision in UrNammu — but UrNammu is not in your traffic path, so the block only takes effect through one of two enforcement layers:
+Blocking records the decision in UrNammu and takes effect through up to three enforcement layers:
+
+- **In-path** — the network proxy (`/api/proxy/net/<host>/<path>`, Settings → Proxy Setup) denies every blocked tool's domain and subdomains automatically: `403` in Enforce mode, a logged would-block in Monitor mode, nothing when the proxy is Off. The block/unblock notice says which applies, and each blocked tool shows how many requests the proxy denied in the last 30 days.
 
 - **Network** — blocked domains are published on an authenticated feed at `/api/discovered-tools/blocklist`, which a DNS sinkhole, proxy ACL, firewall URL list, or CASB polls to enforce. Formats: `text` (default), `hosts`, `json`, and `pac`, selected with `?format=`. The feed requires a Bearer token and fails closed — with no token configured it returns 503 rather than serving unauthenticated. Set the token in **Settings → Shadow AI**.
 - **Identity** — where the tool is federated to Google Workspace or Microsoft 365 and the scan captured an app handle, blocking disables the app at the identity provider so sign-ins stop. Tools discovered without an app handle report `skipped`; a provider missing the required admin permission reports `failed`.
 
-Check **Settings → Shadow AI** for a readiness summary of both layers. A blocked tool with neither layer configured is a documented decision, not an enforced one.
+Check **Settings → Shadow AI** for a readiness summary of all layers. A blocked tool with no layer armed is a documented decision, not an enforced one.
 
 ## Automatic suppression
 

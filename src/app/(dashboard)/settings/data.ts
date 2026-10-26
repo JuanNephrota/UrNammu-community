@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth-guard";
 import { getSettings, parseEnforcementMode } from "@/lib/settings";
+import { parseNetworkProxyMode } from "@/lib/network-rules";
 import {
   RETENTION_ENV_VARS,
   RETENTION_SETTING_KEYS,
@@ -57,6 +58,7 @@ const SETTINGS_KEYS = [
   "platform_url",
   "azure_openai_endpoint",
   "azure_openai_deployments",
+  "network_proxy_mode",
   "enable_local_auth",
   "enable_dev_login",
   "google_oauth_client_id",
@@ -112,6 +114,7 @@ const SETTINGS_KEYS = [
   "proxy_health_retention_days",
   "scan_result_retention_days",
   "compliance_activity_retention_days",
+  "network_request_log_retention_days",
   "claude_code_telemetry_retention_days",
   "cursor_telemetry_retention_days",
 ] as const;
@@ -173,6 +176,9 @@ export async function getSettingsPageData() {
     : process.env.NEXTAUTH_URL ?? "http://localhost:3001";
 
   const policyEnforcementMode = parseEnforcementMode(settingsMap.policy_enforcement_mode);
+  const networkProxyMode = parseNetworkProxyMode(
+    settingsMap.network_proxy_mode ?? process.env.NETWORK_PROXY_MODE
+  );
 
   // Azure OpenAI passthrough config shown on Settings → Proxy Setup. Env
   // fallbacks match what the Azure Functions proxy reads.
@@ -218,6 +224,7 @@ export async function getSettingsPageData() {
     providerLabel,
     modelLabel,
     policyEnforcementMode,
+    networkProxyMode,
     azureMonitor,
     azureOpenAIProxy,
     /** Azure Functions proxy host, when the Proxy Health connection names it. */

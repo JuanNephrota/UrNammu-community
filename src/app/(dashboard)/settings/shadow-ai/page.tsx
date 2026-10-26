@@ -17,7 +17,7 @@ import { getSettingsPageData } from "../data";
 export default async function ShadowAISettingsPage() {
   await requireRole(["ADMIN"]);
 
-  const [{ settingsMap, proxySecret, platformUrl }, lastSuccessfulScan, blockedCount, lastAgentPlatformScan] =
+  const [{ settingsMap, proxySecret, platformUrl, networkProxyMode }, lastSuccessfulScan, blockedCount, lastAgentPlatformScan] =
     await Promise.all([
       getSettingsPageData(),
       // Shadow-AI tool scans only; agent platform imports count agents and
@@ -234,6 +234,7 @@ export default async function ShadowAISettingsPage() {
       />
 
       <EnforcementReadiness
+        networkProxyMode={networkProxyMode}
         feedTokenSet={!!settingsMap.shadow_ai_blocklist_token}
         microsoftConfigured={
           !!settingsMap.microsoft_shadow_ai_tenant_id &&

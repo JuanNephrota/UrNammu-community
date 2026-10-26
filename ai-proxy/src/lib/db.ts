@@ -161,3 +161,49 @@ export async function logPolicyDenial(params: {
     console.error("Failed to log policy denial:", err);
   }
 }
+
+/** One row per request through the general network proxy. Never throws. */
+export async function logNetworkRequest(params: {
+  method: string;
+  host: string;
+  path: string;
+  action: "forwarded" | "blocked" | "monitored" | "error";
+  status?: number | null;
+  ruleId?: string | null;
+  rulePattern?: string | null;
+  ruleSource?: string | null;
+  reason?: string | null;
+  userEmail: string | null;
+  department: string | null;
+  aiSystemId: string | null;
+  agentId: string | null;
+  requestBytes: number;
+  responseBytes?: number | null;
+  durationMs?: number | null;
+}) {
+  try {
+    await prisma.networkRequestLog.create({
+      data: {
+        proxy: "azure",
+        method: params.method,
+        host: params.host,
+        path: params.path,
+        action: params.action,
+        status: params.status ?? null,
+        ruleId: params.ruleId ?? null,
+        rulePattern: params.rulePattern ?? null,
+        ruleSource: params.ruleSource ?? null,
+        reason: params.reason ?? null,
+        userEmail: params.userEmail,
+        department: params.department,
+        aiSystemId: params.aiSystemId,
+        agentId: params.agentId,
+        requestBytes: params.requestBytes,
+        responseBytes: params.responseBytes ?? null,
+        durationMs: params.durationMs ?? null,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to log network request:", err);
+  }
+}

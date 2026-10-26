@@ -49,6 +49,8 @@ type Tool = {
   } | null;
   /** Registry category id (AIToolCategory), or null when unknown. */
   category?: string | null;
+  /** Network-proxy denials of this blocked tool's domain in the last 30 days. */
+  proxyBlocks?: { blocked: number; monitored: number; lastAt: string | null } | null;
 };
 
 type ScanStatus = {
@@ -303,12 +305,16 @@ export default function ShadowAIPage() {
           if (data.nextHref) router.push(data.nextHref);
           router.refresh();
         }
-        // Surface identity-layer enforcement outcome for block/unblock actions.
+        // Surface the identity-layer and in-path (network proxy) outcomes for
+        // block/unblock actions in one notice.
         const enf = data.identityEnforcement;
-        if (enf) {
+        const prox = data.proxyEnforcement;
+        if (enf || prox) {
+          const messages = [prox?.message, enf?.message].filter((m): m is string => !!m);
+          const anyEnforced = !!enf?.enforced || !!prox?.enforced;
           setActionNotice({
-            kind: enf.enforced ? "success" : enf.action === "failed" ? "error" : "info",
-            message: enf.message,
+            kind: anyEnforced ? "success" : enf?.action === "failed" ? "error" : "info",
+            message: messages.join(" "),
           });
         }
       }
@@ -1067,6 +1073,22 @@ export default function ShadowAIPage() {
                               {pendingRegisterId === tool.id ? "Classifying..." : "Register & Assess"}
                             </Button>
                           </>
+                        )}
+                        {tool.status === "BLOCKED" && tool.proxyBlocks && (
+                          <span
+                            className="text-[11px] text-[var(--text-muted)]"
+                            title={
+                              tool.proxyBlocks.lastAt
+                                ? `Last matched at the network proxy ${formatDate(tool.proxyBlocks.lastAt)}`
+                                : "No requests to this domain have reached the network proxy in the last 30 days"
+                            }
+                          >
+                            {tool.proxyBlocks.blocked > 0
+                              ? `${tool.proxyBlocks.blocked} denied at proxy (30d)`
+                              : tool.proxyBlocks.monitored > 0
+                                ? `${tool.proxyBlocks.monitored} would-block at proxy (30d)`
+                                : "0 at proxy (30d)"}
+                          </span>
                         )}
                         {tool.status === "BLOCKED" && (
                           <Button
