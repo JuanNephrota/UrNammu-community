@@ -1870,6 +1870,7 @@ The dedicated **Integrations** settings area (also surfaced as the top-level **I
 
 - **Report Email Delivery** — Resend API key + sender address used by scheduled report email delivery (see [Reports](#11-reports)).
 - **Telemetry retention** — retention windows (days) for Claude Code and Cursor OTel data, pruned by the maintenance cron (`0` disables pruning).
+- **Data Retention** — one window per raw collection table (proxy request log, network proxy request log, agent tool calls, policy denials, raw snapshots, proxy health snapshots, scan runs, compliance activity), enforced nightly by the collection prune cron. Blank inherits the env fallback or built-in default; `0` disables pruning for that table. Usage and cost buckets are never pruned.
 
 ---
 
@@ -1993,6 +1994,7 @@ Provider cadence lives in **Settings → Provider Admin APIs**: a global default
 | `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy config. |
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
 | `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
+| `/api/cron/prune-collection` | daily | Enforces the Data Retention windows for the proxy and network proxy request logs, agent tool calls, policy denials, raw snapshots, proxy health snapshots, compliance activity, and scan runs. |
 
 Admins can trigger any endpoint manually for testing (e.g., `curl` with the `CRON_SECRET`).
 

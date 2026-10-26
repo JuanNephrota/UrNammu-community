@@ -127,13 +127,14 @@ UrNammu is an enterprise AI governance platform that provides centralized oversi
 - Links to User, AISystem, AIAgent for traceability
 
 ### Shadow AI Discovery
-- Four detection methods: Google Workspace OAuth scan, DNS/proxy log import, the endpoint agent, manual reporting
+- Detection methods: Google Workspace / Microsoft 365 scans, Hexnode, CrowdStrike, DNS/proxy/Netskope log import, the endpoint agent, manual reporting
 - Google Workspace discovery settings live in `Settings > Shadow AI`
 - Google Sign-In settings live in `Settings > Users & Identity`
 - DNS import accepts CSV/TXT files or JSON API calls
 - All methods deduplicate by toolName + domain
 - Auto-creates alerts for new discoveries
 - Workflow: Discovered -> Under Review -> Registered/Approved/Blocked
+- A Block enforces through three layers: in-path at the network proxy (`src/lib/network-enforcement.ts`, every BLOCKED domain denied when `network_proxy_mode` is enforce), the blocklist feed, and IdP app-disable (`identity-enforcement.ts`)
 
 ### Dark Theme ("Mission Control")
 - All colors use CSS variables defined in `globals.css` (--bg-deep, --text-primary, --accent, etc.)

@@ -68,6 +68,7 @@ The blocklist feed token can be generated here (64 random characters). The feed 
 - **Proxy health snapshots** (`ProxyHealthSnapshot`) — default 90 days.
 - **Scan runs** (`SensitiveScan`, `ProviderSecurityScan`) — default 365 days. The newest run overall and the newest run covering each provider are always kept, so the latest posture per provider never disappears.
 - **Compliance activity** (`ComplianceActivity`) — default 365 days. Auth and admin-audit events from provider compliance feeds (ChatGPT Enterprise). The upstream platform keeps only 30 days, so this table is the long-term record.
+- **Network proxy request log** (`NetworkRequestLog`) — default 90 days. One row per request through the general network proxy (host, path, verdict, status, bytes); bodies and query strings are never stored.
 - **Claude Code telemetry** and **Cursor telemetry** — default 30 days each; these are the existing OTel prune crons.
 
 Usage and cost buckets are the long-term aggregate and are **never** pruned. The prune runs daily at 03:45 UTC (`/api/cron/prune-collection`), deletes oldest-first in batches of 5,000, and reports per-table `deleted` / `remaining` counts. A backlog too large for one run drains over consecutive nights.

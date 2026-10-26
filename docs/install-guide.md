@@ -320,6 +320,7 @@ Retention for the other collection tables is enforced by `/api/cron/prune-collec
 | `PROXY_HEALTH_RETENTION_DAYS` | `ProxyHealthSnapshot` | 90 |
 | `SCAN_RESULT_RETENTION_DAYS` | `SensitiveScan`, `ProviderSecurityScan` (newest run per provider is always kept) | 365 |
 | `COMPLIANCE_ACTIVITY_RETENTION_DAYS` | `ComplianceActivity` (auth / admin-audit events from provider compliance feeds; the upstream platform keeps 30 days) | 365 |
+| `NETWORK_REQUEST_LOG_RETENTION_DAYS` | `NetworkRequestLog` (per-request rows from the general network proxy: host, path, verdict, status, bytes; no bodies or query strings) | 90 |
 
 ### 3.13 Scheduled report delivery
 
@@ -927,7 +928,7 @@ Running each provider and each scan source in its own function means a slow or f
 | `/api/cron/provider-security-scan` | daily | Audits provider secure-use and privacy configuration. |
 | `/api/cron/prune-claude-code-metrics` | daily | Enforces Claude Code telemetry retention. |
 | `/api/cron/prune-cursor-metrics` | daily | Enforces Cursor telemetry retention. |
-| `/api/cron/prune-collection` | daily | Enforces retention for the proxy request log, agent tool calls, policy denials, provider raw snapshots, proxy health snapshots, compliance activity, and scan runs (see §3.12). |
+| `/api/cron/prune-collection` | daily | Enforces retention for the proxy request log, the network proxy request log, agent tool calls, policy denials, provider raw snapshots, proxy health snapshots, compliance activity, and scan runs (see §3.12). |
 
 The prune jobs matter more than they look: the developer-AI telemetry tables and the proxy request log are high-volume, and without retention they grow without bound. `prune-collection` deletes oldest-first in batches of 5,000 inside a fixed time budget and reports `deleted` / `remaining` per table, so a large backlog drains over several nights rather than timing out.
 
@@ -1017,7 +1018,19 @@ npm install          # re-runs prisma generate
 npm run db:migrate   # applies any new migrations
 ```
 
-Merging or deploying a release does **not** migrate the database — run `npx prisma migrate deploy` against production yourself after each deploy that ships a migration. The data-collection Tier 1 release adds `20260916120000_collection_tier1`, which adds the `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` columns to `DiscoveredAITool` and a unique `dedupeKey` column to `ClaudeCodeMetric`, `ClaudeCodeEvent`, `CursorMetric`, and `CursorSpan`. Until it is applied, Shadow AI scans and OTel ingest will fail on the missing columns. Redeploy the Azure proxy in the same release so its pricing table matches the app's. The ChatGPT Enterprise release adds `20260916170000_chatgpt_enterprise_compliance`, which creates `ProviderSyncWatermark` and `ComplianceActivity`; until it is applied the `chatgpt_enterprise` sync fails on the missing tables (no other provider is affected).
+Merging or deploying a release does **not** migrate the database — run `npx prisma migrate deploy` against production yourself after each deploy that ships a migration. The data-collection Tier 1 release adds `20260916120000_collection_tier1`, which adds the `userEmails`, `scopes`, `firstSeenAt`, and `lastSeenAt` columns to `DiscoveredAITool` and a unique `dedupeKey` column to `ClaudeCodeMetric`, `ClaudeCodeEvent`, `CursorMetric`, and `CursorSpan`. Until it is applied, Shadow AI scans and OTel ingest will fail on the missing columns. Redeploy the Azure proxy in the same release so its pricing table matches the app's. The ChatGPT Enterprise release adds `20260916170000_chatgpt_enterprise_compliance`, which creates `ProviderSyncWatermark` and `ComplianceActivity`; until it is applied the `chatgpt_enterprise` sync fails on the missing tables (no other provider is affected). The network proxy release (v0.11.0) adds `20261026120000_network_proxy` (`NetworkBlockRule`, `NetworkRequestLog`, the `NetworkRuleAction` enum); until it is applied, Settings → Proxy Setup errors on the missing tables and the Azure proxy's network route fails closed in enforce mode. Redeploy the Azure proxy with it — the `proxy/net/{host}/{*path}` function and the mirrored schema ship together.
+
+**If your workstation cannot reach the database.** Some networks let the TCP handshake to Azure Postgres through but drop the Postgres TLS request that follows, so `prisma migrate deploy` fails with `P1001` even though the server is healthy and serving the app. Run the migration from inside Azure instead (Cloud Shell at https://shell.azure.com). If Cloud Shell cannot `git clone` either, package the migration as one SQL file that also records it in Prisma's history, upload it with the Cloud Shell toolbar, and run it with `psql -v ON_ERROR_STOP=1 -f`:
+
+```sql
+BEGIN;
+-- paste prisma/migrations/<name>/migration.sql here
+INSERT INTO "_prisma_migrations" (id, checksum, finished_at, migration_name, logs, rolled_back_at, started_at, applied_steps_count)
+VALUES (gen_random_uuid()::text, '<sha256 of migration.sql>', now(), '<name>', NULL, NULL, now(), 1);
+COMMIT;
+```
+
+The checksum is `shasum -a 256 prisma/migrations/<name>/migration.sql`. Afterwards `npx prisma migrate status` reports the schema up to date, so the next `migrate deploy` does not try to re-apply it.
 
 ### 10.2 Major version upgrades
 

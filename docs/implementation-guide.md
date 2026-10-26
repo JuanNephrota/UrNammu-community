@@ -20,7 +20,7 @@ The app is organized around a few core governance surfaces:
 - `Agents`
   Tracks AI agents, autonomy, human review requirements, connected systems, AI-assisted agent risk review, MCP tool governance (server/tool allowlists, observed tool activity from the proxy), charter scope enforcement (`accessLevel` + `connectedSystems` enforced per `scopeEnforcement`), and the kill switch (`suspendedAt` / `suspendedById` / `suspendedReason`).
 - `Shadow AI`
-  Ingests and normalizes discoveries from Google Workspace, Microsoft 365, Hexnode UEM, CrowdStrike Falcon, DNS/proxy/Netskope imports, and the endpoint agent. Also owns the two enforcement layers for blocked tools.
+  Ingests and normalizes discoveries from Google Workspace, Microsoft 365, Hexnode UEM, CrowdStrike Falcon, DNS/proxy/Netskope imports, and the endpoint agent. Also owns the three enforcement layers for blocked tools (in-path network proxy, blocklist feed, identity provider).
 - `Endpoints`
   Fleet view of machines running the endpoint agent (`ops/endpoint-agent`) and the AI tools each one runs and reaches — the only source that observes from *inside* a device, covering off-VPN laptops, personal-tier accounts, desktop apps with no SaaS audit trail, and local inference.
 - `Risk Center`
@@ -39,6 +39,8 @@ The app is organized around a few core governance surfaces:
   Active probing of reachable AI endpoints for data leakage, plus passive inline DLP on proxy traffic.
 - `Proxy Health`
   Live-ops board for the AI proxy: database-write heartbeat plus optional Azure Monitor platform metrics.
+- `Network Proxy` (Settings → Proxy Setup)
+  The proxies' general HTTPS forwarder (`/api/proxy/net/{host}/{path}`) with URL block/allow rules, an off / monitor / enforce mode, a URL tester and the per-request log. Off by default.
 - `Integrations`
   Read-only catalog of every external connection and whether it is configured. Behavior still lives in Settings.
 
@@ -290,12 +292,27 @@ Extending: add a client by adding its id to `MCP_CLIENTS` (schema) and `MCP_CLIE
 
 ## Shadow AI Enforcement Architecture
 
-Blocking a discovery records a decision; it does not by itself stop anything, because UrNammu is not in the traffic path. Two independent layers do the enforcing:
+Blocking a discovery records a decision; three independent layers make it stick, and only the first puts UrNammu in the traffic path:
 
+- `src/lib/network-enforcement.ts` + the network proxy (see *Network Proxy Architecture*) — every BLOCKED discovery's domain (and subdomains) is denied in-path for traffic routed through `/api/proxy/net`: `403` in enforce mode, a `monitored` log row in monitor mode, nothing when the proxy is off. Blocking needs no extra call (the proxies re-read BLOCKED domains every 30 s); the module only *reports* the outcome (`proxyEnforcementOutcome`, pure) so the block/unblock response and audit entry say what the proxy will do, drops the Vercel rule cache, and reads back the 30-day denial counts per domain (`proxyBlockStats`) that the Shadow AI list shows.
 - `src/lib/shadow-blocklist.ts` — builds the denylist of blocked domains, served by `src/app/api/discovered-tools/blocklist/route.ts` in `text`, `hosts`, `json`, or `pac` format for a DNS sinkhole, proxy, firewall, or CASB to poll. Bearer-token guarded, and **fails closed**: with no token configured the route returns 503 rather than serving unauthenticated.
 - `src/lib/identity-enforcement.ts` — disables the app at the identity provider (Google Workspace or Microsoft Entra) so sign-ins stop. Requires the IdP app handle captured at scan time; without one the result is `skipped`, and a missing Graph permission surfaces as `failed` rather than silent success.
 
-The two are complementary, not redundant: identity enforcement only governs apps federated to the IdP, so a tool someone used with a personal account is only catchable by the network feed. When adding enforcement behavior, keep the "record the decision" path separate from the "make it stick" path — that separation is why a block is still auditable when no enforcement layer is configured.
+The three are complementary, not redundant: identity enforcement only governs apps federated to the IdP, the feed only reaches tools an external control sees, and the in-path proxy only governs clients that are pointed at it. `EnforcementReadiness` (Settings → Shadow AI) reports all three; the proxy row is armed only in enforce mode. When adding enforcement behavior, keep the "record the decision" path separate from the "make it stick" path — that separation is why a block is still auditable when no enforcement layer is configured.
+
+## Network Proxy Architecture
+
+The provider proxies only understand the model APIs they parse. `/api/proxy/net/{host}/{*path}` is the general case: an authenticated HTTPS forwarder on both proxies (`src/lib/network-proxy.ts` behind `src/app/api/proxy/net/[host]/[[...path]]/route.ts`; `ai-proxy/src/functions/network-proxy.ts`) that evaluates every request against URL rules, forwards it to `https://{host}/{path}` with bodies streamed through untouched, and writes one `NetworkRequestLog` row. Nothing is parsed or priced — it exists so any outbound traffic from an agent or tool can be governed by URL.
+
+- **Rule engine** — `src/lib/network-rules.ts`, **mirrored byte-for-byte** to `ai-proxy/src/lib/network-rules.ts` (`check:mirror-drift`), no imports. It owns the pattern grammar (`host`, `*.host`, `host:port`, `host/path` segment prefix, `host/path*` string prefix, `*`), `parseNetworkTarget` (route segments → upstream URL, https only), the SSRF guard (`isForbiddenHostname` / `isForbiddenAddress`: loopback, link-local and cloud metadata, RFC 1918, CGNAT, multicast, documentation ranges, IPv4-mapped IPv6), header filtering (hop-by-hop, platform and proxy-control headers dropped on the way up; encoding/length and origin-pinning headers dropped on the way back), `rewriteLocation` (redirects are never followed — the `Location` is rewritten through the proxy so the next hop is evaluated), and `evaluateNetworkTarget`: an enabled ALLOW rule wins, then the first BLOCK rule, then a Shadow AI BLOCKED domain, else allow.
+- **Order of gates** in both handlers: proxy secret → mode (`off` → 404) → target parse → attribution + agent kill switch → rules (so a blocked host reports `blocked` even when it does not resolve) → DNS resolution of the host with every address checked against the forbidden ranges → forward with `redirect: "manual"` and a 120 s timeout. Request bodies are buffered (50 MB cap); responses stream with a byte counter, and the log row is written when the body has been relayed (`after()` on Vercel, a `PassThrough` `end` listener on Azure).
+- **Rule loading** — `src/lib/network-rules-loader.ts` / `ai-proxy/src/lib/network-loader.ts`: enabled `NetworkBlockRule` rows plus BLOCKED `DiscoveredAITool` domains, 30 s TTL, stale-on-error, and **fail closed** in enforce mode when nothing is cached (503 `rules_unavailable`); monitor mode forwards unevaluated and says so in the log.
+- **Mode** — `network_proxy_mode` (`parseNetworkProxyMode`; env `NETWORK_PROXY_MODE`), default `off`. An authenticated open forwarder widens what `PROXY_SECRET` can reach, so turning it on is a deliberate admin act. `monitor` records would-be blocks as `monitored` and forwards; `enforce` returns 403 with `networkBlockedResponseBody` (rule, reason, source).
+- **Data** — `NetworkBlockRule` (`pattern` + `action` unique, `enabled`, `reason`, `createdById`; proxy READ model) and `NetworkRequestLog` (proxy WRITE model: `proxy`, `method`, `host`, `path` with the query string stripped, `action` = forwarded / monitored / blocked / error, upstream `status`, `ruleId` / `rulePattern` / `ruleSource` = rule / shadow_ai / private_address / upstream / proxy, attribution, bytes, `durationMs`). The proxy schema also mirrors `DiscoveredAITool` (`status`, `detectedDomain`) and the `DiscoveryStatus` enum for the denylist read. Retention: `network_request_log_retention_days` (default 90) in `prune-collection`.
+- **API / UI** — `GET/POST /api/network-rules`, `PATCH/DELETE /api/network-rules/{id}` (ADMIN / COMPLIANCE_OFFICER, audit-logged, 409 on duplicate pattern+action), `GET /api/network-rules/test?url=` (dry run against a fresh rule set, no DNS, no upstream call), `GET /api/network-requests`. The card is `network-proxy-settings.tsx` on Settings → Proxy Setup.
+- **Platform quirk** — the Vercel fallback normalizes URLs the Next.js way (trailing slash → 308, `..` resolved before the handler); the Azure route does not.
+
+When changing the grammar or the SSRF rules, edit the app copy, copy it over the proxy copy (keeping the two-line banner), extend `network-rules.test.ts`, and redeploy the Azure proxy in the same release.
 
 ## Endpoint Agent Architecture
 
@@ -385,6 +402,7 @@ Splitting the work this way is what makes the acceptance criteria hold: a provid
 - `/api/cron/provider-security-scan` — daily
 - `/api/cron/prune-claude-code-metrics` — daily
 - `/api/cron/prune-cursor-metrics` — daily
+- `/api/cron/prune-collection` — daily; batched oldest-first retention for `APIUsageLog`, `AgentToolCall`, `PolicyDenial`, `ProviderRawSnapshot`, `ProxyHealthSnapshot`, `ComplianceActivity`, `NetworkRequestLog`, and the scan runs, driven by the `*_retention_days` settings in `src/lib/collection-retention.ts`
 
 The two prune jobs exist because the OTel surfaces are high-volume; if you add another telemetry surface, add a retention job with it rather than letting the table grow unbounded.
 
@@ -399,7 +417,7 @@ Settings are split by responsibility:
 - `Settings > Provider Admin APIs`
   OpenAI, Anthropic, Gemini billing, and gateway integrations, with anomaly and attribution tuning.
 - `Settings > Proxy Setup`
-  Proxy secret, generated client config, and attribution headers.
+  Proxy secret, generated client config, attribution headers, the Azure OpenAI resource / deployment map, and the **Network Proxy & URL Blocking** card (`network_proxy_mode`, block/allow rules, URL tester, recent requests).
 - `Settings > Users & Identity`
   Authentication providers, user-management options, and the per-source **Directory sync** cards (`directory_sync_<source>_enabled`, `directory_sync_<source>_interval_hours`, `directory_sync_include_guests`; env fallbacks are the upper-cased key names). Directory sync deliberately reuses the Shadow AI credentials rather than storing a second copy.
 - `Settings > Shadow AI`
@@ -504,6 +522,8 @@ npm run check:secrets        # no credentials staged
   Edit `src/lib/mcp-tool-governance.ts`, copy it over `ai-proxy/src/lib/mcp-tool-governance.ts` (the file header explains the mirror), and extend `mcp-tool-governance.test.ts`. Proxy write models must stay in sync across both Prisma schemas — `npm run check:schema-drift` enforces it.
 - Change to what is hashed or how prompts are normalized:
   Edit `src/lib/prompt-hash.ts`, copy it over `ai-proxy/src/lib/prompt-hash.ts` (byte-identical mirror), extend `prompt-hash.test.ts`, and redeploy the Azure proxy in the same release — a surface on the old rule produces hashes that never match.
+- New network block-rule pattern form or SSRF rule:
+  Edit `src/lib/network-rules.ts`, copy it over `ai-proxy/src/lib/network-rules.ts` (two-line mirror banner), extend `network-rules.test.ts`, and redeploy the Azure proxy with the release.
 - New report column or data source:
   Start in `src/lib/reports/data-sources.ts`.
 - New help page:

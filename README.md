@@ -3,6 +3,7 @@
 UrNammu is an AI governance and compliance platform for admin and compliance teams. It combines:
 
 - AI system and agent inventory, with per-agent MCP server/tool allowlists enforced at the proxy
+- A governed proxy for model APIs (Claude, OpenAI, Azure OpenAI, Gemini, Bedrock) and, with the general network proxy, any HTTPS host — URL block/allow rules, off / monitor / enforce modes, and Shadow AI blocks enforced in-path
 - Shadow AI discovery from Google Workspace, Microsoft 365, Hexnode UEM devices, DNS/proxy/Netskope log imports, and the endpoint agent
 - An installable endpoint agent for managed macOS and Windows machines, reporting installed AI apps, AI hostnames from browser history, and local model runtimes — identifiers and counts only, never prompts, responses or URLs
 - Risk assessments with templates, branching questions, issue tracking, and agent-aware overlays
@@ -89,6 +90,8 @@ NEXT_PUBLIC_DEMO_MODE=true
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 PROXY_SECRET=
+# General network proxy (/api/proxy/net/<host>/<path>): off | monitor | enforce. Default off.
+NETWORK_PROXY_MODE=off
 
 # Optional Google Gemini / Vertex AI oversight fallback settings
 GEMINI_BILLING_SERVICE_ACCOUNT_KEY=
@@ -385,7 +388,7 @@ Background work runs as **one Vercel Cron entry per job**, all guarded by `Autho
 | `/api/cron/run-report-schedules` | every 15 min | Scheduled report email delivery. |
 | `/api/cron/sensitive-scan`, `/api/cron/provider-security-scan` | daily | Gateway leakage probes and provider secure-use audit. |
 | `/api/cron/prune-claude-code-metrics`, `/api/cron/prune-cursor-metrics` | daily | OTel telemetry retention. |
-| `/api/cron/prune-collection` | daily | Retention for the proxy request log, agent tool calls, policy denials, raw snapshots, proxy-health snapshots, and scan runs. |
+| `/api/cron/prune-collection` | daily | Retention for the proxy request log, the network proxy request log, agent tool calls, policy denials, raw snapshots, proxy-health snapshots, compliance activity, and scan runs. |
 | `/api/cron/proxy-health` | every 15 min | Azure Monitor snapshot for the Proxy Health board. |
 
 Each hourly route checks its own saved enable flag and interval before doing work, so the hourly tick is cheap when nothing is due. Because every provider and every scan source runs in its own function, a slow or failing provider no longer delays the others, and due-ness is tracked **per provider** from that provider's own last successful `ProviderSyncRun`.
@@ -436,6 +439,7 @@ npm run db:reset
 - Shadow AI discovery supports both Google Workspace and Microsoft 365 with improved matching and confidence signals.
 - Registry services can now be archived when they are no longer in use, and permanently deleted with explicit typed-name confirmation for duplicate or erroneous entries.
 - Dashboard stat cards and remediation status cards are clickable, routing directly to the relevant module page.
+- The proxy can forward any HTTPS traffic through `/api/proxy/net/<host>/<path>` and block it by URL (host, subdomain, port, path-prefix and wildcard rules with Allow exceptions), off by default with Monitor and Enforce modes; every Shadow AI discovery marked Blocked is denied there automatically, blocked tools show their proxy denial counts, and the Block Enforcement Readiness card reports the in-path layer.
 - Proxy usage attribution now supports `x-user-email`, `x-department`, `x-ai-system-id`, and `x-agent-id` headers. The setup guide generates Claude Code config snippets that include `${PROXY_USER_EMAIL}` for automatic per-user attribution via `git config user.email`.
 - API route validation hardened: alert status updates use Zod enum validation, agent updates check existence before writing, risk assessment operations are wrapped in error handling, and batch usage log ingestion reports per-entry validation errors.
 - Database indexes added on `AuditLog` and `Alert` foreign keys for query performance. `AuditLog` cascade deletes properly when users are removed.

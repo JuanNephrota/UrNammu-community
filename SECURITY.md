@@ -68,7 +68,8 @@ Treat compromise of any of these as a high-severity event:
 |---|---|
 | `SETTINGS_ENCRYPTION_KEY` | Encrypts every secret stored in `AppSetting` (provider admin keys, Google Workspace service-account JSON, Microsoft 365 client secrets, proxy secret). **Cannot be rotated in place** without re-encrypting all stored settings — compromise is a break-glass event. |
 | `NEXTAUTH_SECRET` | Signs session JWTs. Rotation invalidates all active sessions. |
-| `PROXY_SECRET` | Gate on the Anthropic / OpenAI proxies. Must be kept in sync between the main app and the Azure Functions proxy. |
+| `PROXY_SECRET` | Gate on every proxy route — the provider proxies and the general network proxy (`/api/proxy/net/…`). Must be kept in sync between the main app and the Azure Functions proxy. Because the network proxy forwards to any public HTTPS host, this secret is worth more once `network_proxy_mode` is on: keep it per-deployment and rotate it if it leaks. |
+| `NETWORK_PROXY_MODE` | Fallback for the `network_proxy_mode` setting (`off` / `monitor` / `enforce`, default `off`). The network proxy refuses non-public targets (loopback, link-local / cloud metadata, RFC 1918) by name and after DNS resolution, never follows redirects, and only forwards `https`. |
 | `CRON_SECRET` | Gate on every `/api/cron/**` route and the deprecated `/api/scheduler/maintenance` shim. Without it, provider sync and shadow-AI scans can be triggered by anyone. |
 | `DATABASE_URL` | Direct Postgres access. |
 | Provider admin keys (Anthropic, OpenAI, Google Gemini billing, Google Workspace, Microsoft 365) | Organization-level read access to usage, costs, OAuth grants, and member inventory. |
