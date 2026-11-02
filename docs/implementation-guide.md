@@ -220,6 +220,7 @@ Important files:
 - `src/lib/discovered-tools-ingest.ts` and `src/lib/third-party-proxy-ingest.ts` (DNS / proxy / Netskope imports)
 - `src/lib/ai-tools-registry.ts`
 - `src/lib/discovery-merge.ts` (pure merge rules for user count, emails, scopes, first/last seen)
+- `src/lib/oauth-scopes.ts` (pure classifier: raw Google / Microsoft Graph scope → access category, read/write/full level, plain label, broad flag; drives the data-access chips, the Shadow AI access filter and `broadScopes()` in triage)
 - `src/lib/scan-executor.ts`
 - `src/app/api/discovered-tools/scan/route.ts`
 

@@ -1,4 +1,5 @@
 import type { AIToolRiskHint } from "@/lib/ai-tools-registry";
+import { broadScopes } from "@/lib/oauth-scopes";
 
 // Guided triage of a discovered (shadow AI) tool. The reviewer answers three
 // questions; together with what discovery observed they produce a suggested
@@ -29,27 +30,10 @@ export const RISK_HINT_LABELS: Record<AIToolRiskHint, string> = {
   no_enterprise_tier: "No enterprise tier available",
 };
 
-// OAuth scope fragments that grant broad access to company data.
-const BROAD_SCOPE_PATTERNS = [
-  "gmail",
-  "mail.",
-  "/auth/drive",
-  "files.read",
-  "files.readwrite",
-  "sites.read",
-  "calendar",
-  "contacts",
-  "directory",
-  "admin.",
-  "cloud-platform",
-];
-
-export function broadScopes(scopes: string[]): string[] {
-  return scopes.filter((scope) => {
-    const value = scope.toLowerCase();
-    return BROAD_SCOPE_PATTERNS.some((pattern) => value.includes(pattern));
-  });
-}
+// Scopes that reach company data (mail, files, calendar, directory, ...).
+// Classification lives in oauth-scopes.ts so the list, the triage wizard and
+// the recommendation agree on what counts as broad.
+export { broadScopes } from "@/lib/oauth-scopes";
 
 export type TriageSignals = {
   riskHints: AIToolRiskHint[];

@@ -13,6 +13,8 @@ import { WizardStepper } from "@/components/workflow/wizard-stepper";
 import { WizardFooter } from "@/components/workflow/wizard-footer";
 import { cn } from "@/lib/utils";
 import type { AIToolRiskHint } from "@/lib/ai-tools-registry";
+import { describeScopes } from "@/lib/oauth-scopes";
+import { ScopeAccessBadges } from "@/components/shadow-ai/scope-access-badges";
 import {
   RISK_HINT_LABELS,
   TRIAGE_STEPS,
@@ -400,14 +402,25 @@ export function TriageWizard({ tool, riskHints, vendorProfile, nextToolId }: Tri
                   Access granted
                 </p>
                 {tool.scopes.length > 0 ? (
-                  <ul className="mt-2 space-y-0.5 text-xs text-[var(--text-secondary)]">
-                    {tool.scopes.slice(0, 8).map((scope) => (
-                      <li key={scope} className={cn("break-all", broad.includes(scope) && "text-[var(--warning-strong)]")}>
-                        {scope}
-                        {broad.includes(scope) && " (broad)"}
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <ScopeAccessBadges scopes={tool.scopes} className="mt-2" />
+                    <ul className="mt-2 space-y-1 text-xs text-[var(--text-secondary)]">
+                      {describeScopes(tool.scopes).slice(0, 8).map((desc) => (
+                        <li key={desc.scope}>
+                          <span className={cn(broad.includes(desc.scope) && "text-[var(--warning-strong)]")}>
+                            {desc.label}
+                            {broad.includes(desc.scope) && " (broad)"}
+                          </span>
+                          {desc.category !== "other" && (
+                            <code className="block break-all text-[10px] text-[var(--text-faint)]">{desc.scope}</code>
+                          )}
+                        </li>
+                      ))}
+                      {tool.scopes.length > 8 && (
+                        <li className="text-[var(--text-faint)]">and {tool.scopes.length - 8} more</li>
+                      )}
+                    </ul>
+                  </>
                 ) : (
                   <p className="mt-2 text-sm text-[var(--text-muted)]">No OAuth scopes recorded.</p>
                 )}

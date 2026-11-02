@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Clock, Users, KeyRound, ChevronDown, ChevronRight, Building2 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { formatDepartmentRollup, type DepartmentRollup } from "@/lib/directory-identity";
+import { describeScopes, type ScopeAccessCategory } from "@/lib/oauth-scopes";
+import { ScopeAccessBadges } from "@/components/shadow-ai/scope-access-badges";
 
 const PREVIEW_LIMIT = 5;
 
@@ -19,6 +21,8 @@ export function ObservationDetails({
   userEmails,
   scopes,
   departmentRollup,
+  activeAccessCategory,
+  onSelectAccessCategory,
 }: {
   firstSeenAt?: string | null;
   lastSeenAt?: string | null;
@@ -26,12 +30,17 @@ export function ObservationDetails({
   scopes?: string[] | null;
   /** Users grouped by directory department (from the identity-provider directory sync). */
   departmentRollup?: DepartmentRollup | null;
+  /** The list's active access filter, so the matching chip is highlighted. */
+  activeAccessCategory?: ScopeAccessCategory | "";
+  /** Makes the access chips toggle the list's access filter. */
+  onSelectAccessCategory?: (category: ScopeAccessCategory) => void;
 }) {
   const [showAllUsers, setShowAllUsers] = useState(false);
   const [showScopes, setShowScopes] = useState(false);
 
   const emails = userEmails ?? [];
   const scopeList = scopes ?? [];
+  const described = describeScopes(scopeList);
   const hasWindow = Boolean(firstSeenAt || lastSeenAt);
 
   if (!hasWindow && emails.length === 0 && scopeList.length === 0) return null;
@@ -110,6 +119,17 @@ export function ObservationDetails({
 
       {scopeList.length > 0 && (
         <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="flex items-center gap-1 text-[var(--text-faint)]">
+              <KeyRound className="h-3 w-3 shrink-0" />
+              Access:
+            </span>
+            <ScopeAccessBadges
+              scopes={scopeList}
+              activeCategory={activeAccessCategory}
+              onSelect={onSelectAccessCategory}
+            />
+          </div>
           <button
             type="button"
             onClick={() => setShowScopes((value) => !value)}
@@ -117,14 +137,24 @@ export function ObservationDetails({
             className="flex items-center gap-1 text-[var(--text-faint)] hover:text-[var(--text-secondary)]"
           >
             {showScopes ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <KeyRound className="h-3 w-3 shrink-0" />
             {scopeList.length} OAuth scope{scopeList.length === 1 ? "" : "s"}
           </button>
           {showScopes && (
-            <ul className="ml-4 space-y-0.5">
-              {scopeList.map((scope) => (
-                <li key={scope}>
-                  <code className="break-all text-[11px] text-[var(--text-secondary)]">{scope}</code>
+            <ul className="ml-4 space-y-1">
+              {described.map((desc) => (
+                <li key={desc.scope} className="space-y-0.5">
+                  <span
+                    className={
+                      desc.broad && desc.access !== "read"
+                        ? "text-[var(--warning-strong)]"
+                        : "text-[var(--text-secondary)]"
+                    }
+                  >
+                    {desc.label}
+                  </span>
+                  {desc.category !== "other" && (
+                    <code className="block break-all text-[10px] text-[var(--text-faint)]">{desc.scope}</code>
+                  )}
                 </li>
               ))}
             </ul>

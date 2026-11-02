@@ -20,6 +20,14 @@ import {
 } from "@/components/ui/dialog";
 import { DNS_PROXY_IMPORT_SOURCES } from "@/lib/discovered-tools-ingest";
 import { AI_TOOL_CATEGORIES, categoryLabel } from "@/lib/ai-tools-registry";
+import {
+  SCOPE_ACCESS_CATEGORIES,
+  hasScopeAccess,
+  isScopeAccessCategory,
+  scopeCategoryLabel,
+  type ScopeAccessCategory,
+} from "@/lib/oauth-scopes";
+import { ScopeAccessBadges } from "@/components/shadow-ai/scope-access-badges";
 import { formatDate } from "@/lib/utils";
 import { ObservationDetails } from "./observation-details";
 import { CategoryBadge, CategorySelect } from "./category-badge";
@@ -132,6 +140,9 @@ export default function ShadowAIPage() {
   const [ingestionRuns, setIngestionRuns] = useState<IngestionRun[]>([]);
   // "" = every category; "uncategorized" = rows with no registry category.
   const [categoryFilter, setCategoryFilter] = useState<string>("");
+  // "" = any access; otherwise only tools whose OAuth scopes reach that data
+  // (mail, files, calendar, ...). Identity-provider sources only.
+  const [accessFilter, setAccessFilter] = useState<ScopeAccessCategory | "">("");
 
   const fetchTools = useCallback(() => {
     fetch("/api/discovered-tools")
@@ -393,12 +404,38 @@ export default function ShadowAIPage() {
     { id: "uncategorized", label: "Uncategorized", count: categoryCounts.uncategorized ?? 0 },
   ].filter((entry) => entry.count > 0);
 
-  const visibleTools =
+  const accessCounts = tools.reduce<Record<string, number>>((acc, tool) => {
+    for (const entry of SCOPE_ACCESS_CATEGORIES) {
+      if (hasScopeAccess(tool.scopes, entry.id)) acc[entry.id] = (acc[entry.id] ?? 0) + 1;
+    }
+    return acc;
+  }, {});
+  const accessRollup = SCOPE_ACCESS_CATEGORIES.filter((entry) => entry.broad && (accessCounts[entry.id] ?? 0) > 0);
+
+  const byCategory =
     categoryFilter === ""
       ? tools
       : categoryFilter === "uncategorized"
         ? tools.filter((t) => !t.category)
         : tools.filter((t) => t.category === categoryFilter);
+  const visibleTools =
+    accessFilter === "" ? byCategory : byCategory.filter((t) => hasScopeAccess(t.scopes, accessFilter));
+
+  const activeFilterLabel = [
+    categoryFilter === "" ? null : categoryFilter === "uncategorized" ? "Uncategorized" : categoryLabel(categoryFilter),
+    accessFilter === "" ? null : `${scopeCategoryLabel(accessFilter)} access`,
+  ]
+    .filter(Boolean)
+    .join(" with ");
+
+  function toggleAccessFilter(category: ScopeAccessCategory) {
+    setAccessFilter((current) => (current === category ? "" : category));
+  }
+
+  function clearFilters() {
+    setCategoryFilter("");
+    setAccessFilter("");
+  }
 
   const allDiscovered = visibleTools.filter((t) => t.status === "DISCOVERED" || t.status === "UNDER_REVIEW");
   // High-confidence = no matchConfidence set (legacy/manual) or "high"
@@ -761,6 +798,22 @@ export default function ShadowAIPage() {
                 <option value="uncategorized">Uncategorized ({categoryCounts.uncategorized ?? 0})</option>
               </select>
             </label>
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              Access
+              <select
+                aria-label="Filter by data access"
+                value={accessFilter}
+                onChange={(e) => setAccessFilter(isScopeAccessCategory(e.target.value) ? e.target.value : "")}
+                className="h-8 rounded-md border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 text-xs text-[var(--text-primary)]"
+              >
+                <option value="">Any access</option>
+                {SCOPE_ACCESS_CATEGORIES.filter((entry) => entry.broad).map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.label} ({accessCounts[entry.id] ?? 0})
+                  </option>
+                ))}
+              </select>
+            </label>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
@@ -789,15 +842,41 @@ export default function ShadowAIPage() {
                 );
               })}
             </div>
-            {categoryFilter !== "" && (
+            {accessRollup.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-[var(--text-faint)]" title="What company data the granted OAuth scopes reach">
+                  Data access
+                </span>
+                {accessRollup.map((entry) => {
+                  const active = accessFilter === entry.id;
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      onClick={() => toggleAccessFilter(entry.id)}
+                      aria-pressed={active}
+                      className={`flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                        active
+                          ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text-primary)]"
+                          : "border-[var(--border-subtle)] bg-[var(--bg-base)] text-[var(--text-secondary)] hover:border-[var(--border-default)]"
+                      }`}
+                    >
+                      <span>{entry.label}</span>
+                      <span
+                        className="rounded bg-[var(--bg-elevated)] px-1.5 text-[11px] font-semibold text-[var(--text-primary)]"
+                        style={{ fontFamily: "var(--font-display)" }}
+                      >
+                        {accessCounts[entry.id]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {activeFilterLabel && (
               <p className="mt-3 text-xs text-[var(--text-faint)]">
-                Showing {visibleTools.length} tool{visibleTools.length === 1 ? "" : "s"} in{" "}
-                {categoryFilter === "uncategorized" ? "Uncategorized" : categoryLabel(categoryFilter)}.{" "}
-                <button
-                  type="button"
-                  onClick={() => setCategoryFilter("")}
-                  className="text-[var(--accent)] hover:underline"
-                >
+                Showing {visibleTools.length} tool{visibleTools.length === 1 ? "" : "s"} in {activeFilterLabel}.{" "}
+                <button type="button" onClick={clearFilters} className="text-[var(--accent)] hover:underline">
                   Clear filter
                 </button>
               </p>
@@ -861,6 +940,8 @@ export default function ShadowAIPage() {
                               userEmails={tool.userEmails}
                               scopes={tool.scopes}
                               departmentRollup={tool.departmentRollup}
+                              activeAccessCategory={accessFilter}
+                              onSelectAccessCategory={toggleAccessFilter}
                             />
                           </div>
                         </div>
@@ -1000,6 +1081,8 @@ export default function ShadowAIPage() {
                         userEmails={tool.userEmails}
                         scopes={tool.scopes}
                         departmentRollup={tool.departmentRollup}
+                        activeAccessCategory={accessFilter}
+                        onSelectAccessCategory={toggleAccessFilter}
                       />
                       {dismissingId === tool.id && (
                         <div className="flex items-center gap-2 pt-1">
@@ -1046,6 +1129,11 @@ export default function ShadowAIPage() {
                             {sourceBadgeLabel(tool.detectionSource)}
                           </Badge>
                         )}
+                        <ScopeAccessBadges
+                          scopes={tool.scopes}
+                          activeCategory={accessFilter}
+                          onSelect={toggleAccessFilter}
+                        />
                         {tool.linkedSystemId && (
                           <Button size="sm" variant="ghost" asChild>
                             <Link href={`/registry/${tool.linkedSystemId}`}>View System</Link>
@@ -1148,10 +1236,8 @@ export default function ShadowAIPage() {
           {tools.length > 0 && visibleTools.length === 0 && (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-8">
-                <p className="text-[var(--text-muted)]">
-                  No tools in {categoryFilter === "uncategorized" ? "Uncategorized" : categoryLabel(categoryFilter)}.
-                </p>
-                <Button variant="ghost" size="sm" className="mt-2" onClick={() => setCategoryFilter("")}>
+                <p className="text-[var(--text-muted)]">No tools in {activeFilterLabel}.</p>
+                <Button variant="ghost" size="sm" className="mt-2" onClick={clearFilters}>
                   Clear filter
                 </Button>
               </CardContent>

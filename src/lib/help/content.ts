@@ -473,9 +473,13 @@ Each discovered tool records what the scans actually observed, shown under the t
 - **First seen / Last seen** — the earliest and latest observation across every scan. Log imports use the export's own timestamp column when it has one (\`timestamp\`, \`@timestamp\`, \`time\`, \`date\`, and similar; ISO or epoch); otherwise the import time is used.
 - **Users** — the email addresses seen using the tool, as chips. Only real email addresses are kept; device names or bare usernames from network logs count toward the user total but are not listed.
 - **Departments** — when a directory sync is enabled (**Settings → Users & Identity**), the observed users are rolled up by their directory department, for example "Engineering 4 · Sales 2". Email aliases fold onto the same person first, and users with no directory match (or no department) are counted as unmatched.
-- **OAuth scopes** — the permissions granted to the app, for identity-provider sources.
+- **Data access** — for identity-provider sources, the OAuth scopes granted to the app are translated into one chip per kind of company data it can reach: Email, Files & docs, Calendar, Contacts, Chat & meetings, Directory, Admin, Cloud platform, each with the highest access level granted (read, read/write or full). Broad write access is amber and broad read is blue; sign-in-only identity scopes are outlined and never count as broad. Click a chip to filter the list to every tool with that access. Expand **N OAuth scopes** to see each scope's plain label with the raw scope value beneath it.
 
 The **user count** follows one rule: a rescan from the **same** source replaces the count, so it can go down when access is revoked or devices are retired; a **different** source only ever raises it, so two partial views combine as a maximum rather than overwriting each other.
+
+## Filtering by data access
+
+The **By Category** card has a **Data access** row (one button per kind of access seen, with a count) and an **Access** dropdown. Pick one to show only tools whose granted scopes reach that data — for example every app that can read mail or write to Drive. The access filter combines with the category filter, and **Clear filter** resets both. Tools from sources that do not report OAuth scopes (DNS and proxy logs, endpoint agent, manual reports) never match an access filter.
 
 ## Tool categories
 
