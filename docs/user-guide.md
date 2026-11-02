@@ -1509,6 +1509,8 @@ UrNammu sends crafted prompts to the AI gateways you have configured (**OpenRout
 
 Each target is recorded with a status — `probed`, `skipped` (not configured), or `error` — and a finding count. Note the difference between `probed` with zero findings and `skipped`: the first is a clean result, the second was never tested.
 
+**Reading the responses.** Every scan keeps what each model actually answered, probe by probe, flagged or not. Expand a row under **Scan history** to see them grouped by target: each probe shows a `clean`, `leaked`, or `error` badge, the response length, and the response text itself (long answers are truncated with a "Show full response" toggle). This is how you confirm a clean result really was a refusal ("I can't do that…") rather than an empty or malformed reply, and how you read a finding in context. Responses are stored **redacted** — emails, API tokens, card and SSN shapes and any run of six or more digits are replaced with placeholders before they are written — and capped at 2,000 characters. The scan that just ran opens automatically. Scans run before this history existed show no responses.
+
 Probes run daily on a cron as well as on demand, so a gateway that quietly changes its retention or system-prompt handling gets caught without anyone remembering to check.
 
 ### Inline response DLP

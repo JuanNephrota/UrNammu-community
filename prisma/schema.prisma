@@ -864,6 +864,34 @@ model SensitiveScan {
   completedAt   DateTime?
   createdAt     DateTime           @default(now())
   findings      SensitiveFinding[]
+  probeResults  SensitiveProbeResult[]
+}
+
+// One row per (target, probe) in a scan: what the model actually answered the
+// bait prompt with, flagged or not. Lets reviewers read the refusals behind a
+// clean result and the exact text behind a finding. The response is stored
+// sanitized (emails, long numbers, tokens, SSNs and cards redacted) and
+// truncated, never raw. Deleted with its scan (retention cron cascades).
+model SensitiveProbeResult {
+  id              String        @id @default(cuid())
+  scan            SensitiveScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scanId          String
+  targetId        String // active_provider | litellm | portkey
+  targetLabel     String
+  model           String?
+  probeId         String
+  probeLabel      String
+  status          String // "probed" | "error"
+  responseExcerpt String?       @db.Text // sanitized, ≤2000 chars
+  responseLength  Int           @default(0) // raw character count before truncation
+  flagged         Boolean       @default(false)
+  severity        String? // "critical" | "warning" when flagged
+  categories      String[]
+  findingId       String?
+  errorMessage    String?       @db.Text
+  createdAt       DateTime      @default(now())
+
+  @@index([scanId])
 }
 
 model SensitiveFinding {

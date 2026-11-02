@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { getSetting, SENSITIVE_SCAN_SETTINGS_KEYS } from "./settings";
-import { analyzeText } from "./prompt-risk";
+import { analyzeText, sanitizeText } from "./prompt-risk";
 import { recordSensitiveFinding } from "./sensitive-alerts";
 import { generateAIResponse, getAIConfig } from "./ai-provider";
 import { LITELLM_SETTINGS, isLiteLLMConfigured, getLiteLLMModelInfo } from "./litellm-admin";
@@ -21,6 +21,23 @@ export type ProbeTargetResult = {
   /** Why a target was skipped or errored — surfaced in the scan response. */
   reason?: string;
 };
+
+/** Longest sanitized response text kept per probe. */
+const RESPONSE_EXCERPT_MAX = 2000;
+
+/**
+ * Sanitize a probe response for storage: redact emails, tokens, card/SSN
+ * shapes and long numbers, collapse whitespace, truncate. The same sanitizer
+ * the finding excerpts use, so a stored response never carries the leaked
+ * value itself — only its shape.
+ */
+function storableResponse(text: string): string | null {
+  const cleaned = sanitizeText(text);
+  if (!cleaned) return null;
+  return cleaned.length > RESPONSE_EXCERPT_MAX
+    ? `${cleaned.slice(0, RESPONSE_EXCERPT_MAX - 3)}...`
+    : cleaned;
+}
 
 export interface SensitiveScanResult {
   scanId: string;
@@ -187,11 +204,48 @@ export async function executeSensitiveScan(
           target.findings++;
           if (recorded.severity === "critical") criticalCount++;
         }
+        // Keep the (sanitized) answer whether or not it flagged, so a clean
+        // result can be read as "the model refused" rather than taken on
+        // faith, and a finding can be read in context.
+        await prisma.sensitiveProbeResult.create({
+          data: {
+            scanId: scan.id,
+            targetId: target.id,
+            targetLabel: target.label,
+            model: target.model,
+            probeId: probe.id,
+            probeLabel: probe.label,
+            status: "probed",
+            responseExcerpt: storableResponse(responseText),
+            responseLength: responseText.length,
+            flagged: analysis.flagged,
+            severity: recorded?.severity ?? null,
+            categories: analysis.categories,
+            findingId: recorded?.findingId ?? null,
+          },
+        });
       } catch (err) {
         // One probe/provider failing must not abort the whole scan.
+        const message = err instanceof Error ? err.message : "Probe request failed";
         target.status = "error";
-        target.reason =
-          err instanceof Error ? err.message : "Probe request failed";
+        target.reason = message;
+        await prisma.sensitiveProbeResult
+          .create({
+            data: {
+              scanId: scan.id,
+              targetId: target.id,
+              targetLabel: target.label,
+              model: target.model,
+              probeId: probe.id,
+              probeLabel: probe.label,
+              status: "error",
+              errorMessage: message.slice(0, 1000),
+              categories: [],
+            },
+          })
+          .catch(() => {
+            /* recording the error must not mask it */
+          });
       }
     }
   };

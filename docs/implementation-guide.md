@@ -118,8 +118,8 @@ The most important Prisma models are:
   Rule definitions for credential-behavior alerting, and the per-key rolling profile the rules evaluate against.
 - `PolicyDenial`
   One row per request the proxy evaluated as a policy violation, in both dry-run and enforce modes.
-- `SensitiveScan` and `SensitiveFinding`
-  Probe runs and the sanitized findings they produce. Findings store redacted excerpts only.
+- `SensitiveScan`, `SensitiveFinding` and `SensitiveProbeResult`
+  Probe runs, the sanitized findings they produce, and one row per (target, probe) holding the model's redacted, ≤2,000-character response — flagged or not — so a clean run can be read as a refusal. Findings and probe results store redacted text only and cascade-delete with their scan.
 - `ProviderSecurityScan` and `ProviderSecurityResult`
   Results of the provider secure-use and privacy configuration audit.
 - `ReportDefinition`, `ReportRun`, `ReportSchedule`

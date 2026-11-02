@@ -14,6 +14,29 @@ export async function GET() {
       prisma.sensitiveScan.findMany({
         orderBy: { createdAt: "desc" },
         take: 20,
+        // Every probe's (sanitized) response, so the history can show what
+        // each model actually said — including the refusals behind a clean run.
+        include: {
+          probeResults: {
+            orderBy: [{ targetId: "asc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              targetId: true,
+              targetLabel: true,
+              model: true,
+              probeId: true,
+              probeLabel: true,
+              status: true,
+              responseExcerpt: true,
+              responseLength: true,
+              flagged: true,
+              severity: true,
+              categories: true,
+              findingId: true,
+              errorMessage: true,
+            },
+          },
+        },
       }),
       prisma.sensitiveFinding.findMany({
         orderBy: { createdAt: "desc" },

@@ -28,6 +28,10 @@ Independently of probing, traffic through the proxy is inspected in both directi
 
 Matches are recorded as findings and linked to an alert. Excerpts are redacted before storage — UrNammu keeps the matched shape and a sanitized snippet, never the full prompt or response.
 
+## Reading the responses
+
+Every scan keeps what each model actually answered, probe by probe, whether or not it flagged. Expand a row under **Scan history** to see the responses grouped by target, each with a `clean`, `leaked`, or `error` badge and the response text (long answers truncate with a toggle). Use it to confirm a clean result really was a refusal rather than an empty reply, and to read a finding in context. Responses are stored redacted — emails, tokens, card and SSN shapes and long numbers become placeholders — and capped at 2,000 characters.
+
 ## Scheduling
 
 Probes can run on a schedule as well as on demand, so a gateway that silently changes its retention or system-prompt handling is caught without someone remembering to check. Findings accumulate on this page and in **Alerts**.
