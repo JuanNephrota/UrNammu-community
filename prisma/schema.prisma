@@ -2159,6 +2159,87 @@ model AssistantExtension {
   @@index([client, kind, lastSeenAt])
 }
 
+// ─── Plugin content (what a marketplace plugin actually ships) ──────────
+// The inventory above knows a plugin's name, marketplace and version. These
+// rows hold what that plugin ships — its manifest, every SKILL.md, its hook
+// and MCP server definitions, commands and agents — fetched from the
+// marketplace's GitHub source at the commit the marketplace pins, so a
+// reviewer can read what the fleet is running without touching a laptop.
+// One row per (marketplace, plugin); files hang off it and are replaced on
+// every fetch. `contentHash` changes when any file changes, and
+// `reviewedHash` records which content a reviewer signed off, so a plugin
+// that updates after review shows as needing a second look.
+model PluginContent {
+  id          String @id @default(cuid())
+  marketplace String
+  plugin      String
+
+  // Resolved source: GitHub owner/name, subdirectory ("" for the repo
+  // root), the ref the marketplace asked for and the commit it resolved to.
+  repo      String?
+  path      String?
+  ref       String?
+  commitSha String?
+  version   String?
+
+  // fetched | unsupported (non-GitHub or command source) | not_found |
+  // error. `statusReason` explains anything but fetched.
+  status       String
+  statusReason String? @db.Text
+
+  // Parsed .claude-plugin/plugin.json.
+  manifest Json?
+
+  skillCount     Int @default(0)
+  hookCount      Int @default(0)
+  mcpServerCount Int @default(0)
+  commandCount   Int @default(0)
+  agentCount     Int @default(0)
+
+  // SHA-256 over the sorted (path, blob sha) pairs of the stored files.
+  contentHash         String?
+  previousContentHash String?
+  changedAt           DateTime?
+  fetchedAt           DateTime
+
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  reviewedHash String?
+  reviewNote   String? @db.Text
+
+  files PluginContentFile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([marketplace, plugin])
+  @@index([status, fetchedAt])
+}
+
+// One file a plugin ships. `text` is kept for text files up to the storage
+// cap (truncated flag set beyond it); binary or oversize files keep only
+// their path and blob sha.
+model PluginContentFile {
+  id        String        @id @default(cuid())
+  content   PluginContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  contentId String
+
+  // manifest | readme | skill | hook | mcp | command | agent | other
+  kind String
+  // Path relative to the plugin root.
+  path String
+  // Skill / command / agent name derived from the path.
+  name String?
+  // Git blob sha — stable identity for "did this file change".
+  sha       String
+  size      Int
+  text      String? @db.Text
+  truncated Boolean @default(false)
+
+  @@unique([contentId, path])
+  @@index([contentId, kind])
+}
+
 // ─── Proxy Health Snapshots ────────────────────────────
 // One row per sync, holding the Azure Monitor metric values captured for the
 // Nammu AI proxy function app over a specific window. Drives the /proxy-health

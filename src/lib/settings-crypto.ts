@@ -13,6 +13,8 @@ const SECRET_KEYS = new Set([
   "shadow_ai_blocklist_token",
   // GitHub token for the Copilot usage metrics sync — same `_token` suffix gap.
   "github_copilot_token",
+  // GitHub token for marketplace plugin content fetches — same suffix gap.
+  "extension_marketplace_github_token",
 ]);
 
 function getEncryptionKey(): Buffer | null {

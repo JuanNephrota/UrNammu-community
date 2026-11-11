@@ -95,6 +95,10 @@ export async function getSetting(key: string): Promise<string | null> {
     github_copilot_token: process.env.GITHUB_COPILOT_TOKEN,
     github_copilot_org: process.env.GITHUB_COPILOT_ORG,
     github_copilot_enterprise: process.env.GITHUB_COPILOT_ENTERPRISE,
+    // Plugin content fetches (src/lib/plugin-content.ts): marketplace name →
+    // GitHub repo map (JSON) and the token used to read them.
+    extension_marketplaces: process.env.EXTENSION_MARKETPLACES,
+    extension_marketplace_github_token: process.env.EXTENSION_MARKETPLACE_GITHUB_TOKEN,
     prompt_hash_salt: process.env.PROMPT_HASH_SALT,
     // Retention windows for every prune cron (OTel telemetry plus the
     // collection tables). One list in collection-retention.ts feeds both this

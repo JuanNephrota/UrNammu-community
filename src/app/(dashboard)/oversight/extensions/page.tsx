@@ -18,6 +18,7 @@ import {
   type ExtensionInventoryRow,
   type ExtensionKind,
 } from "@/lib/assistant-extensions";
+import { pluginContentIndex, pluginContentKey } from "@/lib/plugin-content";
 import { formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -76,10 +77,12 @@ export default async function ExtensionsPage({
   const q = params.q?.trim() || null;
   const redactedOnly = params.redacted === "1";
 
-  const [{ summary, rows }, session] = await Promise.all([
+  const [{ summary, rows }, session, contentIndex] = await Promise.all([
     loadAssistantExtensionInventory({ client, kind, q, redactedOnly }),
     getSession(),
+    pluginContentIndex(),
   ]);
+  const contentNeedingReview = [...contentIndex.values()].filter((c) => c.needsReview).length;
   const isAdmin = session?.user.role === "ADMIN";
   const empty = summary.rows === 0;
   const filtered = Boolean(client || kind || q || redactedOnly);
@@ -90,6 +93,9 @@ export default async function ExtensionsPage({
         title="Skills & Plugins"
         description="What each person's coding assistant has loaded — plugins, MCP servers, skills, hooks and subagents — as reported by Claude Code and Cursor telemetry. Names and provenance only; no arguments, prompts or paths."
       >
+        <Link href="/oversight/extensions/plugins" className="text-sm text-[var(--accent)] hover:underline">
+          Plugin content{contentIndex.size ? ` (${contentIndex.size}${contentNeedingReview ? `, ${contentNeedingReview} to review` : ""})` : ""} &rarr;
+        </Link>
         {isAdmin && <ExtensionsBackfillButton hasRows={!empty} />}
       </PageHeader>
 
@@ -260,6 +266,10 @@ export default async function ExtensionsPage({
                       const bits = describe(row);
                       const thirdParty = isThirdPartyPlugin(row);
                       const enabledVia = extensionEnabledViaLabel(row.enabledVia);
+                      const contentKey = row.redacted
+                        ? null
+                        : pluginContentKey(row.marketplace, row.kind === "plugin" ? row.name : row.pluginName);
+                      const content = contentKey ? contentIndex.get(contentKey) : undefined;
                       return (
                         <tr key={row.id} className="border-b border-[var(--border-subtle)] last:border-0">
                           <td className="px-4 py-2 text-[var(--text-primary)]">
@@ -276,11 +286,28 @@ export default async function ExtensionsPage({
                           </td>
                           <td className="px-4 py-2">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <span className={row.redacted ? "italic text-[var(--text-muted)]" : "text-[var(--text-primary)]"}>
-                                {row.name}
-                              </span>
+                              {content && row.kind === "plugin" ? (
+                                <Link href={`/oversight/extensions/plugins/${content.id}`} className="text-[var(--accent)] hover:underline">
+                                  {row.name}
+                                </Link>
+                              ) : (
+                                <span className={row.redacted ? "italic text-[var(--text-muted)]" : "text-[var(--text-primary)]"}>
+                                  {row.name}
+                                </span>
+                              )}
                               {row.redacted && <Badge variant="outline">placeholder</Badge>}
                               {thirdParty && <Badge variant="warning">third-party</Badge>}
+                              {content && row.kind !== "plugin" && (
+                                <Link
+                                  href={`/oversight/extensions/plugins/${content.id}`}
+                                  className="text-xs text-[var(--accent)] hover:underline"
+                                >
+                                  plugin content
+                                </Link>
+                              )}
+                              {content?.needsReview && content.status === "fetched" && (
+                                <Badge variant="warning">content unreviewed</Badge>
+                              )}
                             </div>
                             {bits.length > 0 && (
                               <div className="text-xs text-[var(--text-muted)]">{bits.join(" · ")}</div>
