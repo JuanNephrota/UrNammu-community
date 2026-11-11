@@ -43,7 +43,8 @@ $config = [ordered]@{
     OTEL_METRIC_EXPORT_INTERVAL     = "60000"
     OTEL_LOGS_EXPORT_INTERVAL       = "5000"
     OTEL_LOG_USER_PROMPTS           = "1"
-    OTEL_METRICS_INCLUDE_ENTRYPOINT = "1"
+    OTEL_LOG_TOOL_DETAILS           = "1"
+    OTEL_METRICS_INCLUDE_ENTRYPOINT = "true"
   }
 }
 

@@ -181,6 +181,25 @@ tell which plugin it is). It leaves `OTEL_LOG_RAW_API_BODIES` unset. To
 disable prompt-risk and keep prompts entirely off the wire, set
 `OTEL_LOG_USER_PROMPTS=0`. To run metrics-only, remove `OTEL_LOGS_EXPORTER`.
 
+### Server-managed delivery (claude.ai admin console)
+
+The same JSON can be delivered without MDM from **Organization settings →
+Claude Code → Managed settings** (Owner role, Teams or Enterprise). Two rules
+matter:
+
+- Paste the **whole** `env` block, not just the flag you are changing. Claude
+  Code treats `OTEL_EXPORTER_OTLP_*`, `OTEL_LOG_*`, `OTEL_LOGS_EXPORTER` and the
+  tracing variables as one unit that follows the highest source setting any
+  of them, and server-managed is checked before MDM — a payload carrying only
+  `OTEL_LOG_TOOL_DETAILS` would drop the MDM-delivered endpoint and token.
+- Values are validated: the `OTEL_METRICS_INCLUDE_*` toggles take `true` /
+  `false` (the console rejects `"1"`), and `OTEL_EXPORTER_OTLP_ENDPOINT`
+  always shows each developer a one-time approval dialog.
+
+Verify on one machine with `claude doctor` (the `Managed settings (remote)`
+line) and `/status` before rolling out; exporter changes apply at the next
+launch.
+
 ### MDM rollout tips
 
 - Test on one machine first by copying `managed-settings.json` to the path
@@ -259,7 +278,7 @@ Cowork VM's `claude` subprocess. Point it at this collector:
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `https://<COLLECTOR_FQDN>` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Bearer <INGEST_TOKEN>` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
-| `OTEL_METRICS_INCLUDE_ENTRYPOINT` | `1` (so sessions are taggable as Cowork) |
+| `OTEL_METRICS_INCLUDE_ENTRYPOINT` | `true` (so sessions are taggable as Cowork; the `OTEL_METRICS_INCLUDE_*` toggles take `true`/`false`, not `1`, and the claude.ai admin console rejects `1`) |
 
 Notes:
 
