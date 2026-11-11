@@ -135,6 +135,8 @@ processors:
         action: delete
       - key: body
         action: delete
+      - key: hook_definitions
+        action: delete
   # Keep only Cursor spans on the Cursor pipelines. The hook sets
   # service.name=cursor-agent; drop anything else (e.g. Claude Code enhanced
   # traces, should that beta ever be enabled, report service.name=claude-code).

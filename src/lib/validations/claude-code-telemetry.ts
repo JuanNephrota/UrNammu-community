@@ -269,6 +269,9 @@ export const SENSITIVE_EVENT_KEYS = [
   "tool_parameters",
   "error",
   "body",
+  // Serialized hook configuration (commands included) — emitted only under
+  // detailed beta tracing with OTEL_LOG_TOOL_DETAILS=1, but never wanted.
+  "hook_definitions",
 ] as const;
 
 export interface FlattenedEvent {

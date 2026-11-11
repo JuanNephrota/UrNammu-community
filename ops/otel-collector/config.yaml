@@ -77,6 +77,8 @@ processors:
         action: delete
       - key: body
         action: delete
+      - key: hook_definitions
+        action: delete
 
   # Keep only Cursor spans (service.name=cursor-agent) on the Cursor pipelines.
   filter/cursor_only:

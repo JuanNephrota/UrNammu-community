@@ -7,6 +7,7 @@ import {
   otlpLogsPayloadSchema,
 } from "@/lib/validations/claude-code-telemetry";
 import { analyzePromptRisk, createPromptRiskAlert } from "@/lib/prompt-risk";
+import { recordClaudeCodeExtensions, selectUnseenClaudeCodeRows } from "@/lib/assistant-extensions";
 
 // Events are higher-volume than metrics; the Collector's batch processor is
 // capped at 1000 records per flush which fits comfortably under the row
@@ -116,6 +117,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Extension-bearing rows not yet stored — resolved before the insert so a
+  // re-sent batch cannot be counted into the inventory twice.
+  const inventoryRows = await selectUnseenClaudeCodeRows(rows);
+
   // `dedupeKey` (unique) + skipDuplicates make collector retries idempotent;
   // `count` is the number actually inserted.
   const { count } = await prisma.claudeCodeEvent.createMany({
@@ -149,8 +154,17 @@ export async function POST(req: NextRequest) {
     })),
   });
 
+  // Extension inventory (plugins, MCP servers, skills, hooks, subagents) —
+  // identifiers only, merged into AssistantExtension. Never fails the request.
+  const inventory = await recordClaudeCodeExtensions(inventoryRows);
+
   return NextResponse.json(
-    { accepted: count, duplicates: rows.length - count, flagged: flaggedCount },
+    {
+      accepted: count,
+      duplicates: rows.length - count,
+      flagged: flaggedCount,
+      extensions: inventory?.rows ?? 0,
+    },
     { status: 202 },
   );
 }

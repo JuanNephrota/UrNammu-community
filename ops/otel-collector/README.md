@@ -42,8 +42,19 @@ Vercel Postgres  (ClaudeCodeMetric)
   `…/claude-code-events`.
 - **Content scrub at the gateway.** `attributes/strip_log_content` deletes
   code/secret-bearing keys (`tool_input`, `tool_parameters`, `error`,
-  `body`) at the gateway, so `OTEL_LOG_TOOL_DETAILS=1` /
+  `body`, `hook_definitions`) at the gateway, so `OTEL_LOG_TOOL_DETAILS=1` /
   `OTEL_LOG_RAW_API_BODIES` can never leak that content.
+- **Extension inventory (Skills & Plugins).** The events pipeline also
+  carries Claude Code's `plugin_loaded`, `plugin_installed`,
+  `hook_registered`, `mcp_server_connection`, `skill_activated` and
+  `subagent_completed` events; UrNammu folds them into `AssistantExtension`
+  (one row per person × plugin / MCP server / skill / hook / subagent) behind
+  **Oversight → Skills & Plugins**. Cursor's `beforeMCPExecution` /
+  `afterMCPExecution` spans feed the same table. Claude Code redacts
+  third-party plugin, skill and agent names and omits MCP server names
+  unless `OTEL_LOG_TOOL_DETAILS=1`, which the managed-settings template now
+  sets: the only other things that flag unlocks are the content keys the
+  gateway strips, so names arrive and nothing else does.
 - **Dangerous-prompt detection (Option A).** `prompt` is *not* stripped at
   the gateway: when `OTEL_LOG_USER_PROMPTS=1`, user-prompt text is forwarded
   so UrNammu can run the same rule engine the proxy uses
@@ -158,10 +169,15 @@ two placeholders before shipping:
 The template sets `OTEL_LOGS_EXPORTER=otlp` to ship the events/audit
 stream and `OTEL_LOG_USER_PROMPTS=1` to enable dangerous-prompt detection
 (Option A): prompt text is forwarded, analyzed in-memory by UrNammu, and
-discarded — only the risk verdict + a sanitized excerpt persist. It
-intentionally leaves `OTEL_LOG_TOOL_DETAILS` and `OTEL_LOG_RAW_API_BODIES`
-unset; the collector's `attributes/strip_log_content` drops `tool_input`,
-`tool_parameters`, `error`, and `body` at the gateway regardless. To
+discarded — only the risk verdict + a sanitized excerpt persist. It sets
+`OTEL_LOG_TOOL_DETAILS=1` so the Skills & Plugins inventory sees real
+plugin, skill, agent and MCP server names instead of `third-party` /
+`custom_skill` / `custom` placeholders; the collector's
+`attributes/strip_log_content` drops `tool_input`, `tool_parameters`,
+`error`, `body` and `hook_definitions` at the gateway regardless, and the
+ingest route strips them again, so no argument content reaches the database.
+Unset it to keep the placeholders (every row still counts, you just cannot
+tell which plugin it is). It leaves `OTEL_LOG_RAW_API_BODIES` unset. To
 disable prompt-risk and keep prompts entirely off the wire, set
 `OTEL_LOG_USER_PROMPTS=0`. To run metrics-only, remove `OTEL_LOGS_EXPORTER`.
 
@@ -219,8 +235,10 @@ export OTEL_LOGS_EXPORT_INTERVAL=5000
 # Enables dangerous-prompt detection (analyzed in-memory by UrNammu, never
 # stored). Set to 0 to keep prompts off the wire entirely.
 export OTEL_LOG_USER_PROMPTS=1
-# Code/secret content is stripped at the gateway; keep these off too:
-unset OTEL_LOG_TOOL_DETAILS
+# Names plugins / skills / MCP servers for the Skills & Plugins inventory.
+# The arguments this also unlocks are stripped at the gateway.
+export OTEL_LOG_TOOL_DETAILS=1
+# Raw API bodies are never wanted:
 unset OTEL_LOG_RAW_API_BODIES
 ```
 

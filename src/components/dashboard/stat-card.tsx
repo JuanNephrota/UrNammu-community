@@ -22,6 +22,8 @@ import {
   Hand,
   History,
   ShieldCheck,
+  Plug,
+  Puzzle,
 } from "lucide-react";
 
 const iconMap: Record<string, LucideIcon> = {
@@ -43,6 +45,8 @@ const iconMap: Record<string, LucideIcon> = {
   Hand,
   History,
   ShieldCheck,
+  Plug,
+  Puzzle,
 };
 
 interface StatCardProps {

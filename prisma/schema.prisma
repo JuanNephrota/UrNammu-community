@@ -2093,6 +2093,72 @@ model CursorSpan {
   @@index([riskSeverity, timestamp])
 }
 
+// ─── Assistant extensions (plugins, MCP servers, skills, hooks, agents) ─
+// Per-person inventory of what each coding assistant has loaded, derived
+// from the OTel stream rather than from the endpoint agent: Claude Code's
+// plugin_loaded / plugin_installed / hook_registered / mcp_server_connection
+// / skill_activated / subagent_completed events, and Cursor's MCP-execution
+// spans. One row per (client, person, kind, key), merged on repeat, so the
+// table grows with the fleet's extension surface, not with time. Names and
+// provenance only — never arguments, prompts, paths or hook commands.
+//
+// Claude Code redacts third-party names ("third-party", "custom_skill",
+// "custom") and omits MCP server names unless OTEL_LOG_TOOL_DETAILS=1 is set
+// in managed settings; `redacted` marks rows whose name is such a placeholder.
+model AssistantExtension {
+  id        String @id @default(cuid())
+  // "claude_code" | "cursor"
+  client    String
+  // "" when the client was not tagged with an identity (part of the merge key,
+  // so it cannot be NULL — Postgres treats NULLs as distinct in unique indexes)
+  userEmail String @default("")
+  userId    String?
+  // "plugin" | "mcp_server" | "skill" | "hook" | "agent"
+  kind      String
+  // Merge identity within (client, userEmail, kind) — plugin id hash,
+  // server name, source:skill, hook source/event/type, source:agent.
+  key       String
+  name      String
+  // The name is a client-side placeholder, not the real identifier.
+  redacted  Boolean @default(false)
+  // Provenance: plugin.scope | server_scope | skill.source | hook_source |
+  // agent.source
+  source       String?
+  marketplace  String?
+  // Owning plugin, when a server / skill / hook / agent is plugin-provided.
+  pluginName   String?
+  pluginIdHash String?
+  version      String?
+  // MCP only: stdio | sse | http
+  transport  String?
+  // MCP only: last connection status (connected | failed | disconnected)
+  lastStatus String?
+  // Plugins only: default-enable | org-policy | admin-install | seed-mount |
+  // user-install
+  enabledVia String?
+  // Kind-specific extras (has_hooks / has_mcp, hook event + type, cursor tool
+  // names, install trigger). Never content.
+  detail Json?
+
+  // Observation weight: events seen, approximate distinct sessions, failed
+  // MCP connections. Summed across ingest batches.
+  observations Int @default(0)
+  sessions     Int @default(0)
+  failures     Int @default(0)
+  firstSeenAt  DateTime
+  lastSeenAt   DateTime
+  lastSessionId  String?
+  lastAppVersion String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([client, userEmail, kind, key])
+  @@index([kind, lastSeenAt])
+  @@index([userEmail, lastSeenAt])
+  @@index([client, kind, lastSeenAt])
+}
+
 // ─── Proxy Health Snapshots ────────────────────────────
 // One row per sync, holding the Azure Monitor metric values captured for the
 // Nammu AI proxy function app over a specific window. Drives the /proxy-health

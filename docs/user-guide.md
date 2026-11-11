@@ -1649,6 +1649,22 @@ its next report.
 Setup and rollout live in **Settings → Endpoint Agent** and `ops/endpoint-agent/README.md`.
 
 ---
+### Skills & Plugins Inventory
+
+**Governance → Skills & Plugins** lists what each person's coding assistant has loaded, without any software on the laptop: it is built from the same OpenTelemetry stream that feeds the Claude Code and Cursor pages. Claude Code announces its extension surface in its own events — every enabled plugin and every configured hook at session start, every MCP server connection, every skill invocation and every subagent run — and Cursor's hook names the MCP server on each tool call. One row per person × item, merged each time it is seen again, with an event count, an approximate session count and first / last seen.
+
+- **Plugin** — name, marketplace, version, provenance (official, community, organization, sideloaded, bundled) and how it came to be enabled (user install, admin install, org policy). Plugins outside Anthropic's own catalog carry a **third-party** badge.
+- **MCP server** — transport, the scope it is configured at (user, project, local), the owning plugin when a plugin provides it, and the last connection status; failed connections are counted. Cursor rows also list the tool names called on that server.
+- **Skill** — where it was loaded from (bundled, user settings, project settings, plugin) and how it was last triggered.
+- **Hook** — the hook event and type and where it is defined. Hooks that live in a repository's project or local settings run whatever the repository says, so the card counts them separately.
+- **Subagent** — built-in agent types and custom ones, with their source.
+
+**Placeholder names.** Unless `OTEL_LOG_TOOL_DETAILS=1` is set in Claude Code's managed settings, Claude Code reports third-party plugins as *third-party*, user skills as *custom_skill*, custom agents as *custom*, and leaves MCP servers unnamed. Each such row still counts one real thing (plugins keep a stable id hash, so the row is upgraded in place once names arrive), but you cannot tell which. The collector strips the tool arguments that flag also unlocks, so turning it on adds names and nothing else; the page says how many rows are placeholders and can filter to them.
+
+**Rebuild from history** (administrators) walks the events already stored before this page existed. Counts are additive, so run it once per installation.
+
+What this inventory cannot see: anything installed but never loaded in a session that reported telemetry, project-scoped configuration on machines without the OTel managed settings, and any client other than Claude Code and Cursor. The [endpoint agent](#endpoint-agent) is the only route to "installed but dormant".
+
 ## 11. Reports
 
 **Sidebar → Overview → Reports** is a self-service reporting suite for building, exporting, and scheduling governance reports. Creation requires `ADMIN` or `COMPLIANCE_OFFICER`.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { recordCursorExtensions, selectUnseenCursorRows } from "@/lib/assistant-extensions";
 import { getSetting } from "@/lib/settings";
 import {
   flattenOtlpSpans,
@@ -117,6 +118,10 @@ export async function POST(req: NextRequest) {
 
   // `dedupeKey` (unique; traceId+spanId when present) + skipDuplicates make
   // collector retries idempotent; `count` is the number actually inserted.
+  // MCP-execution spans not yet stored — resolved before the insert so a
+  // re-sent batch cannot be counted into the inventory twice.
+  const inventoryRows = await selectUnseenCursorRows(rows);
+
   const { count } = await prisma.cursorSpan.createMany({
     skipDuplicates: true,
     data: rows.map((r) => ({
@@ -146,8 +151,17 @@ export async function POST(req: NextRequest) {
     })),
   });
 
+  // MCP server inventory from beforeMCPExecution / afterMCPExecution spans —
+  // server and tool names only. Never fails the request.
+  const inventory = await recordCursorExtensions(inventoryRows);
+
   return NextResponse.json(
-    { accepted: count, duplicates: rows.length - count, flagged: flaggedCount },
+    {
+      accepted: count,
+      duplicates: rows.length - count,
+      flagged: flaggedCount,
+      extensions: inventory?.rows ?? 0,
+    },
     { status: 202 },
   );
 }
